@@ -26,6 +26,8 @@ func TestClaudeMessagesToolRoundTrip(t *testing.T) {
 			t.Errorf("tool result not replayed as user content: %#v", request.Messages)
 		}
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("anthropic-ratelimit-input-tokens-limit", "200000")
+		w.Header().Set("anthropic-ratelimit-input-tokens-remaining", "180000")
 		_, _ = w.Write([]byte(`{"id":"msg_test","stop_reason":"tool_use","content":[{"type":"text","text":"Checking."},{"type":"tool_use","id":"toolu_next","name":"Bash","input":{"command":"pwd"}}],"usage":{"input_tokens":11,"cache_read_input_tokens":3,"cache_creation_input_tokens":2,"output_tokens":4}}`))
 	}))
 	defer server.Close()
@@ -52,6 +54,9 @@ func TestClaudeMessagesToolRoundTrip(t *testing.T) {
 	}
 	if response.Usage.InputTokens != 16 || response.Usage.CachedInputTokens != 3 || response.Usage.OutputTokens != 4 {
 		t.Fatalf("unexpected usage: %#v", response.Usage)
+	}
+	if response.RateLimits["anthropic-ratelimit-input-tokens-remaining"] != "180000" {
+		t.Fatalf("missing rate-limit header: %#v", response.RateLimits)
 	}
 }
 

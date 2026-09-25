@@ -6,6 +6,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,13 +15,15 @@ import (
 
 	"github.com/unreallabsai/unreal-agent/cmd/internal/agentrunner"
 	"github.com/unreallabsai/unreal-agent/harness/llm"
+	"github.com/unreallabsai/unreal-agent/harness/operation"
 	"github.com/unreallabsai/unreal-agent/harness/session"
 	"github.com/unreallabsai/unreal-agent/harness/sessionstore"
 )
 
 type fakeClient struct {
-	calls     *atomic.Int32
-	toolFirst bool
+	calls       *atomic.Int32
+	toolFirst   bool
+	toolCommand string
 }
 
 func (client *fakeClient) Close() error { return nil }
@@ -30,7 +33,11 @@ func (client *fakeClient) Respond(ctx context.Context, _ llm.Request, _ llm.Requ
 	}
 	call := client.calls.Add(1)
 	if client.toolFirst && call == 1 {
-		return llm.Response{ID: uuid.New().String(), Stop: llm.StopComplete, Output: []llm.Item{{Type: llm.ItemToolCall, Data: llm.ToolCall{CallID: "shell-1", Name: "Bash", Arguments: `{"command":"sleep 0.4; echo done"}`}}}}, nil
+		command := client.toolCommand
+		if command == "" {
+			command = "sleep 0.4; echo done"
+		}
+		return llm.Response{ID: uuid.New().String(), Stop: llm.StopComplete, Output: []llm.Item{{Type: llm.ItemToolCall, Data: llm.ToolCall{CallID: "shell-1", Name: "Bash", Arguments: `{"command":` + strconv.Quote(command) + `}`}}}}, nil
 	}
 	return llm.Response{ID: uuid.New().String(), Stop: llm.StopComplete, Output: []llm.Item{{Type: llm.ItemMessage, Data: llm.Message{Role: llm.RoleAssistant, Text: "Task complete"}}}, Usage: llm.Usage{InputTokens: 10, OutputTokens: 2}}, nil
 }
@@ -256,6 +263,73 @@ func TestProjectedResponseOmitsProviderPrivateRawFields(t *testing.T) {
 	canonical := original.Data.(sessionstore.ModelResponse)
 	if canonical.Response.Usage.Raw == nil || canonical.Response.Output[0].Data.(llm.Reasoning).Raw == nil {
 		t.Fatal("canonical response was changed")
+	}
+}
+
+func TestLiveShellOperationCanBeCanceledWithoutStoppingSession(t *testing.T) {
+	a, cancel, _, calls := testApp(t, t.TempDir(), false)
+	defer cancel()
+	a.makeClient = func(_ sessionConfig, _ credential) (agentrunner.Client, string, error) {
+		return &fakeClient{calls: calls, toolFirst: true, toolCommand: "sleep 5; echo should-not-finish"}, "fake-model", nil
+	}
+	created, err := a.dispatch(request{Version: protocolVersion, Method: "session.create", Params: mustJSON(t, createParams{Config: sessionConfig{Provider: "test", Model: "fake-model"}})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := session.ID(created.(map[string]string)["sessionId"])
+	_, err = a.dispatch(request{Version: protocolVersion, Method: "session.send", Params: mustJSON(t, sendParams{SessionID: string(id), MessageID: uuid.New().String(), Prompt: "Run a long shell command"})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var operationID operation.ID
+	waitFor(t, func() bool {
+		a.events.flush()
+		entries, err := a.events.entries(id, 0, 1000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if entry.Event != "operation.started" {
+				continue
+			}
+			var value operation.Operation
+			if err := json.Unmarshal(entry.Payload, &value); err != nil {
+				t.Fatal(err)
+			}
+			operationID = value.ID
+			return operationID != "" && !entry.RecordedAt.IsZero()
+		}
+		return false
+	})
+	_, err = a.dispatch(request{Version: protocolVersion, Method: "operation.cancel", Params: mustJSON(t, cancelOperationParams{SessionID: string(id), OperationID: string(operationID)})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		a.events.flush()
+		entries, err := a.events.entries(id, 0, 1000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if entry.Event != "operation.update" {
+				continue
+			}
+			var value operation.Operation
+			if err := json.Unmarshal(entry.Payload, &value); err != nil {
+				t.Fatal(err)
+			}
+			if value.ID == operationID && value.Status == operation.StatusCanceled {
+				return true
+			}
+		}
+		return false
+	})
+	a.mu.Lock()
+	_, running := a.running[id]
+	a.mu.Unlock()
+	if !running {
+		t.Fatal("individual cancellation stopped the session")
 	}
 }
 

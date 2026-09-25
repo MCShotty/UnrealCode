@@ -17,19 +17,19 @@ import (
 	"github.com/unreallabsai/unreal-agent/harness/primitives"
 )
 
-func (adapter *adapter) exchange(ctx context.Context, body []byte, cacheKey string) (int, []byte, error) {
+func (adapter *adapter) exchange(ctx context.Context, body []byte, cacheKey string) (int, []byte, http.Header, error) {
 	events := make(chan primitives.PrimitiveEvent)
 	for attempt := 1; ; attempt++ {
 		if err := ctx.Err(); err != nil {
-			return 0, nil, err
+			return 0, nil, nil, err
 		}
 		request := adapter.remoteRequest(body, cacheKey)
 		result := adapter.exchangeAttempt(ctx, request, events)
 		if !result.retry || attempt >= adapter.maxAttempts {
-			return result.status, result.body, result.err
+			return result.status, result.body, result.headers, result.err
 		}
 		if err := ctx.Err(); err != nil {
-			return result.status, nil, err
+			return result.status, nil, result.headers, err
 		}
 		now := time.Now()
 		delay := responseRetryDelay(request.RetryPolicy, attempt, result.apiError, result.headers, now, rand.Float64())
@@ -41,11 +41,11 @@ func (adapter *adapter) exchange(ctx context.Context, body []byte, cacheKey stri
 		switch event.Type {
 		case primitives.PrimitiveEventTimerFired:
 		case primitives.PrimitiveEventCanceled:
-			return result.status, nil, canceledError(ctx)
+			return result.status, nil, result.headers, canceledError(ctx)
 		case primitives.PrimitiveEventFailed:
-			return result.status, nil, remoteFailureError(ctx, event)
+			return result.status, nil, result.headers, remoteFailureError(ctx, event)
 		default:
-			return result.status, nil, fmt.Errorf("unexpected retry timer event %q", event.Type)
+			return result.status, nil, result.headers, fmt.Errorf("unexpected retry timer event %q", event.Type)
 		}
 	}
 }

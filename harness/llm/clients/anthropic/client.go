@@ -277,5 +277,6 @@ func (client *Client) send(ctx context.Context, body []byte) (llm.Response, bool
 	result.Usage = llm.Usage{InputTokens: decoded.Usage.InputTokens + decoded.Usage.CacheReadInputTokens + decoded.Usage.CacheCreationInputTokens,
 		CachedInputTokens: decoded.Usage.CacheReadInputTokens, CacheWriteInputTokens: decoded.Usage.CacheCreationInputTokens,
 		OutputTokens: decoded.Usage.OutputTokens}
+	result.RateLimits = llm.SafeRateLimitHeaders(response.Header)
 	return result, false, nil
 }

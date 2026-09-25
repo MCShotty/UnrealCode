@@ -1,6 +1,6 @@
 {
   "name": "unrealcode",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "UnrealCode Windows desktop application built on Unreal Agent",
   "author": "UnrealCode contributors",
@@ -10,7 +10,8 @@
     "dev": "electron-vite dev",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "build:code": "electron-vite build",
-    "build:win": "npm run typecheck && npm run build:code && electron-builder --win nsis",
+    "licenses:generate": "node scripts/generate-notices.mjs",
+    "build:win": "npm run typecheck && npm run build:code && npm run licenses:generate && electron-builder --win nsis",
     "test": "vitest run"
   },
   "dependencies": {
@@ -49,6 +50,10 @@
     ],
     "extraResources": [
       {
+        "from": "third-party-licenses",
+        "to": "licenses"
+      },
+      {
         "from": "../",
         "to": "backend",
         "filter": [
@@ -60,7 +65,10 @@
           "cmd/**/*",
           "harness/**/*",
           "internal/**/*",
-          "desktop/worker/**/*"
+          "desktop/worker/**/*",
+          "desktop/third-party-licenses/**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc"
         ]
       }
     ],

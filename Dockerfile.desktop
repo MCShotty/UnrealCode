@@ -22,6 +22,7 @@ RUN --mount=type=secret,id=host_ca,required=false \
 COPY --from=build /out/unreal-agent-desktop-bridge /usr/local/bin/unreal-agent-desktop-bridge
 COPY desktop/worker/decision_worker.py /usr/local/lib/unrealcode/decision_worker.py
 COPY LICENSE /usr/share/doc/unreal-agent/LICENSE
+COPY desktop/third-party-licenses/ /usr/share/doc/unrealcode/third-party-licenses/
 ENV HOME=/home/agent SHELL=/bin/bash UNREAL_DESKTOP_STATE=/state
 USER 10001:10001
 WORKDIR /workspace

@@ -17,12 +17,17 @@ import (
 	"uuid"
 
 	"github.com/unreallabsai/unreal-agent/harness/inbox"
+	"github.com/unreallabsai/unreal-agent/harness/operation"
 	"github.com/unreallabsai/unreal-agent/harness/session"
 	"github.com/unreallabsai/unreal-agent/harness/sessionstore"
 )
 
 type sessionIDParams struct {
 	SessionID string `json:"sessionId"`
+}
+type cancelOperationParams struct {
+	SessionID   string `json:"sessionId"`
+	OperationID string `json:"operationId"`
 }
 type createParams struct {
 	Config     sessionConfig `json:"config"`
@@ -214,6 +219,28 @@ func (a *app) dispatch(req request) (any, error) {
 		case <-a.ctx.Done():
 			return nil, a.ctx.Err()
 		}
+	case "operation.cancel":
+		p, err := decodeParams[cancelOperationParams](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		id, err := requiredID(p.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(p.OperationID) == "" {
+			return nil, errors.New("operation ID is required")
+		}
+		a.mu.Lock()
+		run := a.running[id]
+		a.mu.Unlock()
+		if run == nil {
+			return nil, errors.New("session is not active")
+		}
+		if err := run.manager.CancelUser(operation.ID(p.OperationID)); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"canceling": true}, nil
 	case "session.fork":
 		p, err := decodeParams[forkParams](req.Params)
 		if err != nil {
@@ -256,6 +283,7 @@ func (a *app) dispatch(req request) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		a.events.flush()
 		if err := a.events.reconcile(a.store, id); err != nil {
 			return nil, err
 		}
@@ -381,4 +409,5 @@ func main() {
 	}
 	requests.Wait()
 	cancel()
+	a.events.flush()
 }

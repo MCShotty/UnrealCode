@@ -10,4 +10,9 @@
 !desktop/
 !desktop/worker/
 !desktop/worker/**
+!desktop/third-party-licenses/
+!desktop/third-party-licenses/**
 !LICENSE
+**/__pycache__/
+**/*.pyc
+**/*.pyo

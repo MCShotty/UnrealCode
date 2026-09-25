@@ -7,7 +7,9 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { AgentEvent, BridgeSessionConfig, DecisionBatch, DecisionStatus, Provider } from '../shared/api'
 import { DockerBridge } from './docker'
-import { codexStatus, credentialFor, getSettings, hasKey, rememberProject, saveKey, updateSettings, migrateLegacySettings, setDecisionConsent } from './settings'
+import { codexStatus, credentialFor, getSettings, hasKey, rememberProject, saveKey, updateSettings, migrateLegacySettings, setDecisionConsent, saveAdminKey, hasAdminKey, clearAdminKey } from './settings'
+import { AccountUsageService } from './account-usage'
+import { SessionUsageService } from './session-usage'
 import { deleteSkill, gitChanges, gitDiff, listFiles, listSkills, readFile, saveSkill } from './files'
 import * as github from './github'
 import { discoverModels } from './models'
@@ -20,6 +22,8 @@ if (process.env.UNREAL_DESKTOP_USER_DATA) {
 }
 
 const bridge = new DockerBridge()
+const accountUsage = new AccountUsageService()
+const sessionUsage = new SessionUsageService(bridge)
 const execFileAsync = promisify(execFile)
 let window: BrowserWindow | null = null
 const terminals = new Map<string, { write(data: string): void; resize(cols: number, rows: number): void; kill(): void }>()
@@ -93,6 +97,21 @@ function registerIPC(): void {
   })
   ipcMain.handle('settings:save-key', (_event, provider: string, key: string) => saveKey(provider, key))
   ipcMain.handle('settings:has-key', (_event, provider: string) => hasKey(provider))
+  ipcMain.handle('usage:save-admin-key', (_event, provider: 'openai' | 'anthropic', key: string) => {
+    saveAdminKey(provider, key)
+    accountUsage.invalidate(provider)
+  })
+  ipcMain.handle('usage:has-admin-key', (_event, provider: 'openai' | 'anthropic') => hasAdminKey(provider))
+  ipcMain.handle('usage:clear-admin-key', (_event, provider: 'openai' | 'anthropic') => {
+    clearAdminKey(provider)
+    accountUsage.invalidate(provider)
+  })
+  ipcMain.handle('usage:snapshot', async (_event, force = false) => {
+    const [accounts, sessions] = await Promise.all([accountUsage.snapshot(force), sessionUsage.summaries()])
+    return { accounts, sessions }
+  })
+  ipcMain.handle('execution:summary', (_event, sessionId: string) => sessionUsage.execution(sessionId))
+  ipcMain.handle('operation:cancel', (_event, sessionId: string, operationId: string) => bridge.request('operation.cancel', { sessionId, operationId }))
   ipcMain.handle('settings:codex-status', () => codexStatus())
   ipcMain.handle('models:discover', (_event, provider: Provider, baseUrl: string) => discoverModels(provider, baseUrl))
   ipcMain.handle('decision:status', () => configureDecision())
@@ -147,6 +166,7 @@ function registerIPC(): void {
       if (choice.response !== 0) throw new Error('Workspace trust was not granted')
     }
     closeTerminals()
+    sessionUsage.clear()
     const status = await bridge.start(canonical)
     rememberProject(canonical)
     const settings = getSettings()

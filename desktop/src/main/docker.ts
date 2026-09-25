@@ -1,14 +1,25 @@
 import { app } from 'electron'
 import { spawn, execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { join, relative, resolve } from 'node:path'
 import { getCACertificates } from 'node:tls'
 import { promisify } from 'node:util'
 import type { AgentEvent, DockerStatus } from '../shared/api'
 
 const execFileAsync = promisify(execFile)
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timeout: NodeJS.Timeout }
+
+export function backendSourceTag(source: string, version: string): string {
+  const hash = createHash('sha256')
+  const visit = (path: string): void => {
+    const stat = lstatSync(path)
+    if (stat.isDirectory()) for (const name of readdirSync(path).sort()) visit(join(path, name))
+    else if (stat.isFile()) { hash.update(relative(source, path).replaceAll('\\', '/')); hash.update(readFileSync(path)) }
+  }
+  for (const name of ['Dockerfile.desktop', 'go.mod', 'go.sum', 'cmd', 'harness', 'internal', 'desktop/worker']) visit(join(source, name))
+  return `unrealcode:${version}-${hash.digest('hex').slice(0, 12)}`
+}
 
 export class DockerBridge {
   private process: ReturnType<typeof spawn> | null = null
@@ -17,6 +28,7 @@ export class DockerBridge {
   private container = ''
   private project = ''
   private message = 'Docker backend is not started'
+  private imageTag = ''
   onEvent: (value: AgentEvent) => void = () => {}
   onStatus: (value: DockerStatus) => void = () => {}
 
@@ -54,13 +66,14 @@ export class DockerBridge {
   }
 
   private async ensureImage(): Promise<void> {
-    const tag = `unrealcode:${app.getVersion()}`
+    const source = this.sourceDirectory()
+    const tag = backendSourceTag(source, app.getVersion())
+    this.imageTag = tag
     if (app.isPackaged) {
       try { await this.docker(['image', 'inspect', tag]); return } catch { /* build below */ }
     }
     this.message = 'Building UnrealCode backend image…'
     this.onStatus(this.status())
-    const source = this.sourceDirectory()
     const args = ['build', '-f', join(source, 'Dockerfile.desktop'), '-t', tag]
     const ca = await this.hostCA()
     if (ca) args.push('--secret', `id=host_ca,src=${ca}`)
@@ -80,7 +93,7 @@ export class DockerBridge {
     await this.migrateStateVolume(projectPath, volume)
     this.container = `unrealcode-${digest.slice(0, 8)}-${randomUUID().slice(0, 8)}`
     this.project = projectPath
-    const tag = `unrealcode:${app.getVersion()}`
+    const tag = this.imageTag
     const args = [
       'run', '--rm', '-i', '--name', this.container,
       '--cap-drop=ALL', '--security-opt=no-new-privileges',
@@ -111,7 +124,7 @@ export class DockerBridge {
     if (projectPath.toLocaleLowerCase() !== 'i:\\unrealcode') return
     try {
       await this.docker(['volume', 'inspect', target])
-      const tag = `unrealcode:${app.getVersion()}`
+      const tag = this.imageTag
       try {
         await this.docker(['run', '--rm', '--user', '0:0', '--entrypoint', '/bin/bash', '--mount', `type=volume,source=${target},target=/to`, tag, '-c', 'test -f /to/.unrealcode-migrated'])
         return
@@ -119,7 +132,7 @@ export class DockerBridge {
     } catch { /* target does not exist */ }
     const legacyDigest = createHash('sha256').update('i:\\unrealgui').digest('hex').slice(0, 20)
     const source = `unreal-desktop-${legacyDigest}`
-    const tag = `unrealcode:${app.getVersion()}`
+    const tag = this.imageTag
     try { await this.docker(['volume', 'inspect', source]) } catch {
       await this.docker(['volume', 'create', target])
       await this.docker(['run', '--rm', '--user', '0:0', '--entrypoint', '/bin/bash', '--mount', `type=volume,source=${target},target=/to`, tag, '-c', 'touch /to/.unrealcode-migrated'])

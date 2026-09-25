@@ -10,7 +10,7 @@ vi.mock('electron', () => ({
   app: { getPath: (name: string) => name === 'appData' ? appData : userData },
   safeStorage: { isEncryptionAvailable: () => true, encryptString: (value: string) => Buffer.from(`encrypted:${value}`), decryptString: (value: Buffer) => value.toString().slice(10) }
 }))
-import { credentialFor, getSettings, migrateLegacySettings, saveKey, setDecisionConsent, updateSettings } from './settings'
+import { credentialFor, getSettings, migrateLegacySettings, saveKey, setDecisionConsent, updateSettings, saveAdminKey, getAdminKey, clearAdminKey } from './settings'
 
 let temp = ''
 afterEach(async () => { if (temp) await rm(temp, { recursive: true, force: true }); temp = '' })
@@ -40,5 +40,16 @@ describe('settings migration and consent', () => {
     expect(credentialFor('anthropic', '')).toEqual({ apiKey: 'example-secret', baseUrl: '' })
     expect(credentialFor('openai-compatible', 'http://localhost:1234')).toEqual({ baseUrl: 'http://host.docker.internal:1234/v1', apiKey: '' })
     expect(() => credentialFor('openai-compatible', 'https://public.example/v1')).toThrow(/private-network/)
+  })
+
+  it('keeps organization admin credentials separate from model credentials', async () => {
+    temp = await mkdtemp(join(tmpdir(), 'unrealcode-admin-'))
+    appData = join(temp, 'appdata'); userData = join(temp, 'new')
+    saveAdminKey('openai', 'admin-secret-value')
+    expect(getAdminKey('openai')).toBe('admin-secret-value')
+    expect(readFileSync(join(userData, 'secrets.json'), 'utf8')).not.toContain('admin-secret-value')
+    expect(() => credentialFor('openai', '')).toThrow(/API key is not configured/)
+    clearAdminKey('openai')
+    expect(getAdminKey('openai')).toBe('')
   })
 })

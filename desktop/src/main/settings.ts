@@ -93,6 +93,38 @@ export function getKey(provider: string): string {
 
 export function hasKey(provider: string): boolean { return !!getKey(provider) }
 
+function adminName(provider: 'openai' | 'anthropic'): string {
+  if (provider !== 'openai' && provider !== 'anthropic') throw new Error('Unsupported admin provider')
+  return `admin:${provider}`
+}
+
+export function saveAdminKey(provider: 'openai' | 'anthropic', key: string): void {
+  if (!key.trim()) throw new Error('Admin key is empty')
+  const name = adminName(provider)
+  if (safeStorage.isEncryptionAvailable()) {
+    const secrets = readJSON<SecretFile>(secretsPath(), {})
+    secrets[name] = safeStorage.encryptString(key.trim()).toString('base64')
+    writeJSON(secretsPath(), secrets)
+  } else sessionKeys.set(name, key.trim())
+}
+
+export function getAdminKey(provider: 'openai' | 'anthropic'): string {
+  const name = adminName(provider)
+  if (sessionKeys.has(name)) return sessionKeys.get(name) || ''
+  const encoded = readJSON<SecretFile>(secretsPath(), {})[name]
+  if (!encoded || !safeStorage.isEncryptionAvailable()) return ''
+  try { return safeStorage.decryptString(Buffer.from(encoded, 'base64')) } catch { return '' }
+}
+
+export function hasAdminKey(provider: 'openai' | 'anthropic'): boolean { return !!getAdminKey(provider) }
+
+export function clearAdminKey(provider: 'openai' | 'anthropic'): void {
+  const name = adminName(provider)
+  sessionKeys.delete(name)
+  const secrets = readJSON<SecretFile>(secretsPath(), {})
+  if (Object.hasOwn(secrets, name)) { delete secrets[name]; writeJSON(secretsPath(), secrets) }
+}
+
 function codexAuthPath(): string { return join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'auth.json') }
 
 export function codexCredential(): { accessToken: string; accountId: string } {

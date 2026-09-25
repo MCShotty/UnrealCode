@@ -19,7 +19,14 @@ export type Settings = {
   glinerEnabled: boolean
 }
 export type SessionInfo = { id: string; title: string; lastUpdatedAt: string; active: boolean }
-export type AgentEvent = { v: number; event: string; sessionId: string; seq: number; sourceSequence?: number; payload: unknown }
+export type AgentEvent = { v: number; event: string; sessionId: string; seq: number; sourceSequence?: number; recordedAt?: string; payload: unknown }
+export type UsageTotals = { input: number; output: number; cached: number; cacheWrite: number; reasoning: number; calls: number; decisionInput: number; decisionOutput: number; decisionCalls: number; latestInput: number }
+export type SessionUsage = { sessionId: string; title: string; provider: Provider; model: string; totals: UsageTotals; contextLimit?: number; contextSource?: string; rateLimits?: Record<string, string> }
+export type UsageWindow = { id: string; label: string; usedPercent: number; windowDurationMins: number | null; resetsAt: number | null }
+export type AccountUsage = { source: 'codex' | 'openai' | 'anthropic'; scope: string; status: 'fresh' | 'stale' | 'unavailable'; observedAt?: string; message?: string; totals?: UsageTotals; windows?: UsageWindow[] }
+export type UsageSnapshot = { accounts: AccountUsage[]; sessions: SessionUsage[] }
+export type OperationLane = { id: string; sessionId: string; type: string; status: string; startedAt?: string; endedAt?: string; durationMs?: number }
+export type ExecutionSummary = { operations: OperationLane[]; modelMs: number; toolWallMs: number; toolOverlapMs: number; modelCalls: number }
 export type FileEntry = { name: string; path: string; directory: boolean; size: number }
 export type SkillEntry = { name: string; description: string; content: string }
 export type DockerStatus = { ready: boolean; message: string; container?: string }
@@ -38,6 +45,12 @@ export interface DesktopAPI {
   updateSettings(patch: Partial<Settings>): Promise<Settings>
   saveKey(provider: string, key: string): Promise<void>
   hasKey(provider: string): Promise<boolean>
+  saveAdminKey(provider: 'openai' | 'anthropic', key: string): Promise<void>
+  hasAdminKey(provider: 'openai' | 'anthropic'): Promise<boolean>
+  clearAdminKey(provider: 'openai' | 'anthropic'): Promise<void>
+  usageSnapshot(force?: boolean): Promise<UsageSnapshot>
+  executionSummary(sessionId: string): Promise<ExecutionSummary>
+  cancelOperation(sessionId: string, operationId: string): Promise<void>
   codexStatus(): Promise<{ available: boolean; message: string }>
   discoverModels(provider: Provider, baseUrl: string): Promise<string[]>
   githubStatus(): Promise<GitHubStatus>

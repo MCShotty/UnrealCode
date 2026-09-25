@@ -113,7 +113,7 @@ func (adapter *adapter) Respond(ctx context.Context, request llm.Request, option
 	if err != nil {
 		return llm.Response{}, err
 	}
-	statusCode, responseBody, err := adapter.exchange(ctx, body, key)
+	statusCode, responseBody, headers, err := adapter.exchange(ctx, body, key)
 	if err != nil {
 		return llm.Response{}, err
 	}
@@ -123,7 +123,12 @@ func (adapter *adapter) Respond(ctx context.Context, request llm.Request, option
 	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
 		return llm.Response{}, fmt.Errorf("create response: %w", providerError(statusCode, responseBody))
 	}
-	return decodeResponse(responseBody)
+	response, err := decodeResponse(responseBody)
+	if err != nil {
+		return llm.Response{}, err
+	}
+	response.RateLimits = llm.SafeRateLimitHeaders(headers)
+	return response, nil
 }
 
 const modelResponseIdleTimeout = 30 * time.Minute

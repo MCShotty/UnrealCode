@@ -49,6 +49,7 @@ type credential struct {
 
 type runningSession struct {
 	inbox    *inbox.Inbox
+	manager  *observedManager
 	cancel   context.CancelFunc
 	done     chan struct{}
 	stopping atomic.Bool
@@ -250,14 +251,14 @@ func (a *app) start(id session.ID, secret credential) (*runningSession, error) {
 	}
 	manager := &observedManager{inner: operation.NewLocalOperationManager(ctx,
 		newDecisionJobHandler(ctx, a.decision, decisionPlanType), newDecisionJobHandler(ctx, a.decision, entityPlanType)),
-		updates: make(chan operation.Operation), events: a.events, id: id, ctx: ctx}
+		updates: make(chan operation.Operation), events: a.events, id: id, ctx: ctx, known: make(map[operation.ID]operation.Status)}
 	go manager.forward()
 	current := coordinator.New(coordinator.Dependencies{
 		ToolHeartbeatInterval: 10 * time.Minute, SessionID: id, Inbox: inputs,
 		Restored: restored, Sessions: a.store, ContextBuilder: builder,
-		LLM: client, Tools: registry, Operations: manager,
+		LLM: &observedClient{inner: client, events: a.events, id: id}, Tools: registry, Operations: manager,
 	})
-	run := &runningSession{inbox: inputs, cancel: cancel, done: make(chan struct{})}
+	run := &runningSession{inbox: inputs, manager: manager, cancel: cancel, done: make(chan struct{})}
 	a.running[id] = run
 	go func() {
 		defer close(run.done)
@@ -286,24 +287,68 @@ type observedManager struct {
 	events  *eventLog
 	id      session.ID
 	ctx     context.Context
+	mu      sync.Mutex
+	known   map[operation.ID]operation.Status
 }
 
-func (m *observedManager) Add(value operation.Operation) error { return m.inner.Add(value) }
+func (m *observedManager) Add(value operation.Operation) error {
+	m.events.enqueue(m.id, "operation.started", value)
+	if err := m.inner.Add(value); err != nil {
+		m.events.enqueue(m.id, "operation.add.failed", map[string]string{"id": string(value.ID)})
+		return err
+	}
+	m.mu.Lock()
+	if _, exists := m.known[value.ID]; !exists {
+		m.known[value.ID] = value.Status
+	}
+	m.mu.Unlock()
+	return nil
+}
 func (m *observedManager) Cancel(id operation.ID, reason string) error {
 	return m.inner.Cancel(id, reason)
+}
+func (m *observedManager) CancelUser(id operation.ID) error {
+	m.mu.Lock()
+	status, exists := m.known[id]
+	m.mu.Unlock()
+	if !exists {
+		return errors.New("operation is not active in this session")
+	}
+	if status == operation.StatusCompleted || status == operation.StatusFailed || status == operation.StatusCanceled {
+		return nil
+	}
+	return m.inner.Cancel(id, "Canceled by user")
 }
 func (m *observedManager) Updates() <-chan operation.Operation { return m.updates }
 func (m *observedManager) forward() {
 	defer close(m.updates)
 	for value := range m.inner.Updates() {
-		_ = m.events.append(m.id, "operation.update", value, 0)
+		m.mu.Lock()
+		m.known[value.ID] = value.Status
+		m.mu.Unlock()
 		select {
 		case m.updates <- value:
+			m.events.enqueue(m.id, "operation.update", value)
 		case <-m.ctx.Done():
 			return
 		}
 	}
 }
+
+type observedClient struct {
+	inner  agentrunner.Client
+	events *eventLog
+	id     session.ID
+}
+
+func (c *observedClient) Respond(ctx context.Context, request llm.Request, options llm.RequestOptions) (llm.Response, error) {
+	id := uuid.New().String()
+	c.events.enqueue(c.id, "model.request.started", map[string]string{"id": id})
+	response, err := c.inner.Respond(ctx, request, options)
+	c.events.enqueue(c.id, "model.request.completed", map[string]any{"id": id, "success": err == nil})
+	return response, err
+}
+func (c *observedClient) Close() error { return c.inner.Close() }
 
 func (a *app) submit(id session.ID, input inbox.Input, secret credential) error {
 	run, err := a.start(id, secret)

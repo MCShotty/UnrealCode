@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/unreallabsai/unreal-agent/harness/llm"
 	"github.com/unreallabsai/unreal-agent/harness/session"
@@ -20,22 +21,74 @@ import (
 // eventLog is a durable, renderer-oriented projection. Session store items remain
 // canonical; reconcile repairs a missing projection entry after a crash.
 type eventLog struct {
-	mu     sync.Mutex
-	dir    string
-	output *output
-	state  map[session.ID]*eventState
+	mu        sync.Mutex
+	dir       string
+	output    *output
+	state     map[session.ID]*eventState
+	queueMu   sync.Mutex
+	queueCond *sync.Cond
+	queue     []queuedEvent
+}
+
+type queuedEvent struct {
+	id      session.ID
+	kind    string
+	payload any
+	at      time.Time
+	barrier chan struct{}
 }
 
 type eventState struct {
-	next   uint64
-	source map[uint64]struct{}
+	next       uint64
+	source     map[uint64]struct{}
+	contiguous uint64
 }
 
 func newEventLog(dir string, out *output) (*eventLog, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	return &eventLog{dir: dir, output: out, state: make(map[session.ID]*eventState)}, nil
+	log := &eventLog{dir: dir, output: out, state: make(map[session.ID]*eventState)}
+	log.queueCond = sync.NewCond(&log.queueMu)
+	go log.writeQueue()
+	return log, nil
+}
+
+// enqueue keeps telemetry and UI observation off the coordinator's critical path.
+func (l *eventLog) enqueue(id session.ID, kind string, payload any) {
+	l.queueMu.Lock()
+	l.queue = append(l.queue, queuedEvent{id: id, kind: kind, payload: payload, at: time.Now().UTC()})
+	l.queueCond.Signal()
+	l.queueMu.Unlock()
+}
+
+func (l *eventLog) writeQueue() {
+	for {
+		l.queueMu.Lock()
+		for len(l.queue) == 0 {
+			l.queueCond.Wait()
+		}
+		value := l.queue[0]
+		l.queue[0] = queuedEvent{}
+		l.queue = l.queue[1:]
+		l.queueMu.Unlock()
+		if value.barrier != nil {
+			close(value.barrier)
+			continue
+		}
+		if err := l.appendAt(value.id, value.kind, value.payload, 0, value.at); err != nil {
+			fmt.Fprintln(os.Stderr, "write telemetry:", err)
+		}
+	}
+}
+
+func (l *eventLog) flush() {
+	done := make(chan struct{})
+	l.queueMu.Lock()
+	l.queue = append(l.queue, queuedEvent{barrier: done})
+	l.queueCond.Signal()
+	l.queueMu.Unlock()
+	<-done
 }
 
 func (l *eventLog) path(id session.ID) string {
@@ -65,6 +118,10 @@ func (l *eventLog) readLocked(id session.ID) ([]event, error) {
 }
 
 func (l *eventLog) append(id session.ID, kind string, payload any, sourceSequence uint64) error {
+	return l.appendAt(id, kind, payload, sourceSequence, time.Now().UTC())
+}
+
+func (l *eventLog) appendAt(id session.ID, kind string, payload any, sourceSequence uint64, at time.Time) error {
 	encodedPayload, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -83,6 +140,12 @@ func (l *eventLog) append(id session.ID, kind string, payload any, sourceSequenc
 				state.source[entry.SourceSequence] = struct{}{}
 			}
 		}
+		for {
+			if _, ok := state.source[state.contiguous+1]; !ok {
+				break
+			}
+			state.contiguous++
+		}
 		l.state[id] = state
 	}
 	if sourceSequence != 0 {
@@ -90,7 +153,7 @@ func (l *eventLog) append(id session.ID, kind string, payload any, sourceSequenc
 			return nil
 		}
 	}
-	entry := event{Version: protocolVersion, Event: kind, SessionID: string(id), Sequence: state.next, SourceSequence: sourceSequence, Payload: jsontext.Value(encodedPayload)}
+	entry := event{Version: protocolVersion, Event: kind, SessionID: string(id), Sequence: state.next, SourceSequence: sourceSequence, RecordedAt: at, Payload: jsontext.Value(encodedPayload)}
 	line, err := json.Marshal(entry)
 	if err != nil {
 		return err
@@ -113,12 +176,41 @@ func (l *eventLog) append(id session.ID, kind string, payload any, sourceSequenc
 	state.next++
 	if sourceSequence != 0 {
 		state.source[sourceSequence] = struct{}{}
+		for {
+			if _, ok := state.source[state.contiguous+1]; !ok {
+				break
+			}
+			state.contiguous++
+		}
 	}
 	return l.output.write(entry)
 }
 
 func (l *eventLog) reconcile(store sessionstore.Store, id session.ID) error {
-	var after sessionstore.Sequence
+	l.mu.Lock()
+	state := l.state[id]
+	if state == nil {
+		entries, err := l.readLocked(id)
+		if err != nil {
+			l.mu.Unlock()
+			return err
+		}
+		state = &eventState{next: uint64(len(entries) + 1), source: make(map[uint64]struct{})}
+		for _, entry := range entries {
+			if entry.SourceSequence != 0 {
+				state.source[entry.SourceSequence] = struct{}{}
+			}
+		}
+		for {
+			if _, ok := state.source[state.contiguous+1]; !ok {
+				break
+			}
+			state.contiguous++
+		}
+		l.state[id] = state
+	}
+	after := sessionstore.Sequence(state.contiguous)
+	l.mu.Unlock()
 	for {
 		page, err := store.Items(context.Background(), id, after, 256)
 		if err != nil {

@@ -43,6 +43,8 @@ func TestAdapterResponds(t *testing.T) {
 			t.Errorf("decode request: %v", err)
 		}
 		requestBody <- body
+		writer.Header().Set("x-ratelimit-limit-requests", "60")
+		writer.Header().Set("x-ratelimit-remaining-requests", "59")
 
 		writeStreamResponse(t, writer, `{
 			"id":"resp-1",
@@ -62,6 +64,9 @@ func TestAdapterResponds(t *testing.T) {
 	got, err := adapter.Respond(t.Context(), detailedRequest(), llm.RequestOptions{})
 	if err != nil {
 		t.Fatalf("respond: %v", err)
+	}
+	if got.RateLimits["x-ratelimit-remaining-requests"] != "59" {
+		t.Fatalf("missing rate-limit header: %#v", got.RateLimits)
 	}
 	gotRequestBody := <-requestBody
 	if gotRequestBody["stream"] != true {
@@ -104,6 +109,7 @@ func TestAdapterResponds(t *testing.T) {
 			Raw: jsontext.Value(`{"input_tokens":20,"input_tokens_details":{"cached_tokens":8,"cache_write_tokens":3},` +
 				`"output_tokens":10,"output_tokens_details":{"reasoning_tokens":4},"total_tokens":30}`),
 		},
+		RateLimits: map[string]string{"x-ratelimit-limit-requests": "60", "x-ratelimit-remaining-requests": "59"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("response = %#v\nwant %#v", got, want)

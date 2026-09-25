@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 )
 
 const protocolVersion = 1
@@ -32,6 +33,7 @@ type event struct {
 	SessionID      string         `json:"sessionId"`
 	Sequence       uint64         `json:"seq"`
 	SourceSequence uint64         `json:"sourceSequence,omitzero"`
+	RecordedAt     time.Time      `json:"recordedAt,omitzero"`
 	Payload        jsontext.Value `json:"payload"`
 }
 
