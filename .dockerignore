@@ -7,4 +7,7 @@
 !harness/**
 !internal/
 !internal/**
+!desktop/
+!desktop/worker/
+!desktop/worker/**
 !LICENSE

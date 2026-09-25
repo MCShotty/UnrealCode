@@ -24,6 +24,7 @@ type registry struct {
 
 	mu                sync.RWMutex
 	staticTranslators map[string]Translator
+	extraDefinitions  []Definition
 	skills            map[RegistrationID]Skill
 	skillIDsByPath    map[string]RegistrationID
 	skillOrder        []RegistrationID
@@ -34,6 +35,12 @@ var _ Registry = (*registry)(nil)
 type StaticTranslators struct {
 	Bash      Translator
 	ViewImage Translator
+	Extra     []ExtraStaticTool
+}
+
+type ExtraStaticTool struct {
+	Definition Definition
+	Translator Translator
 }
 
 func NewRegistry(configured StaticTranslators, enabled ...string) Registry {
@@ -56,12 +63,28 @@ func NewRegistry(configured StaticTranslators, enabled ...string) Registry {
 		ViewImageName: configured.ViewImage,
 		SkillUseName:  &skillUseTranslator{registry: current},
 	}
+	for _, extra := range configured.Extra {
+		name := extra.Definition.Tool.Name
+		if name == "" || extra.Translator == nil {
+			continue
+		}
+		if _, reserved := current.staticTranslators[name]; reserved {
+			continue
+		}
+		current.staticTranslators[name] = extra.Translator
+		current.extraDefinitions = append(current.extraDefinitions, extra.Definition)
+	}
 	return current
 }
 
 func (current *registry) StaticDefinitions() []Definition {
 	var definitions []Definition
 	for _, definition := range staticDefinitions() {
+		if _, enabled := current.enabled[definition.Tool.Name]; enabled {
+			definitions = append(definitions, definition)
+		}
+	}
+	for _, definition := range current.extraDefinitions {
 		if _, enabled := current.enabled[definition.Tool.Name]; enabled {
 			definitions = append(definitions, definition)
 		}

@@ -51,7 +51,17 @@ func (current *builder) AddExternalInput(input inbox.Input) error {
 
 	var text string
 	if err := json.Unmarshal(input.Payload, &text); err != nil {
-		return fmt.Errorf("decode external input %q: %w", input.ID, err)
+		var value struct {
+			Prompt string `json:"prompt"`
+			Advice string `json:"advice"`
+		}
+		if objectErr := json.Unmarshal(input.Payload, &value); objectErr != nil || value.Prompt == "" {
+			return fmt.Errorf("decode external input %q: %w", input.ID, err)
+		}
+		text = value.Prompt
+		if value.Advice != "" {
+			text += "\n\n<unrealcode_decision_advice>\n" + value.Advice + "\n</unrealcode_decision_advice>"
+		}
 	}
 	current.stagedSuffix = append(current.stagedSuffix, llm.Item{
 		Type: llm.ItemMessage,

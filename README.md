@@ -1,4 +1,8 @@
-# Unreal Agent
+# UnrealCode
+
+UnrealCode is a Windows desktop application built on the Unreal Agent harness. See [desktop/README.md](desktop/README.md) for installation, providers, decision engines, GitHub integration, and verification. The upstream Go library and command documentation follows below.
+
+## Unreal Agent base
 
 An async-first agent harness from Unreal Labs.
 

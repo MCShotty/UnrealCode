@@ -1,6 +1,8 @@
 package agentrunner
 
 import (
+	"github.com/unreallabsai/unreal-agent/harness/llm/clients/anthropic"
+	"github.com/unreallabsai/unreal-agent/harness/llm/clients/chatcompatible"
 	"github.com/unreallabsai/unreal-agent/harness/llm/clients/fireworks"
 	"github.com/unreallabsai/unreal-agent/harness/llm/clients/ollama"
 	"github.com/unreallabsai/unreal-agent/harness/llm/clients/openai"
@@ -11,10 +13,25 @@ import (
 func DefaultProviders() []Provider {
 	return []Provider{
 		{
+			Name:              "anthropic",
+			BaseURL:           anthropic.DefaultBaseURL,
+			DefaultModel:      "claude-sonnet-5",
+			APIKeyEnvironment: "ANTHROPIC_API_KEY",
+			NewClient: func(apiKey, baseURL string, maxAttempts int, _ func(string) string) (Client, error) {
+				return anthropic.NewClient(anthropic.Config{APIKey: apiKey, BaseURL: baseURL, MaxAttempts: &maxAttempts})
+			},
+		},
+		{
 			Name:    "ollama",
 			BaseURL: ollama.BaseURL,
 			NewClient: func(_, baseURL string, maxAttempts int, _ func(string) string) (Client, error) {
 				return ollama.NewClient(ollama.Config{BaseURL: baseURL, MaxAttempts: &maxAttempts})
+			},
+		},
+		{
+			Name: "openai-compatible",
+			NewClient: func(apiKey, baseURL string, maxAttempts int, _ func(string) string) (Client, error) {
+				return chatcompatible.NewClient(apiKey, baseURL, maxAttempts)
 			},
 		},
 		{
