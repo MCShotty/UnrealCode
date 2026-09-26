@@ -72,6 +72,65 @@ func (a *app) dispatch(req request) (any, error) {
 		return nil, fmt.Errorf("unsupported protocol version %d", req.Version)
 	}
 	switch req.Method {
+	case "permission.list", "permission.respond":
+		p, err := decodeParams[struct {
+			SessionID string `json:"sessionId"`
+			ID        string `json:"id"`
+			Digest    string `json:"digest"`
+			Allow     bool   `json:"allow"`
+		}](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		id, err := requiredID(p.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		a.mu.Lock()
+		run := a.running[id]
+		a.mu.Unlock()
+		if run == nil {
+			if req.Method == "permission.list" {
+				return []approvalRequest{}, nil
+			}
+			return nil, errors.New("Session is stopped; approval expired")
+		}
+		if req.Method == "permission.list" {
+			return run.permissions.list(), nil
+		}
+		return nil, run.permissions.resolve(p.ID, p.Digest, p.Allow)
+	case "session.mode":
+		p, err := decodeParams[struct {
+			SessionID string `json:"sessionId"`
+			Mode      string `json:"mode"`
+		}](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		if !validMode(p.Mode) {
+			return nil, errors.New("Invalid execution mode")
+		}
+		id, err := requiredID(p.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		a.mu.Lock()
+		run := a.running[id]
+		busy := run != nil && run.busy.Load()
+		a.mu.Unlock()
+		if busy {
+			return nil, errors.New("Finish or stop active work before changing execution mode")
+		}
+		stopParams, _ := json.Marshal(sessionIDParams{SessionID: p.SessionID})
+		if _, err := a.dispatch(request{Version: protocolVersion, Method: "session.stop", Params: stopParams}); err != nil {
+			return nil, err
+		}
+		config, err := a.loadConfig(id)
+		if err != nil {
+			return nil, err
+		}
+		config.Mode = p.Mode
+		return nil, a.saveConfig(id, config)
 	case "context.configure":
 		p, err := decodeParams[struct {
 			Excluded []string `json:"excluded"`
@@ -95,7 +154,7 @@ func (a *app) dispatch(req request) (any, error) {
 	case "decision.idle":
 		return a.decisionPending.Load() == 0, nil
 	case "health":
-		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion}, nil
+		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion, "capabilities": []string{"permissions.v1", "files.v1", "sessions.v1"}}, nil
 	case "decision.configure":
 		config, err := decodeParams[decisionConfig](req.Params)
 		if err != nil {
@@ -132,6 +191,12 @@ func (a *app) dispatch(req request) (any, error) {
 		p, err := decodeParams[createParams](req.Params)
 		if err != nil {
 			return nil, err
+		}
+		if p.Config.Mode == "" {
+			p.Config.Mode = "ask"
+		}
+		if !validMode(p.Config.Mode) {
+			return nil, errors.New("Invalid execution mode")
 		}
 		probe, _, err := a.makeClient(p.Config, p.Credential)
 		if err != nil {

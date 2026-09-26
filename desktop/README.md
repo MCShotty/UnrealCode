@@ -28,7 +28,7 @@ node scripts/qa.mjs --workspace --flows --motion
 node scripts/qa.mjs --workspace --flows --packaged
 ```
 
-The installer is `dist/UnrealCode Setup 0.6.1.exe`. It bundles backend source and builds a Docker image tagged with the app version and source fingerprint, so a rebuilt installer does not reuse an older backend image. No host Go installation is required. For a live Codex tool call, use `node scripts/qa.mjs --workspace --temp-workspace --live --tool`. A synthetic Jev integration check is `node scripts/qa.mjs --workspace --temp-workspace --decision` when `TYPESAFE_API_KEY` is available.
+The installer is `dist/UnrealCode Setup 0.7.0.exe`. It bundles backend source and builds a Docker image tagged with the app version and source fingerprint, so a rebuilt installer does not reuse an older backend image. No host Go installation is required. For a live Codex tool call, use `node scripts/qa.mjs --workspace --temp-workspace --live --tool`. A synthetic Jev integration check is `node scripts/qa.mjs --workspace --temp-workspace --decision` when `TYPESAFE_API_KEY` is available.
 
 The installer includes third-party license texts in `resources/licenses`, plus Electron and Chromium notices at the application root. `npm run build:win` regenerates the npm notices and stops if a new dependency's license needs review.
 
@@ -129,3 +129,43 @@ provider account reports still include their real usage.
 `node scripts/qa-diagnostics.mjs --packaged` checks local fixture health and UI.
 Add `--live-decisions` to explicitly run a two-arm synthetic worktree comparison
 using the configured TypeSafe key; its main model remains a local test fixture.
+
+## Coding controls and isolated workspaces (0.7)
+
+New sessions default to Ask: commands and edits wait for one-time approval tied
+to the exact session, workspace and operation. Plan exposes dedicated read/search
+tools; Agent runs granted project tools. Pending approvals expire after ten
+minutes and cannot be reused after restart. Selecting saved history does not
+resume execution; use Resume session or send a message. Historical tool results
+remain readable when changing modes. Approval waiting is excluded from execution
+overlap measurements.
+
+ListFiles and ReadFile inspect project files without a shell. ReadFile returns a
+revision and a bounded UTF-8 excerpt (files up to 1 MiB, output up to 64 KiB).
+ApplyPatch checks revisions, supports file creation/deletion, and retains recovery
+copies outside the project. Independent file operations remain concurrent;
+conflicting writes to the same path are serialized.
+
+New tasks in committed Git roots offer a reviewed isolated snapshot of tracked
+and nonignored local files. Capture omissions are shown before starting. Unsaved
+editor buffers are not part of that disk snapshot. Other folders retain ordinary
+project sessions. Review → Isolated tasks previews changes against the source
+project and blocks conflicts before integration. Recovery copies are available
+through Source project and recovery. A queued isolated task with changes pauses
+for integration or an explicit choice to retain its changes. Worktrees remain
+available for inspection; background queue creation does not change the workspace
+being edited.
+
+Files now includes locally bundled Monaco tabs, search/replace, HEAD comparisons,
+conflict-aware saves, an Open in VS Code action and selection-to-chat attachment.
+Ctrl+S saves; Ctrl+F searches; Ctrl+Alt+Enter attaches a selection. Unsaved buffers
+survive navigation and project switches during the current app run; closing with
+unsaved changes requires confirmation. Binary/oversized files remain outside the
+text editor. Native Windows path aliases, reserved names and traversal are checked.
+
+`node scripts/qa-coding.mjs --packaged` exercises approvals, parallel reading,
+dirty snapshots, integration, mode changes, editor conflicts and both themes with
+a local fixture provider. `node scripts/benchmark-bridge.mjs BASELINE CANDIDATE`
+compares bridge-only latency and overlap using fixture models, without user files
+or provider credentials. Windows desktop and Linux Docker compatibility checks
+are defined in `.github/workflows/desktop.yml`.

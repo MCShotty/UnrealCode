@@ -13,6 +13,12 @@ async function workspace(): Promise<string> {
 afterEach(async () => { for (const path of created.splice(0)) await fs.rm(path, { recursive: true, force: true }) })
 
 describe('trusted project file access', () => {
+  it('returns relative paths when the project is reached through an alias', async () => {
+    const root = await workspace(), aliases = await workspace(), alias = join(aliases, 'project')
+    await fs.writeFile(join(root, 'hello.txt'), 'hello')
+    await fs.symlink(root, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    expect((await listFiles(alias))[0].path).toBe('hello.txt')
+  })
   it('allows text preview but rejects parent traversal and binary files', async () => {
     const root = await workspace()
     await fs.writeFile(join(root, 'hello.txt'), 'hello')

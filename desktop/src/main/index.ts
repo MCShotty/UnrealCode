@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, realpathSync } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -22,10 +22,11 @@ import { modelHealth } from './model-health'
 import { Evaluations } from './evaluations'
 import { DecisionOverrides, decisionTraces } from './decision-trace'
 import type { EvaluationRequest } from '../shared/diagnostics'
+import { editorBase, editorPath, readEditableFile, saveEditableFile } from './editor-files'
 
 if (process.env.UNREAL_DESKTOP_USER_DATA) {
   mkdirSync(process.env.UNREAL_DESKTOP_USER_DATA, { recursive: true })
-  app.setPath('userData', process.env.UNREAL_DESKTOP_USER_DATA)
+  app.setPath('userData', realpathSync(process.env.UNREAL_DESKTOP_USER_DATA))
 } else {
   app.setPath('userData', join(app.getPath('appData'), 'UnrealCode'))
 }
@@ -43,7 +44,12 @@ const terminals = new Map<string, { write(data: string): void; resize(cols: numb
 
 function project(): string {
   if (!bridge.projectPath) throw new Error('Open a trusted project first')
-  return bridge.projectPath
+  return selected?.active.project || bridge.projectPath
+}
+
+async function sessionRequest<T>(method: string, sessionId: string, params: Record<string, unknown> = {}): Promise<T> {
+  const owner = await runtime().owner(sessionId)
+  return owner.bridge.request<T>(method, { ...params, sessionId })
 }
 
 async function sessionCredential(sessionId?: string, target: DockerBridge = bridge): Promise<Record<string, string>> {
@@ -68,10 +74,10 @@ async function typeSafeKey(): Promise<string> {
   } catch { return '' }
 }
 
-async function configureDecision(target: DockerBridge = bridge): Promise<DecisionStatus> {
+async function configureDecision(target: DockerBridge = selected?.active.bridge || bridge, policyProject = selected?.project || target.projectPath): Promise<DecisionStatus> {
   const settings = getSettings()
   if (!target.projectPath) return { engine: settings.decisionEngine, available: false, glinerAvailable: false, message: 'Open a project first.' }
-  const consent = settings.decisionCloudProjects.includes(target.projectPath)
+  const consent = settings.decisionCloudProjects.includes(policyProject)
   const key = settings.decisionEngine === 'jev' && consent ? await typeSafeKey() : ''
   const engine = settings.decisionEngine === 'jev' && !consent ? 'off' : settings.decisionEngine
   const backend = await target.request<DecisionStatus>('decision.configure', { engine, model: settings.decisionModel || 'jev-latest', apiKey: key, glinerEnabled: settings.glinerEnabled })
@@ -118,7 +124,14 @@ async function openWorkspace(requested: string): Promise<ReturnType<DockerBridge
       event: (event) => window?.webContents.send('agent:event', event),
       changed: () => window?.webContents.send('workflow:changed', canonical),
       hasTerminal: () => selected?.project === canonical && terminals.size > 0,
-      configure: (target) => configureDecision(target),
+      configure: (target) => configureDecision(target, canonical),
+      reviewWorkspace: async snapshot => {
+        const omitted = Object.entries(snapshot.omitted)
+        const answer = await dialog.showMessageBox(window!, { type: 'question', title: 'Review task workspace snapshot', buttons: ['Create isolated task', 'Use project folder', 'Cancel'], defaultId: 0, cancelId: 2,
+          message: `Start an isolated task from ${snapshot.capturedFiles} captured files?`,
+          detail: `Current tracked and nonignored local edits are included. Base: ${snapshot.revision.slice(0,12)}\nWorkspace: ${snapshot.path}\n${omitted.length ? `Omitted ${omitted.length} paths (committed versions may remain):\n${omitted.slice(0,15).map(([path, reason]) => `${path}: ${reason}`).join('\n')}` : 'No capture omissions.'}\nChanges return to your project only after review and explicit integration.` })
+        return answer.response === 0 ? 'isolated' : answer.response === 1 ? 'project' : 'cancel'
+      },
       notify: (sessionId, state) => {
         if (!getSettings().notifications || !Notification.isSupported() || !['idle', 'failed', 'waiting_input'].includes(state)) return
         const notification = new Notification({ title: state === 'idle' ? 'UnrealCode task complete' : state === 'failed' ? 'UnrealCode task needs review' : 'UnrealCode needs your input', body: canonical.split(/[\\/]/).at(-1) || 'Workspace' })
@@ -138,6 +151,7 @@ async function openWorkspace(requested: string): Promise<ReturnType<DockerBridge
   }
   if (!current.bridge.status().ready) await current.start()
   selected = current; bridge = current.bridge; sessionUsage = current.usage; checkpoints = current.checkpoints
+  current.active = current
   rememberProject(canonical)
   const settings = getSettings()
   if (settings.decisionEngine === 'jev' && !settings.decisionCloudProjects.includes(canonical) && !settings.decisionCloudDeclinedProjects.includes(canonical)) await requestDecisionConsent(canonical, bridge)
@@ -147,6 +161,7 @@ async function openWorkspace(requested: string): Promise<ReturnType<DockerBridge
 }
 
 function registerIPC(): void {
+  ipcMain.handle('app:version', () => app.getVersion())
   ipcMain.handle('models:health', (_event, provider: Provider, baseUrl: string, model: string, test: boolean) => modelHealth(provider, baseUrl, model, test))
   ipcMain.handle('decision:traces', async (_event, sessionId: string) => {
     const owner = runtime(), notes = new DecisionOverrides(join(projectData(app.getPath('userData'), owner.project), 'decision-overrides'))
@@ -159,16 +174,18 @@ function registerIPC(): void {
   ipcMain.handle('evaluation:list', () => evaluations.list(project()))
   ipcMain.handle('evaluation:start', async (_event, request: EvaluationRequest) => {
     const owner = runtime(), settings = getSettings()
+    const approval = await dialog.showMessageBox(window!, { type: 'question', title: 'Run isolated evaluation?', buttons: ['Run evaluation', 'Cancel'], defaultId: 1, cancelId: 1, message: 'Allow these bounded evaluation tasks to run tools in disposable worktrees?', detail: 'Evaluation sessions use Agent mode within their isolated folders. Selected verification commands will run. No changes are applied to your project.' })
+    if (approval.response !== 0) throw new Error('Evaluation cancelled')
     const key = settings.decisionEngine === 'jev' && settings.decisionCloudProjects.includes(owner.project) ? await typeSafeKey() : ''
-    return evaluations.start(owner.project, owner.config(), request, { engine: settings.decisionEngine, model: settings.decisionModel, apiKey: key, glinerEnabled: settings.glinerEnabled }, owner.context.get().excluded)
+    return evaluations.start(owner.project, { ...owner.config(), mode: 'agent' }, request, { engine: settings.decisionEngine, model: settings.decisionModel, apiKey: key, glinerEnabled: settings.glinerEnabled }, owner.context.get().excluded)
   })
   ipcMain.handle('evaluation:cancel', async (_event, id: string) => { if (!(await evaluations.list(project())).some(item => item.id === id)) throw new Error('Evaluation not in this project'); return evaluations.cancel(id) })
   ipcMain.handle('evaluation:cleanup', (_event, id: string) => evaluations.cleanup(project(), id))
-  const checkpointService = (): CheckpointService => { if (!checkpoints) throw new Error('Open a project first'); return checkpoints }
+  const checkpointService = (): CheckpointService => runtime().active.checkpoints
   const idleMutation = <T>(work: (root: string) => Promise<T>): Promise<T> => {
-    const owner = runtime()
+    const owner = runtime().active
     return owner.checkpoints.exclusive(async () => {
-      if (owner.checkpoints.busy || !await owner.bridge.request<boolean>('project.idle', {})) throw new Error('Wait for active project work to finish before changing files or Git state')
+      if (terminals.size || owner.checkpoints.busy || !await owner.bridge.request<boolean>('project.idle', {})) throw new Error('Wait for active project work to finish and close terminals before changing files or Git state')
       return work(owner.project)
     })
   }
@@ -177,9 +194,9 @@ function registerIPC(): void {
   ipcMain.handle('checkpoints:storage', () => checkpointService().store.storage())
   ipcMain.handle('checkpoints:remove', (_event, id: string) => { const owner = checkpointService(); return owner.exclusive(() => owner.store.remove(id)) })
   ipcMain.handle('checkpoints:restore', (_event, id: string, paths: string[]) => {
-    const owner = runtime()
+    const owner = runtime().active
     return owner.checkpoints.exclusive(async () => {
-      if (owner.checkpoints.busy || (selected === owner && terminals.size > 0) || !await owner.bridge.request<boolean>('project.idle', {})) throw new Error('Stop active work and close the container terminal before restoring files')
+      if (owner.checkpoints.busy || terminals.size > 0 || !await owner.bridge.request<boolean>('project.idle', {})) throw new Error('Stop active work and close the container terminal before restoring files')
       return owner.checkpoints.store.restore(id, paths)
     })
   })
@@ -211,7 +228,7 @@ function registerIPC(): void {
   })
   ipcMain.handle('session:event-window', (_event, sessionId: string, sequence: number) => {
     if (!Number.isSafeInteger(sequence) || sequence < 1) throw new Error('Invalid event sequence')
-    return bridge.request('session.events', { sessionId, after: Math.max(0, sequence - 100), limit: 1000 })
+    return sessionRequest('session.events', sessionId, { after: Math.max(0, sequence - 100), limit: 1000 })
   })
   ipcMain.handle('settings:get', () => getSettings())
   ipcMain.handle('settings:update', async (_event, patch) => {
@@ -220,7 +237,7 @@ function registerIPC(): void {
     window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#101726' : '#f3f5fb')
     if (bridge.projectPath) {
       if (next.decisionEngine === 'jev' && !next.decisionCloudProjects.includes(bridge.projectPath) && !next.decisionCloudDeclinedProjects.includes(bridge.projectPath)) await requestDecisionConsent(bridge.projectPath)
-      await Promise.all([...workspaces.values()].map((owner) => configureDecision(owner.bridge)))
+      await Promise.all([...workspaces.values()].map((owner) => owner.configureAll()))
     }
     return getSettings()
   })
@@ -236,25 +253,25 @@ function registerIPC(): void {
     accountUsage.invalidate(provider)
   })
   ipcMain.handle('usage:snapshot', async (_event, force = false) => {
-    const [accounts, sessions] = await Promise.all([accountUsage.snapshot(force), sessionUsage.summaries()])
+    const [accounts, sessions] = await Promise.all([accountUsage.snapshot(force), selected ? selected.summaries() : sessionUsage.summaries()])
     return { accounts, sessions }
   })
-  ipcMain.handle('execution:summary', (_event, sessionId: string) => sessionUsage.execution(sessionId))
-  ipcMain.handle('operation:cancel', (_event, sessionId: string, operationId: string) => bridge.request('operation.cancel', { sessionId, operationId }))
+  ipcMain.handle('execution:summary', async (_event, sessionId: string) => (await runtime().owner(sessionId)).usage.execution(sessionId))
+  ipcMain.handle('operation:cancel', (_event, sessionId: string, operationId: string) => sessionRequest('operation.cancel', sessionId, { operationId }))
   ipcMain.handle('settings:codex-status', () => codexStatus())
   ipcMain.handle('models:discover', (_event, provider: Provider, baseUrl: string) => discoverModels(provider, baseUrl))
   ipcMain.handle('decision:status', () => configureDecision())
-  ipcMain.handle('decision:consent', async () => requestDecisionConsent(project()))
+  ipcMain.handle('decision:consent', async () => requestDecisionConsent(runtime().project, runtime().active.bridge))
   ipcMain.handle('decision:install', async (_event, engine: 'laya' | 'gliner') => {
     if (engine !== 'laya' && engine !== 'gliner') throw new Error('Invalid local engine')
-    await bridge.request('decision.install', { engine }, 20 * 60 * 1000)
+    await runtime().active.bridge.request('decision.install', { engine }, 20 * 60 * 1000)
     return configureDecision()
   })
   ipcMain.handle('decision:evaluate', async (_event, batch: DecisionBatch) => {
     await configureDecision()
-    return bridge.request('decision.evaluate', batch, getSettings().decisionEngine === 'laya' ? 10 * 60 * 1000 : 120000)
+    return runtime().active.bridge.request('decision.evaluate', batch, getSettings().decisionEngine === 'laya' ? 10 * 60 * 1000 : 120000)
   })
-  ipcMain.handle('decision:extract', (_event, text: string, labels: string[]) => bridge.request('decision.extract', { text, labels }, 10 * 60 * 1000))
+  ipcMain.handle('decision:extract', (_event, text: string, labels: string[]) => runtime().active.bridge.request('decision.extract', { text, labels }, 10 * 60 * 1000))
   ipcMain.handle('github:status', () => github.githubStatus())
   ipcMain.handle('github:repositories', () => github.githubRepositories())
   ipcMain.handle('github:clone', async (_event, repository: string) => {
@@ -284,15 +301,62 @@ function registerIPC(): void {
   ipcMain.handle('project:open', (_event, requested: string) => openWorkspace(requested))
   ipcMain.handle('docker:status', () => bridge.probe())
 
-  ipcMain.handle('session:list', () => bridge.request('session.list', {}))
-  ipcMain.handle('session:create', async () => ({ sessionId: await runtime().create() }))
-  ipcMain.handle('session:open', (_event, sessionId: string) => runtime().open(sessionId))
+  ipcMain.handle('workspace:tasks', () => runtime().tasks.list())
+  ipcMain.handle('workspace:active', () => ({ path: runtime().active.project, isolated: runtime().active.isolated }))
+  ipcMain.handle('workspace:preview', (_event, id: string) => runtime().tasks.preview(id))
+  ipcMain.handle('workspace:retain', async (_event, id: string) => {
+    const owner = runtime(), task = (await owner.tasks.list()).find(item => item.id === id)
+    if (!task?.sessionId) throw new Error('Unknown task workspace')
+    const child = await owner.owner(task.sessionId)
+    if (child.checkpoints.busy || !await child.bridge.request('project.idle', {})) throw new Error('Finish or stop task work first')
+    await owner.tasks.update(id, { state: 'retained' })
+    owner.queue.reviewed(task.sessionId, 'Changes retained in the isolated task. Resume the queue when ready.')
+  })
+  ipcMain.handle('workspace:integrate', async (_event, id: string, paths: string[]) => {
+    const owner = runtime(), task = (await owner.tasks.list()).find(item => item.id === id)
+    if (!task?.sessionId) throw new Error('Task workspace has no session')
+    const child = await owner.owner(task.sessionId)
+    return owner.checkpoints.exclusive(async () => {
+      if (terminals.size || owner.checkpoints.busy || child.checkpoints.busy || !await child.bridge.request('project.idle', {}) || !await owner.bridge.request('project.idle', {})) throw new Error('Finish or stop project operations and close terminals before integration')
+      const recovery = await owner.tasks.integrate(id, paths)
+      if (!(await owner.tasks.preview(id)).changes.length) owner.queue.reviewed(task.sessionId!)
+      return recovery
+    })
+  })
+  ipcMain.handle('session:list', () => runtime().sessions())
+  ipcMain.handle('session:config', (_event, sessionId: string) => sessionRequest('session.config', sessionId))
+  ipcMain.handle('session:mode', async (_event, sessionId: string, mode: string) => {
+    const owner = await runtime().owner(sessionId)
+    return owner.checkpoints.exclusive(async () => {
+      if (owner.checkpoints.busy) throw new Error('Finish or stop active work before changing execution mode')
+      return owner.bridge.request('session.mode', { sessionId, mode })
+    })
+  })
+  ipcMain.handle('permission:list', (_event, sessionId: string) => sessionRequest('permission.list', sessionId))
+  ipcMain.handle('permission:respond', (_event, sessionId: string, id: string, digest: string, allow: boolean) => {
+    if (typeof allow !== 'boolean') throw new Error('Approval needs an explicit choice')
+    return sessionRequest('permission.respond', sessionId, { id, digest, allow })
+  })
+  ipcMain.handle('session:create', async () => { closeTerminals(); const owner = runtime(); const sessionId = await owner.create(); window?.webContents.send('docker:status-changed', owner.active.bridge.status()); return { sessionId } })
+  ipcMain.handle('session:open', async (_event, sessionId: string) => { closeTerminals(); const owner = runtime(); await owner.open(sessionId); window?.webContents.send('docker:status-changed', owner.active.bridge.status()) })
+  ipcMain.handle('session:select', async (_event, sessionId: string) => { closeTerminals(); const owner = runtime(); await owner.select(sessionId); window?.webContents.send('docker:status-changed', owner.active.bridge.status()) })
   ipcMain.handle('session:send', (_event, sessionId: string, prompt: string, messageId: string) => runtime().send(sessionId, prompt, messageId, terminals.size > 0))
   ipcMain.handle('session:stop', (_event, sessionId: string) => runtime().stop(sessionId))
-  ipcMain.handle('session:fork', async (_event, sessionId: string) => bridge.request('session.fork', { sessionId, credential: await sessionCredential(sessionId) }))
-  ipcMain.handle('session:events', (_event, sessionId: string, after: number) => bridge.request('session.events', { sessionId, after, limit: 1000 }))
+  ipcMain.handle('session:fork', (_event, sessionId: string) => runtime().fork(sessionId))
+  ipcMain.handle('session:events', (_event, sessionId: string, after: number) => sessionRequest('session.events', sessionId, { after, limit: 1000 }))
 
   ipcMain.handle('files:list', (_event, relative?: string) => listFiles(project(), relative))
+  ipcMain.handle('editor:read', (_event, path: string) => readEditableFile(project(), path))
+  ipcMain.handle('editor:base', (_event, path: string) => editorBase(project(), path))
+  ipcMain.handle('editor:save', (_event, path: string, revision: string, content: string, workspace: string) => idleMutation(async root => {
+    if (typeof workspace !== 'string' || workspace.toLowerCase() !== (await fs.realpath(root)).toLowerCase()) throw new Error('The active task workspace changed. Reopen this editor tab in its original workspace before saving.')
+    return saveEditableFile(root, path, revision, content, app.getPath('userData'))
+  }))
+  ipcMain.handle('editor:external', async (_event, path: string) => {
+    const target = await editorPath(project(), path)
+    const url = new URL('vscode://file/'); url.pathname = `/${target.replaceAll('\\', '/')}`
+    await shell.openExternal(url.href)
+  })
   ipcMain.handle('files:read', (_event, relative: string) => readFile(project(), relative))
   ipcMain.handle('files:changes', () => gitChanges(project()))
   ipcMain.handle('files:diff', (_event, relative: string) => gitDiff(project(), relative))
@@ -300,7 +364,7 @@ function registerIPC(): void {
   ipcMain.handle('skills:save', (_event, name: string, content: string) => idleMutation((root) => saveSkill(root, name, content)))
   ipcMain.handle('skills:delete', (_event, name: string) => idleMutation((root) => deleteSkill(root, name)))
 
-  ipcMain.handle('terminal:start', () => { const owner = runtime(); return owner.checkpoints.exclusive(async () => {
+  ipcMain.handle('terminal:start', () => { const owner = runtime().active; return owner.checkpoints.exclusive(async () => {
     const container = owner.bridge.containerName
     if (!container) throw new Error('Container is not running')
     const pty = await import('node-pty')
@@ -340,6 +404,10 @@ function createWindow(): void {
   if (process.env.ELECTRON_RENDERER_URL) window.loadURL(process.env.ELECTRON_RENDERER_URL)
   else window.loadFile(join(__dirname, '../renderer/index.html'))
   window.on('closed', () => { window = null })
+  window.webContents.on('will-prevent-unload', event => {
+    const response = dialog.showMessageBoxSync(window!, { type: 'warning', message: 'Discard unsaved editor changes?', buttons: ['Keep editing', 'Discard and close'], defaultId: 0, cancelId: 0 })
+    if (response === 1) event.preventDefault()
+  })
 }
 
 app.whenReady().then(() => {
@@ -352,5 +420,5 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
 
-app.on('before-quit', () => { closeTerminals(); evaluations.stopAll(); for (const owner of workspaces.values()) void owner.bridge.stop() })
+app.on('before-quit', () => { closeTerminals(); evaluations.stopAll(); for (const owner of workspaces.values()) void owner.stopAll() })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

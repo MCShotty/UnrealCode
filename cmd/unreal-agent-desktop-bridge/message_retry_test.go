@@ -24,7 +24,7 @@ func TestRetriedMessageDoesNotAnswerPendingQuestion(t *testing.T) {
 	defer cancel()
 	client := &questionClient{}
 	a.makeClient = func(_ sessionConfig, _ credential) (agentrunner.Client, string, error) { return client, "fixture", nil }
-	created, err := a.dispatch(request{Version: 1, Method: "session.create", Params: mustJSON(t, createParams{Config: sessionConfig{Provider: "test", Model: "fixture"}})})
+	created, err := a.dispatch(request{Version: 1, Method: "session.create", Params: mustJSON(t, createParams{Config: sessionConfig{Mode: "agent", Provider: "test", Model: "fixture"}})})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -27,6 +27,15 @@ export class TaskQueue {
     }
   }
   snapshot(): QueueSnapshot { return structuredClone(this.value) }
+  needsReview(sessionId: string): void {
+    const task = this.value.tasks.find(item => item.sessionId === sessionId)
+    if (!task || !['running', 'waiting_input'].includes(task.state)) return
+    task.state = 'waiting_review'; task.message = 'Review and integrate the isolated task changes before resuming the project queue.'; this.value.paused = true; this.save()
+  }
+  reviewed(sessionId: string, message = 'Changes integrated. Resume the queue when ready.'): void {
+    const task = this.value.tasks.find(item => item.sessionId === sessionId)
+    if (task?.state === 'waiting_review') { task.state = 'completed'; task.message = message; this.save() }
+  }
   private save(): void {
     mkdirSync(dirname(this.path), { recursive: true })
     const temporary = `${this.path}.${randomUUID()}.tmp`
@@ -94,7 +103,7 @@ export class TaskQueue {
     this.schedule()
   }
   async kick(): Promise<void> {
-    if (this.launching || this.value.paused || this.value.tasks.some((task) => ['starting', 'running', 'waiting_input'].includes(task.state))) return
+    if (this.launching || this.value.paused || this.value.tasks.some((task) => ['starting', 'running', 'waiting_input', 'waiting_review'].includes(task.state))) return
     let task = this.value.tasks.find((task) => task.state === 'pending')
     if (!task) return
     this.launching = true

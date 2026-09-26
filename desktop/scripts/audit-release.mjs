@@ -17,7 +17,8 @@ const notices = readFileSync(join(resources, 'licenses/NPM_NOTICES.txt'), 'utf8'
 let reviewedPackages = 0
 for (const [location, metadata] of Object.entries(lock.packages)) {
   if (!location.startsWith('node_modules/') || metadata.dev) continue
-  if (!['MIT', 'ISC', '0BSD'].includes(metadata.license)) throw new Error(`Unreviewed license: ${location}`)
+  const apacheElection = location === 'node_modules/dompurify' && metadata.license === '(MPL-2.0 OR Apache-2.0)'
+  if (!['MIT', 'ISC', '0BSD'].includes(metadata.license) && !apacheElection) throw new Error(`Unreviewed license: ${location}`)
   if (!notices.includes(`===== ${location.slice('node_modules/'.length)} ${metadata.version} (${metadata.license}) =====`)) throw new Error(`Missing npm notice: ${location}`)
   reviewedPackages++
 }

@@ -37,6 +37,18 @@ function runner(): QueueRunner {
   return { canStart: vi.fn(async () => true), create: vi.fn(async () => `session-${++next}`), send: vi.fn(async () => {}), stop: vi.fn(async () => {}) }
 }
 
+it('does not advance past an isolated task awaiting review, including after restart', async () => {
+  const run = runner(), path = join(root, 'queue.json'), queue = new TaskQueue(path, run)
+  queue.add('first', config); queue.add('second', config); queue.resume()
+  await vi.waitFor(() => expect(run.send).toHaveBeenCalledOnce())
+  queue.needsReview('session-1'); queue.resume(); await queue.kick()
+  expect(run.send).toHaveBeenCalledOnce()
+  const recovered = new TaskQueue(path, run); recovered.resume(); await recovered.kick()
+  expect(run.send).toHaveBeenCalledOnce()
+  recovered.reviewed('session-1'); recovered.resume()
+  await vi.waitFor(() => expect(run.send).toHaveBeenCalledTimes(2))
+})
+
 it('runs one task per project and advances only after completion', async () => {
   const run = runner(), queue = new TaskQueue(join(root, 'queue.json'), run)
   queue.add('first', config); queue.add('second', config)

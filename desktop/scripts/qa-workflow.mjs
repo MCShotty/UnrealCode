@@ -30,7 +30,7 @@ try {
  await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false }) })
  await app.evaluate(({ Notification }) => { globalThis.__qaNotifications = []; Notification.prototype.show = function () { globalThis.__qaNotifications.push(this) } })
  const endpoint = `http://localhost:${server.address().port}/v1`
- await page.evaluate(baseUrl => window.unreal.updateSettings({ provider: 'openai-compatible', baseUrl, model: 'fake-workflow', theme: 'dark', notifications: true }), endpoint)
+ await page.evaluate(baseUrl => window.unreal.updateSettings({ provider: 'openai-compatible', baseUrl, executionMode: 'agent', taskIsolation: false, model: 'fake-workflow', theme: 'dark', notifications: true }), endpoint)
  const wait = async fn => { const end = Date.now() + 120000; while (Date.now() < end) { if (await page.evaluate(fn)) return; await new Promise(resolve => setTimeout(resolve, 100)) } throw Error('Workflow state timed out') }
  await page.evaluate(path => window.unreal.openProject(path, true), projects[0])
  await page.evaluate(async () => { await window.unreal.updateContext('draft', { pinned: ['reference.txt', 'excluded.txt'], excluded: ['excluded.txt'] }); await window.unreal.queueAdd('SLOW_TASK first'); await window.unreal.queueAdd('second queue task'); await window.unreal.queuePause(false) })

@@ -47,7 +47,7 @@ func TestPostflightRunsAfterIdleWithoutProviderPhase(t *testing.T) {
 	a.makeClient = func(_ sessionConfig, _ credential) (agentrunner.Client, string, error) {
 		return &fakeClient{calls: calls, toolFirst: true, toolCommand: "printf 'after\\n' > " + strconv.Quote(path)}, "fake", nil
 	}
-	created, err := a.dispatch(request{Version: 1, Method: "session.create", Params: mustJSON(t, createParams{Config: sessionConfig{Provider: "test", Model: "fake"}})})
+	created, err := a.dispatch(request{Version: 1, Method: "session.create", Params: mustJSON(t, createParams{Config: sessionConfig{Mode: "agent", Provider: "test", Model: "fake"}})})
 	if err != nil {
 		t.Fatal(err)
 	}

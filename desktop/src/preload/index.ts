@@ -3,6 +3,20 @@ import type { DesktopAPI } from '../shared/api'
 
 const invoke = (name: string, ...args: unknown[]): Promise<any> => ipcRenderer.invoke(name, ...args)
 const api: DesktopAPI = {
+  appVersion: () => invoke('app:version'),
+  taskWorkspaces: () => invoke('workspace:tasks'),
+  activeWorkspace: () => invoke('workspace:active'),
+  workspacePreview: (id) => invoke('workspace:preview', id),
+  workspaceIntegrate: (id, paths) => invoke('workspace:integrate', id, paths),
+  workspaceRetain: (id) => invoke('workspace:retain', id),
+  editorRead: (path) => invoke('editor:read', path),
+  editorSave: (path, revision, content, workspace) => invoke('editor:save', path, revision, content, workspace),
+  editorBase: (path) => invoke('editor:base', path),
+  editorExternal: (path) => invoke('editor:external', path),
+  sessionConfig: (sessionId) => invoke('session:config', sessionId),
+  sessionMode: (sessionId, mode) => invoke('session:mode', sessionId, mode),
+  approvals: (sessionId) => invoke('permission:list', sessionId),
+  respondApproval: (sessionId, id, digest, allow) => invoke('permission:respond', sessionId, id, digest, allow),
   modelHealth: (provider, baseUrl, model, test) => invoke('models:health', provider, baseUrl, model, test),
   decisionTraces: (sessionId) => invoke('decision:traces', sessionId),
   decisionOverride: (sessionId, id, note) => invoke('decision:override', sessionId, id, note),
@@ -69,6 +83,7 @@ const api: DesktopAPI = {
   listSessions: () => invoke('session:list'),
   createSession: (config) => invoke('session:create', config),
   openSession: (sessionId) => invoke('session:open', sessionId),
+  selectSession: (sessionId) => invoke('session:select', sessionId),
   sendMessage: (sessionId, prompt, messageId) => invoke('session:send', sessionId, prompt, messageId),
   stopSession: (sessionId) => invoke('session:stop', sessionId),
   forkSession: (sessionId) => invoke('session:fork', sessionId),

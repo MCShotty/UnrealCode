@@ -12,7 +12,7 @@ import (
 func TestIdleEventWaitsForToolsAndIncludesSteering(t *testing.T) {
 	a, cancel, _, _ := testApp(t, t.TempDir(), true)
 	defer cancel()
-	created, err := a.dispatch(request{Version: 1, Method: "session.create", Params: mustJSON(t, createParams{Config: sessionConfig{Provider: "test", Model: "fake-model"}})})
+	created, err := a.dispatch(request{Version: 1, Method: "session.create", Params: mustJSON(t, createParams{Config: sessionConfig{Mode: "agent", Provider: "test", Model: "fake-model"}})})
 	if err != nil {
 		t.Fatal(err)
 	}

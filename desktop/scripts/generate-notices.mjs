@@ -16,16 +16,18 @@ const sections = [
 ]
 
 for (const [location, metadata] of packages) {
-  if (!allowedLicenses.has(metadata.license)) {
+  const apacheElection = location === 'node_modules/dompurify' && metadata.license === '(MPL-2.0 OR Apache-2.0)'
+  if (!allowedLicenses.has(metadata.license) && !apacheElection) {
     throw new Error(`Review the license for ${location}: ${metadata.license || 'missing'}`)
   }
   const directory = path.join(desktop, location)
   const licenseFiles = readdirSync(directory)
-    .filter((name) => /^(license|licence|copying|notice)(\.|$)/i.test(name))
+    .filter((name) => /^(license|licence|copying|notice)([.-]|$)|^thirdparty.?notices/i.test(name))
     .sort()
   if (licenseFiles.length === 0) throw new Error(`Missing license text for ${location}`)
 
   sections.push('', `===== ${location.slice('node_modules/'.length)} ${metadata.version} (${metadata.license}) =====`)
+  if (apacheElection) sections.push('UnrealCode distributes this dependency under the Apache-2.0 alternative. The bundled LICENSE contains that license text.')
   for (const filename of licenseFiles) {
     sections.push(`----- ${filename} -----`, readFileSync(path.join(directory, filename), 'utf8').trimEnd())
   }

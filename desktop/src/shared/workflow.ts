@@ -1,5 +1,5 @@
 import type { BridgeSessionConfig } from './api'
-export type QueueTask = { id: string; prompt: string; config: BridgeSessionConfig; createdAt: string; state: 'pending' | 'starting' | 'running' | 'waiting_input' | 'completed' | 'failed' | 'cancelled' | 'interrupted'; sessionId?: string; message?: string }
+export type QueueTask = { id: string; prompt: string; config: BridgeSessionConfig; createdAt: string; state: 'pending' | 'starting' | 'running' | 'waiting_input' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'waiting_review'; sessionId?: string; message?: string }
 export type QueueSnapshot = { version: 1; paused: boolean; tasks: QueueTask[] }
 export type ContextSelection = { pinned: string[]; attached: string[]; excluded: string[]; summary: string }
 export type ContextFile = { path: string; kind: 'pinned' | 'attached'; included: boolean; bytes: number; reason?: string }

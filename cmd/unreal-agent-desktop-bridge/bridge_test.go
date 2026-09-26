@@ -83,7 +83,7 @@ func TestSessionSteeringForkAndReplay(t *testing.T) {
 	state := t.TempDir()
 	a, cancel, _, calls := testApp(t, state, true)
 	defer cancel()
-	created, err := a.dispatch(request{Version: 1, Method: "session.create", Params: mustJSON(t, createParams{Config: sessionConfig{Provider: "test", Model: "fake-model"}})})
+	created, err := a.dispatch(request{Version: 1, Method: "session.create", Params: mustJSON(t, createParams{Config: sessionConfig{Mode: "agent", Provider: "test", Model: "fake-model"}})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestConcurrentSessionsAndStop(t *testing.T) {
 	defer cancel()
 	ids := make([]session.ID, 2)
 	for i := range ids {
-		created, err := a.dispatch(request{Version: 1, Method: "session.create", Params: mustJSON(t, createParams{Config: sessionConfig{Provider: "test", Model: "fake-model"}})})
+		created, err := a.dispatch(request{Version: 1, Method: "session.create", Params: mustJSON(t, createParams{Config: sessionConfig{Mode: "agent", Provider: "test", Model: "fake-model"}})})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -272,7 +272,7 @@ func TestLiveShellOperationCanBeCanceledWithoutStoppingSession(t *testing.T) {
 	a.makeClient = func(_ sessionConfig, _ credential) (agentrunner.Client, string, error) {
 		return &fakeClient{calls: calls, toolFirst: true, toolCommand: "sleep 5; echo should-not-finish"}, "fake-model", nil
 	}
-	created, err := a.dispatch(request{Version: protocolVersion, Method: "session.create", Params: mustJSON(t, createParams{Config: sessionConfig{Provider: "test", Model: "fake-model"}})})
+	created, err := a.dispatch(request{Version: protocolVersion, Method: "session.create", Params: mustJSON(t, createParams{Config: sessionConfig{Mode: "agent", Provider: "test", Model: "fake-model"}})})
 	if err != nil {
 		t.Fatal(err)
 	}

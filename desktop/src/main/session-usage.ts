@@ -54,8 +54,18 @@ export function executionFromEvents(sessionId: string, events: AgentEvent[], now
   const operations = new Map<string, OperationLane>()
   const modelStarts = new Map<string, number>()
   const modelIntervals: Array<[number, number]> = []
+  const dispatches = new Map<string, string>()
+  const approvalOperations = new Set<string>()
+  const approvalWaits = new Map<string, { start: number; end?: number }>()
   for (const event of events) {
     const at = milliseconds(event.recordedAt)
+    if (event.event === 'operation.dispatched' && event.recordedAt) dispatches.set(text(field(event.payload, 'ID', 'id')), event.recordedAt)
+    if (event.event === 'permission.requested' && at !== undefined) {
+      approvalOperations.add(text(field(event.payload, 'operationId')))
+      approvalWaits.set(text(field(event.payload, 'id')), { start: at })
+    }
+    if (event.event === 'permission.resolved' && at !== undefined) { const wait = approvalWaits.get(text(field(event.payload, 'id'))); if (wait) wait.end = at }
+    if (event.event === 'session.status' && ['stopped', 'error'].includes(text(field(event.payload, 'status'))) && at !== undefined) for (const wait of approvalWaits.values()) if (wait.end === undefined) wait.end = at
     if (event.event === 'model.request.started') {
       const id = text(field(event.payload, 'id'))
       if (id && at !== undefined) modelStarts.set(id, at)
@@ -78,6 +88,12 @@ export function executionFromEvents(sessionId: string, events: AgentEvent[], now
     }
   }
   const lanes = [...operations.values()]
+  for (const lane of lanes) {
+    if (dispatches.has(lane.id)) lane.startedAt = dispatches.get(lane.id)
+    else if (approvalOperations.has(lane.id)) { lane.startedAt = undefined; if (!lane.endedAt) lane.status = 'awaiting_approval' }
+    const start = milliseconds(lane.startedAt), end = milliseconds(lane.endedAt)
+    lane.durationMs = start === undefined ? approvalOperations.has(lane.id) ? 0 : undefined : Math.max(0, (end ?? now) - start)
+  }
   const toolIntervals = lanes.flatMap((lane): Array<[number, number]> => {
     const start = milliseconds(lane.startedAt), end = milliseconds(lane.endedAt)
     return start === undefined ? [] : [[start, end ?? now]]
@@ -85,7 +101,8 @@ export function executionFromEvents(sessionId: string, events: AgentEvent[], now
   const sum = toolIntervals.reduce((total, [start, end]) => total + Math.max(0, end - start), 0)
   return { operations: lanes.sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || '')),
     modelMs: modelIntervals.reduce((total, [start, end]) => total + end - start, 0),
-    modelCalls: modelIntervals.length, toolWallMs: unionLength(toolIntervals), toolOverlapMs: Math.max(0, sum - unionLength(toolIntervals)) }
+    modelCalls: modelIntervals.length, toolWallMs: unionLength(toolIntervals), toolOverlapMs: Math.max(0, sum - unionLength(toolIntervals)),
+    approvalWaitMs: unionLength([...approvalWaits.values()].map(wait => [wait.start, wait.end ?? now])) }
 }
 
 export class SessionUsageService {
@@ -123,7 +140,7 @@ export class SessionUsageService {
           const headers = field(field(field(event.payload, 'Data', 'data'), 'Response', 'response'), 'RateLimits', 'rateLimits')
           if (Object.keys(record(headers)).length) current.rateLimits = record(headers) as Record<string, string>
         }
-        if (event.event.startsWith('model.request.') || event.event.startsWith('operation.')) current.events.push(event)
+        if (event.event.startsWith('model.request.') || event.event.startsWith('operation.') || event.event.startsWith('permission.') || event.event === 'session.status') current.events.push(event)
         current.seq = event.seq
       }
       if (page.length < 1000) break

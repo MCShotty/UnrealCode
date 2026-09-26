@@ -1,5 +1,7 @@
 export type Provider = 'openai' | 'openai-codex' | 'anthropic' | 'openrouter' | 'fireworks' | 'ollama' | 'openai-compatible'
 export type DecisionEngine = 'off' | 'jev' | 'laya'
+export type ExecutionMode = 'plan' | 'ask' | 'agent'
+export type ApprovalRequest = { id: string; sessionId: string; workspaceId: string; operationId: string; digest: string; tool: string; arguments: unknown; expiresAt: string }
 export type CheckpointFile = { path: string; change: 'added' | 'deleted' | 'modified' | 'uncaptured'; reason?: string }
 export type Checkpoint = { id: string; sessionId: string; messageIds: string[]; title: string; createdAt: string; state: 'capturing' | 'running' | 'complete' | 'incomplete'; reason?: string; files: CheckpointFile[]; durationMs: number }
 export type CheckpointPreview = { path: string; before: string; after: string; diff: string; binary: boolean; conflict: boolean; reason?: string; beforeSize: number; afterSize: number }
@@ -14,6 +16,8 @@ export type Settings = {
   theme: 'dark' | 'light' | 'system'
   layout: { sessionWidth: number; activityWidth: number; sessions: boolean; activity: boolean; focus: boolean }
   notifications: boolean
+  executionMode: ExecutionMode
+  taskIsolation: boolean
   disallowedTools: string[]
   baseUrl: string
   decisionEngine: DecisionEngine
@@ -31,11 +35,12 @@ export type UsageWindow = { id: string; label: string; usedPercent: number; wind
 export type AccountUsage = { source: 'codex' | 'openai' | 'anthropic'; scope: string; status: 'fresh' | 'stale' | 'unavailable'; observedAt?: string; message?: string; totals?: UsageTotals; windows?: UsageWindow[] }
 export type UsageSnapshot = { accounts: AccountUsage[]; sessions: SessionUsage[] }
 export type OperationLane = { id: string; sessionId: string; type: string; status: string; startedAt?: string; endedAt?: string; durationMs?: number }
-export type ExecutionSummary = { operations: OperationLane[]; modelMs: number; toolWallMs: number; toolOverlapMs: number; modelCalls: number }
+export type ExecutionSummary = { operations: OperationLane[]; modelMs: number; toolWallMs: number; toolOverlapMs: number; modelCalls: number; approvalWaitMs?: number }
 export type FileEntry = { name: string; path: string; directory: boolean; size: number }
+export type EditableFile = { path: string; revision: string; content: string; workspace: string }
 export type SkillEntry = { name: string; description: string; content: string }
 export type DockerStatus = { ready: boolean; message: string; container?: string }
-export type BridgeSessionConfig = { provider: Provider; model: string; baseUrl: string; thinkingLevel: string; systemPrompt: string; disallowedTools: string[]; parentSessionId?: string }
+export type BridgeSessionConfig = { provider: Provider; model: string; baseUrl: string; thinkingLevel: string; systemPrompt: string; disallowedTools: string[]; parentSessionId?: string; mode?: ExecutionMode; workspaceId?: string; workspace?: 'project' | 'isolated' }
 export type GitHubStatus = { installed: boolean; authenticated: boolean; account?: string; message: string }
 export type GitHubRepository = { nameWithOwner: string; description: string; isPrivate: boolean; url: string }
 export type GitHubWorktree = { path: string; branch: string; head: string; current: boolean }
@@ -46,6 +51,20 @@ export type DecisionResult = { engine: 'jev' | 'laya'; model: string; answers: R
 export type DecisionStatus = { engine: DecisionEngine; available: boolean; message: string; glinerAvailable: boolean }
 
 export interface DesktopAPI {
+  appVersion(): Promise<string>
+  taskWorkspaces(): Promise<import('./task-workspaces').TaskWorkspace[]>
+  activeWorkspace(): Promise<{ path: string; isolated: boolean }>
+  workspacePreview(id: string): Promise<import('./task-workspaces').WorkspacePreview>
+  workspaceIntegrate(id: string, paths: string[]): Promise<string>
+  workspaceRetain(id: string): Promise<void>
+  editorRead(path: string): Promise<EditableFile>
+  editorSave(path: string, revision: string, content: string, workspace: string): Promise<EditableFile>
+  editorBase(path: string): Promise<string>
+  editorExternal(path: string): Promise<void>
+  sessionConfig(sessionId: string): Promise<BridgeSessionConfig>
+  sessionMode(sessionId: string, mode: ExecutionMode): Promise<void>
+  approvals(sessionId: string): Promise<ApprovalRequest[]>
+  respondApproval(sessionId: string, id: string, digest: string, allow: boolean): Promise<void>
   modelHealth(provider: Provider, baseUrl: string, model: string, test: boolean): Promise<import('./diagnostics').ModelHealth>
   decisionTraces(sessionId: string): Promise<import('./diagnostics').DecisionTrace[]>
   decisionOverride(sessionId: string, id: string, note: string): Promise<void>
@@ -112,6 +131,7 @@ export interface DesktopAPI {
   listSessions(): Promise<SessionInfo[]>
   createSession(config: BridgeSessionConfig): Promise<{ sessionId: string }>
   openSession(sessionId: string): Promise<void>
+  selectSession(sessionId: string): Promise<void>
   sendMessage(sessionId: string, prompt: string, messageId: string): Promise<void>
   stopSession(sessionId: string): Promise<void>
   forkSession(sessionId: string): Promise<{ sessionId: string }>

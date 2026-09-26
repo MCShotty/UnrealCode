@@ -15,6 +15,34 @@ Secret/package audit: zero matches, 554 files/artifacts, 96 production npm notic
 Installer SHA-256: `F2B3B18409E802E0495F167F66124DF2EE06609BF449D14C23E3F5F3C4CF1EBF`.
 Installer remains unsigned. No new live-provider claims.
 
+## 0.7 coding controls and workspace acceptance
+
+Implemented Plan/Ask/Agent modes, one-time operation approvals, native file tools,
+reviewed dirty-worktree snapshots, selective integration with recovery copies,
+isolated queue review pauses, and a bundled Monaco editor. History selection does
+not resume interrupted work. Unsupported captured files keep integration in review.
+Windows CI covers desktop compilation, tests, packaging and backend capabilities.
+
+Verified locally: 59 desktop tests, TypeScript, full Go race suite and vet, three
+Python worker tests, packaged Docker/Electron coding controls, isolated integration,
+editor conflict handling and unsaved buffers, queue/handoff/context/search,
+diagnostics, light/dark/reduced motion. A live Codex subscription check used the
+existing external login to read a fixture file through ReadFile in Plan mode.
+Claude API and additional local runtimes were not live-tested for this release.
+
+Synthetic bridge-only comparison against 0.6.1 (12 runs per build, two parallel
+250 ms tools and live steering): median task time 439.7 ms versus 459.7 ms (+4.5%),
+steering acknowledgement 2.00 ms versus 1.78 ms, tool overlap 284 ms versus 306 ms.
+These fixture observations exclude editor rendering and workspace snapshot setup;
+they establish neither production speed gains nor token savings. All parallel
+tools and live-steering checks passed. Installer remains unsigned for this 0.x release.
+
+Credential/redistribution audit: 578 files/artifacts scanned, zero secret matches,
+100 production npm notices checked. DOMPurify is distributed under its offered
+Apache-2.0 alternative; Monaco's third-party notices are included.
+Installer SHA-256:
+`A020EEF50DF8E23F5E2A45BAAC00138C9AE08D656F8AEC02221B58D86B1FA9D3`.
+
 ## Released 0.4
 
 Commit `0333306b1f452ac30ed213962c15f98918c6b7dd`, published as v0.4.0.

@@ -7,6 +7,24 @@ const event = (seq: number, name: string, payload: unknown, recordedAt?: string)
 const at = (ms: number): string => new Date(1_000_000 + ms).toISOString()
 
 describe('session usage and execution', () => {
+  it('excludes approval waits and denied operations from execution overlap', () => {
+    const summary = executionFromEvents('s1', [
+      event(1, 'operation.started', { ID: 'a', Type: 'shell', Status: 'ready' }, at(0)),
+      event(2, 'permission.requested', { id: 'grant-a', operationId: 'a' }, at(0)),
+      event(3, 'operation.started', { ID: 'denied', Type: 'shell', Status: 'ready' }, at(10)),
+      event(4, 'permission.requested', { id: 'grant-denied', operationId: 'denied' }, at(10)),
+      event(5, 'operation.started', { ID: 'b', Type: 'read', Status: 'ready' }, at(100)),
+      event(6, 'operation.dispatched', { ID: 'b' }, at(100)),
+      event(7, 'operation.update', { ID: 'b', Status: 'completed' }, at(250)),
+      event(8, 'operation.dispatched', { ID: 'a' }, at(300)),
+      event(9, 'permission.resolved', { id: 'grant-a' }, at(300)),
+      event(10, 'permission.resolved', { id: 'grant-denied' }, at(400)),
+      event(11, 'operation.update', { ID: 'denied', Status: 'canceled' }, at(400)),
+      event(12, 'operation.update', { ID: 'a', Status: 'completed' }, at(500))
+    ], 1_000_500)
+    expect(summary).toMatchObject({ toolWallMs: 350, toolOverlapMs: 0, approvalWaitMs: 400 })
+    expect(summary.operations.find(item => item.id === 'denied')?.durationMs).toBe(0)
+  })
   it('counts provider usage once and resets inherited response totals at the fork boundary', () => {
     const totals = emptyTotals()
     const response = (input: number) => event(1, 'session.item', { Kind: 'model_response', Data: { Response: { Usage: { InputTokens: input, OutputTokens: 4, CachedInputTokens: 3, CacheWriteInputTokens: 1, ReasoningTokens: 2 } } } })

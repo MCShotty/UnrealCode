@@ -57,7 +57,7 @@ export class Evaluations {
       if (await command('git', ['status', '--porcelain'], project)) throw new Error('Commit or stash project changes before comparing identical committed inputs')
       const revision = await command('git', ['rev-parse', 'HEAD'], project)
       credentialFor(config.provider, config.baseUrl)
-      const savedConfig: BridgeSessionConfig = { provider: config.provider, model: config.model, baseUrl: config.baseUrl, thinkingLevel: config.thinkingLevel, systemPrompt: config.systemPrompt, disallowedTools: [...config.disallowedTools] }
+      const savedConfig: BridgeSessionConfig = { provider: config.provider, model: config.model, baseUrl: config.baseUrl, thinkingLevel: config.thinkingLevel, systemPrompt: config.systemPrompt, disallowedTools: [...config.disallowedTools], mode: config.mode || 'agent' }
       const savedRequest: EvaluationRequest = { runLimit: request.runLimit, timeoutMinutes: request.timeoutMinutes, tasks: request.tasks.map(task => ({ prompt: task.prompt, criteria: task.criteria, testCommand: task.testCommand })) }
       const id = randomUUID(), report: EvaluationReport = { id, project, createdAt: new Date().toISOString(), revision, config: savedConfig, engine: decision.engine, model: decision.model, request: savedRequest, state: 'running', arms: request.tasks.flatMap((_, task) => [{ task, decisions: false, state: 'pending' }, { task, decisions: true, state: 'pending' }]) }
       await this.save(report)

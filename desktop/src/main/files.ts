@@ -18,16 +18,17 @@ export async function inside(root: string, requested = ''): Promise<string> {
 }
 
 export async function listFiles(root: string, requested = ''): Promise<FileEntry[]> {
-  const dir = await inside(root, requested)
+  const canonicalRoot = await fs.realpath(root)
+  const dir = await inside(canonicalRoot, requested)
   const entries = await fs.readdir(dir, { withFileTypes: true })
   const result: FileEntry[] = []
   for (const entry of entries) {
     if (entry.name === '.git' || entry.name === 'node_modules') continue
     const full = join(dir, entry.name)
     try {
-      const safe = await inside(root, relative(root, full))
+      const safe = await inside(canonicalRoot, relative(canonicalRoot, full))
       const stat = await fs.stat(safe)
-      result.push({ name: entry.name, path: relative(root, safe).replaceAll('\\', '/'), directory: stat.isDirectory(), size: stat.size })
+      result.push({ name: entry.name, path: relative(canonicalRoot, safe).replaceAll('\\', '/'), directory: stat.isDirectory(), size: stat.size })
     } catch { /* Skip links leaving the project. */ }
   }
   return result.sort((a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name))

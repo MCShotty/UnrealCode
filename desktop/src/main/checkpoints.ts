@@ -8,13 +8,15 @@ import type { Checkpoint, CheckpointFile, CheckpointPreview } from '../shared/ap
 const exec = promisify(execFile)
 const hash = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
 type Entry = { hash: string; size: number; mode: number }
-type Snapshot = { files: Record<string, Entry>; skipped: Record<string, string> }
+export type Snapshot = { files: Record<string, Entry>; skipped: Record<string, string> }
 type Stored = Checkpoint & { before: Snapshot; after?: Snapshot }
 const empty = (): Snapshot => ({ files: Object.create(null), skipped: Object.create(null) })
 const maxFile = 8 * 1024 * 1024
 const maxSnapshot = 128 * 1024 * 1024
 
 export class CheckpointStore {
+  captureSnapshot(paths?: string[]): Promise<Snapshot> { return this.capture(paths) }
+  snapshotBytes(snapshot: Snapshot, path: string): Promise<Buffer | undefined> { return this.bytes(snapshot.files[path]) }
   private directory: string
   constructor(private project: string, data: string) {
     this.directory = join(data, 'checkpoints', hash(Buffer.from(resolve(project).toLowerCase())))
@@ -28,7 +30,7 @@ export class CheckpointStore {
     return join(this.directory, 'objects', digest)
   }
   private async safe(name: string): Promise<string> {
-    if (!name || isAbsolute(name) || name.includes('\\') || name.includes(':') || name.split('/').some((part) => !part || part === '.' || part === '..' || part.toLowerCase() === '.git')) throw new Error('Invalid checkpoint path')
+    if (!name || isAbsolute(name) || name.includes('\\') || name.includes(':') || name.split('/').some((part) => !part || part === '.' || part === '..' || /[. ]$/.test(part) || /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(part) || part.toLowerCase() === '.git')) throw new Error('Invalid checkpoint path')
     const root = await fs.realpath(this.project)
     const path = resolve(root, name)
     if (relative(root, path).startsWith(`..${sep}`)) throw new Error('Path leaves the project')
@@ -59,11 +61,11 @@ export class CheckpointStore {
       return result.sort()
     }
   }
-  private async capture(): Promise<Snapshot> {
+  private async capture(selectedPaths?: string[]): Promise<Snapshot> {
     const snapshot = empty()
     let total = 0
     let available = Math.max(0, 512 * 1024 * 1024 - (await this.storage()).bytes)
-    const names = await this.names()
+    const names = selectedPaths || await this.names()
     await fs.mkdir(join(this.directory, 'objects'), { recursive: true })
     for (let offset = 0; offset < names.length; offset += 8) {
       await Promise.all(names.slice(offset, offset + 8).map(async (name, index) => {

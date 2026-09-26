@@ -33,6 +33,7 @@ export function ExecutionInspector({ sessionId, eventSequence }: { sessionId?: s
   return <section className="context-card execution-inspector"><div className="section-heading"><h3>Parallel activity</h3><span className="count-pill">{operations.filter((item) => active(item.status)).length} active</span></div>
     {summary && <div className="execution-metrics"><span><strong>{seconds(summary.modelMs)}</strong><small>Model</small></span><span><strong>{seconds(summary.toolWallMs)}</strong><small>Tool wall time</small></span><span><strong>{seconds(summary.toolOverlapMs)}</strong><small>Tool overlap</small></span></div>}
     {operations.slice(0, 10).map((item) => <div className="execution-lane" key={item.id}><div className="execution-lane-line"><strong>{item.type}</strong><small>{seconds(item.durationMs)}</small></div><div className="execution-lane-line"><span className={`execution-status ${item.status}`}>{item.status}</span>{active(item.status) && <button className="execution-cancel" aria-label={`Cancel ${item.type}`} onClick={() => void cancel(item.id)}><Square size={12}/> Cancel</button>}</div></div>)}
+    {!!summary?.approvalWaitMs && <p className="muted-copy">Approval wait: {seconds(summary.approvalWaitMs)} · excluded from tool execution time</p>}
     {!operations.length && <p className="muted-copy">Tool calls will appear here as they run.</p>}
     {error && <p className="error-inline">{error}</p>}
   </section>

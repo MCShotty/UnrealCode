@@ -29,7 +29,7 @@ try {
   await page.getByRole('button', { name: 'Set up later' }).click()
   await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false }) })
   const endpoint = `http://localhost:${server.address().port}/v1`
-  await page.evaluate(baseUrl => window.unreal.updateSettings({ provider: 'openai-compatible', baseUrl, model: 'diagnostic-fixture', theme: 'dark' }), endpoint)
+  await page.evaluate(baseUrl => window.unreal.updateSettings({ provider: 'openai-compatible', baseUrl, executionMode: 'agent', taskIsolation: false, model: 'diagnostic-fixture', theme: 'dark' }), endpoint)
   await page.evaluate(path => window.unreal.openProject(path, true), project)
   const health = await page.evaluate(endpoint => window.unreal.modelHealth('openai-compatible', endpoint, 'diagnostic-fixture', true), endpoint)
   assert.equal(health.response, 'OK'); assert.equal(health.inputTokens, 30); assert.equal(health.contextLimit, undefined)
