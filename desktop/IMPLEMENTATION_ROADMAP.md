@@ -8,7 +8,7 @@ measured usage, existing history, and the global decision-engine setting.
 
 - [x] 0.6.1: package, audit and smoke-test the existing bug-hunt fixes; publish
   the verified installer with the release commit.
-- [ ] 0.7: execution modes and correlated approvals; native file tools; isolated
+- [x] 0.7: execution modes and correlated approvals; native file tools; isolated
   task workspaces with dirty-file snapshots and conflict-aware integration;
   locally bundled Monaco editor; Windows desktop CI.
 - [ ] 0.8: main-process MCP broker for remote HTTP, Windows stdio and Docker

@@ -42,6 +42,9 @@ Credential/redistribution audit: 578 files/artifacts scanned, zero secret matche
 Apache-2.0 alternative; Monaco's third-party notices are included.
 Installer SHA-256:
 `A020EEF50DF8E23F5E2A45BAAC00138C9AE08D656F8AEC02221B58D86B1FA9D3`.
+Packaged coding acceptance passed on this rebuilt installer. GitHub Actions run
+36222574008 did not start either job because account billing/spending limits blocked
+runners. Hosted CI remains unverified; local Windows/Docker acceptance passed.
 
 ## Released 0.4
 
