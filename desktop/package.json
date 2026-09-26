@@ -1,6 +1,6 @@
 {
   "name": "unrealcode",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "UnrealCode Windows desktop application built on Unreal Agent",
   "author": "UnrealCode contributors",
@@ -72,7 +72,9 @@
         ]
       }
     ],
-    "asarUnpack": ["node_modules/node-pty/**/*"],
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
+    ],
     "win": {
       "target": "nsis",
       "icon": "assets/unrealcode-icon.ico"

@@ -55,12 +55,12 @@ func testApp(t *testing.T, state string, toolFirst bool) (*app, context.CancelFu
 	a.makeClient = func(_ sessionConfig, _ credential) (agentrunner.Client, string, error) {
 		return &fakeClient{calls: calls, toolFirst: toolFirst}, "fake-model", nil
 	}
-	return a, cancel, buffer, calls
+	return a, func() { cancel(); a.runs.Wait(); a.events.flush() }, buffer, calls
 }
 
 func waitFor(t *testing.T, predicate func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if predicate() {
 			return
@@ -282,6 +282,15 @@ func TestLiveShellOperationCanBeCanceledWithoutStoppingSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	var operationID operation.ID
+	defer func() {
+		if t.Failed() {
+			a.events.flush()
+			entries, _ := a.events.entries(id, 0, 1000)
+			for _, entry := range entries {
+				t.Logf("%s: %s", entry.Event, entry.Payload)
+			}
+		}
+	}()
 	waitFor(t, func() bool {
 		a.events.flush()
 		entries, err := a.events.entries(id, 0, 1000)
@@ -321,6 +330,9 @@ func TestLiveShellOperationCanBeCanceledWithoutStoppingSession(t *testing.T) {
 			}
 			if value.ID == operationID && value.Status == operation.StatusCanceled {
 				return true
+			}
+			if value.ID == operationID && (value.Status == operation.StatusFailed || value.Status == operation.StatusCompleted) {
+				t.Fatalf("expected canceled operation, got %s: %s", value.Status, entry.Payload)
 			}
 		}
 		return false

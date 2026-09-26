@@ -121,7 +121,8 @@ func (a *app) maybePostflight(id session.ID, item sessionstore.Item) {
 	if !found {
 		return
 	}
-	go a.verifyPostflight(id, candidate)
+	a.runs.Add(1)
+	go func() { defer a.runs.Done(); a.verifyPostflight(id, candidate) }()
 }
 
 func (a *app) verifyPostflight(id session.ID, candidate postflightCandidate) {

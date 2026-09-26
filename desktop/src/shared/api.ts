@@ -1,5 +1,8 @@
 export type Provider = 'openai' | 'openai-codex' | 'anthropic' | 'openrouter' | 'fireworks' | 'ollama' | 'openai-compatible'
 export type DecisionEngine = 'off' | 'jev' | 'laya'
+export type CheckpointFile = { path: string; change: 'added' | 'deleted' | 'modified' | 'uncaptured'; reason?: string }
+export type Checkpoint = { id: string; sessionId: string; messageIds: string[]; title: string; createdAt: string; state: 'capturing' | 'running' | 'complete' | 'incomplete'; reason?: string; files: CheckpointFile[]; durationMs: number }
+export type CheckpointPreview = { path: string; before: string; after: string; diff: string; binary: boolean; conflict: boolean; reason?: string; beforeSize: number; afterSize: number }
 export type Settings = {
   recentProjects: string[]
   trustedProjects: string[]
@@ -8,7 +11,8 @@ export type Settings = {
   thinkingLevel: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   systemPrompt: string
   projectInstructions: Record<string, string>
-  theme: 'dark' | 'light'
+  theme: 'dark' | 'light' | 'system'
+  layout: { sessionWidth: number; activityWidth: number; sessions: boolean; activity: boolean; focus: boolean }
   disallowedTools: string[]
   baseUrl: string
   decisionEngine: DecisionEngine
@@ -18,7 +22,7 @@ export type Settings = {
   decisionCloudDeclinedProjects: string[]
   glinerEnabled: boolean
 }
-export type SessionInfo = { id: string; title: string; lastUpdatedAt: string; active: boolean }
+export type SessionInfo = { id: string; title: string; lastUpdatedAt: string; active: boolean; state?: string }
 export type AgentEvent = { v: number; event: string; sessionId: string; seq: number; sourceSequence?: number; recordedAt?: string; payload: unknown }
 export type UsageTotals = { input: number; output: number; cached: number; cacheWrite: number; reasoning: number; calls: number; decisionInput: number; decisionOutput: number; decisionCalls: number; latestInput: number }
 export type SessionUsage = { sessionId: string; title: string; provider: Provider; model: string; totals: UsageTotals; contextLimit?: number; contextSource?: string; rateLimits?: Record<string, string> }
@@ -41,6 +45,11 @@ export type DecisionResult = { engine: 'jev' | 'laya'; model: string; answers: R
 export type DecisionStatus = { engine: DecisionEngine; available: boolean; message: string; glinerAvailable: boolean }
 
 export interface DesktopAPI {
+  checkpoints(): Promise<Checkpoint[]>
+  checkpointPreview(id: string, path: string): Promise<CheckpointPreview>
+  checkpointRestore(id: string, paths: string[]): Promise<string>
+  checkpointRemove(id: string): Promise<void>
+  checkpointStorage(): Promise<{ bytes: number; count: number }>
   getSettings(): Promise<Settings>
   updateSettings(patch: Partial<Settings>): Promise<Settings>
   saveKey(provider: string, key: string): Promise<void>

@@ -53,6 +53,7 @@ type runningSession struct {
 	cancel   context.CancelFunc
 	done     chan struct{}
 	stopping atomic.Bool
+	busy     atomic.Bool
 }
 
 type app struct {
@@ -67,6 +68,7 @@ type app struct {
 	decision   *decisionRuntime
 	postMu     sync.Mutex
 	postflight map[session.ID]postflightCandidate
+	runs       sync.WaitGroup
 }
 
 func newApp(ctx context.Context, stateDirectory string, out *output) (*app, error) {
@@ -251,20 +253,29 @@ func (a *app) start(id session.ID, secret credential) (*runningSession, error) {
 	}
 	manager := &observedManager{inner: operation.NewLocalOperationManager(ctx,
 		newDecisionJobHandler(ctx, a.decision, decisionPlanType), newDecisionJobHandler(ctx, a.decision, entityPlanType)),
-		updates: make(chan operation.Operation), events: a.events, id: id, ctx: ctx, known: make(map[operation.ID]operation.Status)}
+		updates: make(chan operation.Operation), done: make(chan struct{}), events: a.events, id: id, ctx: ctx, known: make(map[operation.ID]operation.Status)}
 	go manager.forward()
+	run := &runningSession{inbox: inputs, manager: manager, cancel: cancel, done: make(chan struct{})}
+	run.busy.Store(true)
 	current := coordinator.New(coordinator.Dependencies{
+		OnActivity: func(busy bool) {
+			run.busy.Store(busy)
+			a.events.enqueue(id, "session.activity", map[string]bool{"busy": busy})
+		},
+		OnIdle:                func(ids []inbox.ID) { a.events.enqueue(id, "session.idle", map[string]any{"messageIds": ids}) },
 		ToolHeartbeatInterval: 10 * time.Minute, SessionID: id, Inbox: inputs,
 		Restored: restored, Sessions: a.store, ContextBuilder: builder,
 		LLM: &observedClient{inner: client, events: a.events, id: id}, Tools: registry, Operations: manager,
 	})
-	run := &runningSession{inbox: inputs, manager: manager, cancel: cancel, done: make(chan struct{})}
 	a.running[id] = run
+	a.runs.Add(1)
 	go func() {
+		defer a.runs.Done()
 		defer close(run.done)
 		_ = a.events.append(id, "session.status", map[string]string{"status": "running"}, 0)
 		err := current.Run(ctx)
 		cancel()
+		<-manager.done
 		_ = client.Close()
 		a.mu.Lock()
 		if a.running[id] == run {
@@ -284,6 +295,7 @@ func (a *app) start(id session.ID, secret credential) (*runningSession, error) {
 type observedManager struct {
 	inner   operation.Manager
 	updates chan operation.Operation
+	done    chan struct{}
 	events  *eventLog
 	id      session.ID
 	ctx     context.Context
@@ -321,6 +333,9 @@ func (m *observedManager) CancelUser(id operation.ID) error {
 }
 func (m *observedManager) Updates() <-chan operation.Operation { return m.updates }
 func (m *observedManager) forward() {
+	if m.done != nil {
+		defer close(m.done)
+	}
 	defer close(m.updates)
 	for value := range m.inner.Updates() {
 		m.mu.Lock()

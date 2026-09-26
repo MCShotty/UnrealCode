@@ -253,3 +253,51 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .rate-headroom-row strong { min-width: 160px; }.rate-headroom-row span { color: var(--sub); }.rate-headroom-row small { display: block; color: var(--muted); font-size: 9px; }
 @media (max-width: 1240px) { .usage-account-grid { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .usage-meter span { transition: none; } }
+
+/* Desktop controls use the same resolved theme as the rest of the workspace. */
+.app-shell .session-pane { width: min(var(--session-width), 25vw); flex-basis: min(var(--session-width), 25vw); }
+.app-shell .chat-layout { grid-template-columns: minmax(280px, 1fr) min(var(--activity-width), 30vw); }
+.app-shell .chat-layout.without-activity { grid-template-columns: minmax(280px, 1fr); }
+.without-activity .activity-wrapper { display: none; }
+.activity-wrapper { display: flex; min-height: 0; min-width: 0; }
+.activity-wrapper .context-panel { display: flex; flex: 1; min-width: 0; }
+.panel-resizer { width: 5px; flex: 0 0 5px; cursor: col-resize; background: var(--line-soft); touch-action: none; }
+.panel-resizer:hover, .panel-resizer:focus-visible { background: var(--accent); }
+.focus-layout .nav-rail { width: 64px; flex-basis: 64px; }
+.focus-layout .nav-rail .brand, .focus-layout .nav-item > span, .focus-layout .rail-bottom { display: none; }
+.focus-layout .nav-rail nav { padding: 12px 5px; }
+.focus-layout .nav-item { padding: 12px 17px; }
+.chat-panel { position: relative; min-width: 0; }
+.jump-latest { position: absolute; bottom: 155px; left: 50%; transform: translateX(-50%); background: var(--accent-soft); color: var(--text); border: 1px solid var(--accent); border-radius: 20px; padding: 8px 18px; z-index: 2; }
+.terminal-frame { background: var(--panel); }
+.palette-overlay { position: fixed; inset: 0; z-index: 100; display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; background: #0008; }
+.command-palette { width: min(620px, 90vw); padding: 14px; border: 1px solid var(--line); background: var(--panel); border-radius: 16px; box-shadow: 0 20px 70px #0006; }
+.command-palette > input { width: 100%; padding: 13px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; }
+.command-results { max-height: 50vh; overflow: auto; margin: 10px 0; }
+.command-results button { display: flex; justify-content: space-between; width: 100%; padding: 12px; border: 0; background: transparent; color: var(--text); border-radius: 7px; }
+.command-results button.selected { background: var(--accent-soft); }
+.command-palette small, kbd { color: var(--muted); }
+@media (max-width: 1200px) { .topbar-controls label { max-width: 135px; }.app-shell .nav-rail { width: 160px; flex-basis: 160px; }.focus-layout .nav-rail { width: 64px; flex-basis: 64px; } }
+.review-grid { display: grid; grid-template-columns: 240px minmax(0,1fr); gap: 20px; }
+.review-list { display: flex; flex-direction: column; gap: 6px; }
+.review-list button { text-align: left; padding: 12px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.review-list button.selected { background: var(--accent-soft); border-color: var(--accent); }
+.review-list strong, .review-list small { display: block; overflow-wrap: anywhere; }
+.review-list small { color: var(--muted); margin-top: 6px; }
+.review-detail { min-width: 0; }
+.review-actions, .review-file { display: flex; gap: 10px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
+.review-file button { background: none; border: 0; color: var(--accent); text-align: left; }
+.review-file small { color: var(--muted); }
+.review-detail pre { max-height: 480px; overflow: auto; padding: 12px; background: var(--panel); border: 1px solid var(--line); font-size: 12px; }
+.split-diff { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 8px; }
+.split-diff section { min-width: 0; }
+.unified-diff .added { color: var(--green); background: color-mix(in srgb, var(--green) 9%, transparent); }
+.unified-diff .deleted { color: var(--danger); background: color-mix(in srgb, var(--danger) 9%, transparent); }
+.review-comment { display: grid; gap: 10px; margin: 15px 0; }
+.review-comment textarea { min-height: 85px; padding: 10px; background: var(--panel); color: var(--text); border: 1px solid var(--line); }
+.review-comment input { width: 80px; margin-left: 10px; }
+.review-page select, .review-page input[type=number] { padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); }
+.review-page .added { color: var(--green); background: color-mix(in srgb, var(--green) 9%, transparent); }
+.review-page .deleted { color: var(--danger); background: color-mix(in srgb, var(--danger) 9%, transparent); }
+.diff-number { display: inline-block; width: 42px; padding-right: 10px; color: var(--muted); text-align: right; border: 0; background: none; font: inherit; user-select: none; }
+.review-evidence pre { white-space: pre-wrap; overflow-wrap: anywhere; }

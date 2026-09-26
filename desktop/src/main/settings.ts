@@ -7,7 +7,8 @@ import { parseCodexAuth } from './codex-auth'
 
 const defaults: Settings = {
   recentProjects: [], trustedProjects: [], provider: 'openai-codex', model: 'gpt-6-astra',
-  thinkingLevel: 'high', systemPrompt: '', projectInstructions: {}, theme: 'dark', disallowedTools: [], baseUrl: '',
+  thinkingLevel: 'high', systemPrompt: '', projectInstructions: {}, theme: 'system', disallowedTools: [], baseUrl: '',
+  layout: { sessionWidth: 246, activityWidth: 340, sessions: true, activity: true, focus: false },
   decisionEngine: 'off', decisionSetupSeen: false, decisionModel: 'jev-latest', decisionCloudProjects: [], decisionCloudDeclinedProjects: [], glinerEnabled: false
 }
 
@@ -45,12 +46,20 @@ function writeJSON(path: string, data: unknown): void {
 }
 
 export function getSettings(): Settings {
-  return { ...defaults, ...readJSON<Partial<Settings>>(settingsPath(), {}) }
+  const stored = readJSON<Partial<Settings>>(settingsPath(), {})
+  return { ...defaults, ...stored, layout: { ...defaults.layout, ...stored.layout } }
 }
 
 export function updateSettings(patch: Partial<Settings>): Settings {
   const allowed: (keyof Settings)[] = ['provider', 'model', 'thinkingLevel', 'systemPrompt', 'projectInstructions', 'theme', 'disallowedTools', 'baseUrl', 'decisionEngine', 'decisionSetupSeen', 'decisionModel', 'glinerEnabled']
   const next = getSettings()
+  if (patch.theme !== undefined && !['dark', 'light', 'system'].includes(patch.theme)) throw new Error('Invalid theme')
+  if (patch.layout) {
+    const value = patch.layout
+    if (![value.sessionWidth, value.activityWidth].every(Number.isFinite) ||
+        ![value.sessions, value.activity, value.focus].every((item) => typeof item === 'boolean')) throw new Error('Invalid layout')
+    next.layout = { ...value, sessionWidth: Math.max(190, Math.min(420, value.sessionWidth)), activityWidth: Math.max(260, Math.min(520, value.activityWidth)) }
+  }
   for (const key of allowed) {
     if (Object.hasOwn(patch, key)) (next as unknown as Record<string, unknown>)[key] = patch[key]
   }

@@ -72,6 +72,15 @@ func (a *app) dispatch(req request) (any, error) {
 		return nil, fmt.Errorf("unsupported protocol version %d", req.Version)
 	}
 	switch req.Method {
+	case "project.idle":
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		for _, run := range a.running {
+			if run.busy.Load() || run.stopping.Load() {
+				return false, nil
+			}
+		}
+		return true, nil
 	case "health":
 		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion}, nil
 	case "decision.configure":
@@ -136,8 +145,18 @@ func (a *app) dispatch(req request) (any, error) {
 		for _, info := range infos {
 			a.mu.Lock()
 			_, active := a.running[info.ID]
+			state := "stopped"
+			if run := a.running[info.ID]; run != nil {
+				state = "idle"
+				if run.busy.Load() {
+					state = "running"
+				}
+				if run.stopping.Load() {
+					state = "cancelling"
+				}
+			}
 			a.mu.Unlock()
-			result = append(result, map[string]any{"id": string(info.ID), "lastUpdatedAt": info.LastUpdatedAt, "title": a.title(info.ID), "active": active})
+			result = append(result, map[string]any{"id": string(info.ID), "lastUpdatedAt": info.LastUpdatedAt, "title": a.title(info.ID), "active": active, "state": state})
 		}
 		sort.Slice(result, func(i, j int) bool {
 			return result[i]["lastUpdatedAt"].(time.Time).After(result[j]["lastUpdatedAt"].(time.Time))
@@ -409,5 +428,6 @@ func main() {
 	}
 	requests.Wait()
 	cancel()
+	a.runs.Wait()
 	a.events.flush()
 }

@@ -15,6 +15,10 @@ import (
 )
 
 type Dependencies struct {
+	// OnIdle observes completed external-input work after all model and tool work
+	// has drained. It must return immediately; observers may enqueue telemetry.
+	OnIdle                func([]inbox.ID)
+	OnActivity            func(bool)
 	ToolHeartbeatInterval time.Duration
 	SessionID             session.ID
 	Inbox                 *inbox.Inbox

@@ -6,6 +6,7 @@ import { join, relative, resolve } from 'node:path'
 import { getCACertificates } from 'node:tls'
 import { promisify } from 'node:util'
 import type { AgentEvent, DockerStatus } from '../shared/api'
+import { backendEnvironment } from './child-environment'
 
 const execFileAsync = promisify(execFile)
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timeout: NodeJS.Timeout }
@@ -51,7 +52,7 @@ export class DockerBridge {
   }
 
   private async docker(args: string[], timeout = 15000): Promise<string> {
-    const { stdout } = await execFileAsync('docker', args, { windowsHide: true, timeout, maxBuffer: 8 * 1024 * 1024 })
+    const { stdout } = await execFileAsync('docker', args, { windowsHide: true, timeout, maxBuffer: 8 * 1024 * 1024, env: backendEnvironment() })
     return stdout.trim()
   }
 
@@ -101,7 +102,7 @@ export class DockerBridge {
       '--mount', `type=volume,source=${volume},target=/state`,
       '--tmpfs', '/tmp:rw,nosuid,nodev,size=256m', tag
     ]
-    const child = spawn('docker', args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
+    const child = spawn('docker', args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: backendEnvironment() })
     this.process = child
     this.buffer = ''
     child.stdout.on('data', (data: Buffer) => this.consume(data.toString('utf8')))

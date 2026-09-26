@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
@@ -13,6 +13,8 @@ import { SessionUsageService } from './session-usage'
 import { deleteSkill, gitChanges, gitDiff, listFiles, listSkills, readFile, saveSkill } from './files'
 import * as github from './github'
 import { discoverModels } from './models'
+import { CheckpointService } from './checkpoint-service'
+import { backendEnvironment } from './child-environment'
 
 if (process.env.UNREAL_DESKTOP_USER_DATA) {
   mkdirSync(process.env.UNREAL_DESKTOP_USER_DATA, { recursive: true })
@@ -26,6 +28,7 @@ const accountUsage = new AccountUsageService()
 const sessionUsage = new SessionUsageService(bridge)
 const execFileAsync = promisify(execFile)
 let window: BrowserWindow | null = null
+let checkpoints: CheckpointService | null = null
 const terminals = new Map<string, { write(data: string): void; resize(cols: number, rows: number): void; kill(): void }>()
 
 function project(): string {
@@ -86,9 +89,24 @@ function closeTerminals(): void {
 }
 
 function registerIPC(): void {
+  const checkpointService = (): CheckpointService => { if (!checkpoints) throw new Error('Open a project first'); return checkpoints }
+  const idleMutation = <T>(work: () => Promise<T>): Promise<T> => checkpointService().exclusive(async () => {
+    if (checkpointService().busy || !await bridge.request<boolean>('project.idle', {})) throw new Error('Wait for active project work to finish before changing files or Git state')
+    return work()
+  })
+  ipcMain.handle('checkpoints:list', () => checkpointService().store.list())
+  ipcMain.handle('checkpoints:preview', (_event, id: string, path: string) => checkpointService().store.preview(id, path))
+  ipcMain.handle('checkpoints:storage', () => checkpointService().store.storage())
+  ipcMain.handle('checkpoints:remove', (_event, id: string) => checkpointService().exclusive(() => checkpointService().store.remove(id)))
+  ipcMain.handle('checkpoints:restore', (_event, id: string, paths: string[]) => checkpointService().exclusive(async () => {
+    if (checkpointService().busy || terminals.size || !await bridge.request<boolean>('project.idle', {})) throw new Error('Stop active work and close the container terminal before restoring files')
+    return checkpointService().store.restore(id, paths)
+  }))
   ipcMain.handle('settings:get', () => getSettings())
   ipcMain.handle('settings:update', async (_event, patch) => {
     const next = updateSettings(patch)
+    nativeTheme.themeSource = next.theme
+    window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#101726' : '#f3f5fb')
     if (bridge.projectPath) {
       if (next.decisionEngine === 'jev' && !next.decisionCloudProjects.includes(bridge.projectPath) && !next.decisionCloudDeclinedProjects.includes(bridge.projectPath)) await requestDecisionConsent(bridge.projectPath)
       await configureDecision()
@@ -136,12 +154,12 @@ function registerIPC(): void {
   ipcMain.handle('github:worktrees', () => github.githubWorktrees(project()))
   ipcMain.handle('github:worktree-create', (_event, branch: string, baseRef: string) => github.githubCreateWorktree(project(), branch, baseRef))
   ipcMain.handle('github:branch', () => github.githubBranch(project()))
-  ipcMain.handle('github:fetch', () => github.githubFetch(project()))
-  ipcMain.handle('github:pull', () => github.githubPull(project()))
-  ipcMain.handle('github:stage', (_event, paths: string[]) => github.githubStage(project(), paths, true))
-  ipcMain.handle('github:unstage', (_event, paths: string[]) => github.githubStage(project(), paths, false))
-  ipcMain.handle('github:commit', (_event, message: string) => github.githubCommit(project(), message))
-  ipcMain.handle('github:push', (_event, branch: string) => github.githubPush(project(), branch))
+  ipcMain.handle('github:fetch', () => idleMutation(() => github.githubFetch(project())))
+  ipcMain.handle('github:pull', () => idleMutation(() => github.githubPull(project())))
+  ipcMain.handle('github:stage', (_event, paths: string[]) => idleMutation(() => github.githubStage(project(), paths, true)))
+  ipcMain.handle('github:unstage', (_event, paths: string[]) => idleMutation(() => github.githubStage(project(), paths, false)))
+  ipcMain.handle('github:commit', (_event, message: string) => idleMutation(() => github.githubCommit(project(), message)))
+  ipcMain.handle('github:push', (_event, branch: string) => idleMutation(() => github.githubPush(project(), branch)))
   ipcMain.handle('github:prs', () => github.githubPullRequests(project()))
   ipcMain.handle('github:pr', (_event, number: number) => github.githubPullRequest(project(), number))
   ipcMain.handle('github:pr-create', (_event, title: string, body: string, base: string, draft: boolean) => github.githubCreatePullRequest(project(), title, body, base, draft))
@@ -166,8 +184,12 @@ function registerIPC(): void {
       if (choice.response !== 0) throw new Error('Workspace trust was not granted')
     }
     closeTerminals()
+    if (checkpoints?.busy) throw new Error('Stop active work before switching projects')
     sessionUsage.clear()
     const status = await bridge.start(canonical)
+    checkpoints = new CheckpointService(canonical, app.getPath('userData'))
+    await checkpoints.store.recover()
+    checkpoints.onState = (sessionId, state, checkpointId) => window?.webContents.send('agent:event', { v: 1, event: 'desktop.state', sessionId, seq: -Date.now(), payload: { state, checkpointId } })
     rememberProject(canonical)
     const settings = getSettings()
     if (settings.decisionEngine === 'jev' && !settings.decisionCloudProjects.includes(canonical) && !settings.decisionCloudDeclinedProjects.includes(canonical)) await requestDecisionConsent(canonical)
@@ -188,12 +210,13 @@ function registerIPC(): void {
     void supplied
     return bridge.request('session.create', { config, credential: await sessionCredential() })
   })
-  ipcMain.handle('session:open', async (_event, sessionId: string) => {
+  ipcMain.handle('session:open', (_event, sessionId: string) => checkpointService().exclusive(async () => {
     await bridge.request('session.open', { sessionId, credential: await sessionCredential(sessionId) })
-  })
+  }))
   ipcMain.handle('session:send', async (_event, sessionId: string, prompt: string, messageId: string) => {
     if (typeof prompt !== 'string' || Buffer.byteLength(prompt, 'utf8') > 1024 * 1024) throw new Error('Message exceeds 1 MB')
-    await bridge.request('session.send', { sessionId, prompt, messageId, credential: await sessionCredential(sessionId) })
+    const credential = await sessionCredential(sessionId)
+    await checkpointService().send(sessionId, messageId, prompt, () => bridge.request('session.send', { sessionId, prompt, messageId, credential }), terminals.size > 0)
   })
   ipcMain.handle('session:stop', (_event, sessionId: string) => bridge.request('session.stop', { sessionId }))
   ipcMain.handle('session:fork', async (_event, sessionId: string) => bridge.request('session.fork', { sessionId, credential: await sessionCredential(sessionId) }))
@@ -204,26 +227,27 @@ function registerIPC(): void {
   ipcMain.handle('files:changes', () => gitChanges(project()))
   ipcMain.handle('files:diff', (_event, relative: string) => gitDiff(project(), relative))
   ipcMain.handle('skills:list', () => listSkills(project()))
-  ipcMain.handle('skills:save', (_event, name: string, content: string) => saveSkill(project(), name, content))
-  ipcMain.handle('skills:delete', (_event, name: string) => deleteSkill(project(), name))
+  ipcMain.handle('skills:save', (_event, name: string, content: string) => idleMutation(() => saveSkill(project(), name, content)))
+  ipcMain.handle('skills:delete', (_event, name: string) => idleMutation(() => deleteSkill(project(), name)))
 
-  ipcMain.handle('terminal:start', async () => {
+  ipcMain.handle('terminal:start', () => checkpointService().exclusive(async () => {
     const container = bridge.containerName
     if (!container) throw new Error('Container is not running')
     const pty = await import('node-pty')
     const terminal = pty.spawn('docker', ['exec', '-it', container, '/bin/bash'], {
       name: 'xterm-256color', cols: 100, rows: 30, cwd: project(),
-      env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
+      env: backendEnvironment()
     })
     const id = randomUUID()
     terminals.set(id, terminal)
+    checkpointService().markExternalWork()
     terminal.onData((data: string) => window?.webContents.send('terminal:data', { id, data }))
     terminal.onExit(({ exitCode }: { exitCode: number }) => {
       terminals.delete(id)
       window?.webContents.send('terminal:exit', { id, code: exitCode })
     })
     return id
-  })
+  }))
   ipcMain.handle('terminal:write', (_event, id: string, data: string) => terminals.get(id)?.write(data))
   ipcMain.handle('terminal:resize', (_event, id: string, cols: number, rows: number) => terminals.get(id)?.resize(cols, rows))
   ipcMain.handle('terminal:stop', (_event, id: string) => { terminals.get(id)?.kill(); terminals.delete(id) })
@@ -232,7 +256,7 @@ function registerIPC(): void {
 function createWindow(): void {
   window = new BrowserWindow({
     width: 1500, height: 940, minWidth: 1000, minHeight: 650,
-    title: 'UnrealCode', backgroundColor: '#101726',
+    title: 'UnrealCode', backgroundColor: nativeTheme.shouldUseDarkColors ? '#101726' : '#f3f5fb',
     webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   })
   const openInBrowser = (url: string): void => {
@@ -250,9 +274,14 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   migrateLegacySettings()
+  nativeTheme.themeSource = getSettings().theme
+  nativeTheme.on('updated', () => window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#101726' : '#f3f5fb'))
   app.setAppUserModelId('ai.mcshotty.unrealcode')
   registerIPC()
-  bridge.onEvent = (value: AgentEvent) => window?.webContents.send('agent:event', value)
+  bridge.onEvent = (value: AgentEvent) => {
+    window?.webContents.send('agent:event', value)
+    void checkpoints?.event(value).catch((error) => window?.webContents.send('agent:event', { ...value, event: 'desktop.state', payload: { state: 'failed', message: String(error) } }))
+  }
   bridge.onStatus = (value) => window?.webContents.send('docker:status-changed', value)
   createWindow()
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })

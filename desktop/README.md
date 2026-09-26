@@ -28,7 +28,7 @@ node scripts/qa.mjs --workspace --flows --motion
 node scripts/qa.mjs --workspace --flows --packaged
 ```
 
-The installer is `dist/UnrealCode Setup 0.3.0.exe`. It bundles backend source and builds a Docker image tagged with the app version and source fingerprint, so a rebuilt installer does not reuse an older backend image. No host Go installation is required. For a live Codex tool call, use `node scripts/qa.mjs --workspace --temp-workspace --live --tool`. A synthetic Jev integration check is `node scripts/qa.mjs --workspace --temp-workspace --decision` when `TYPESAFE_API_KEY` is available.
+The installer is `dist/UnrealCode Setup 0.4.0.exe`. It bundles backend source and builds a Docker image tagged with the app version and source fingerprint, so a rebuilt installer does not reuse an older backend image. No host Go installation is required. For a live Codex tool call, use `node scripts/qa.mjs --workspace --temp-workspace --live --tool`. A synthetic Jev integration check is `node scripts/qa.mjs --workspace --temp-workspace --decision` when `TYPESAFE_API_KEY` is available.
 
 The installer includes third-party license texts in `resources/licenses`, plus Electron and Chromium notices at the application root. `npm run build:win` regenerates the npm notices and stops if a new dependency's license needs review.
 
@@ -44,3 +44,27 @@ On Windows systems with HTTPS inspection, use `$env:NODE_OPTIONS='--use-system-c
 - Provider response headers show short-window rate-limit headroom separately from account totals. The Usage page reports measured input, output, cached, cache-write, reasoning, and decision tokens without estimated dollar costs. Context percentage appears only when a verified model limit is available.
 - The chat activity rail shows overlapping model and tool timings and can cancel one active operation without stopping the session. Telemetry is queued off the coordinator's critical path. The interface honors reduced motion and keeps terminal text stationary.
 - Hooks, MCP servers, plugins, subagents, and a Claude subscription session engine remain outside this release.
+
+## Review and recovery (0.4)
+
+Appearance supports Dark, Light, and Follow Windows. Existing selections are
+preserved; new installations follow Windows. Ctrl+K opens commands, Ctrl+N starts
+a session, and Ctrl+backtick focuses the container terminal. Panel widths and
+visibility persist; focus layout gives the conversation more space.
+
+Review shows checkpoints around a task and any steering messages received before
+its tools finish. Select files, inspect the diff, preview restoration, and confirm.
+Later edits block restoration. A recovery checkpoint is saved before project
+writes. Stop active work and close the container terminal before restoring.
+
+Checkpoint contents live in app data, outside the workspace. Capture includes Git
+tracked and nonignored untracked files; ordinary folders exclude common build and
+dependency directories. Symlinks and junctions are skipped. Limits are 8 MB per
+file, 10,000 files and 128 MB per capture, with the newest 30 checkpoints retained
+within 512 MB of stored content. Skipped files are shown explicitly. Interrupted
+captures and overlapping sessions or terminal activity are marked incomplete and
+cannot be restored. External edits made during a task can appear in its diff;
+review the selected files before restoring.
+
+The local file comparison detects changes since capture; it does not lock files
+against unrelated external editors. Existing session history remains unchanged.

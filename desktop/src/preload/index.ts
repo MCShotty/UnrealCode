@@ -3,6 +3,11 @@ import type { DesktopAPI } from '../shared/api'
 
 const invoke = (name: string, ...args: unknown[]): Promise<any> => ipcRenderer.invoke(name, ...args)
 const api: DesktopAPI = {
+  checkpoints: () => invoke('checkpoints:list'),
+  checkpointPreview: (id, path) => invoke('checkpoints:preview', id, path),
+  checkpointRestore: (id, paths) => invoke('checkpoints:restore', id, paths),
+  checkpointRemove: (id) => invoke('checkpoints:remove', id),
+  checkpointStorage: () => invoke('checkpoints:storage'),
   getSettings: () => invoke('settings:get'),
   updateSettings: (patch) => invoke('settings:update', patch),
   saveKey: (provider, key) => invoke('settings:save-key', provider, key),

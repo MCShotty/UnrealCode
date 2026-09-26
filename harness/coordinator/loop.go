@@ -32,6 +32,7 @@ type coordinator struct {
 	state        loopState
 	stop         stopState
 	cancelModel  context.CancelFunc
+	idleInputs   []inbox.ID
 }
 
 type stopState struct {
@@ -116,7 +117,15 @@ func (current *coordinator) Run(ctx context.Context) error {
 	}
 
 	var heartbeat <-chan time.Time
+	lastBusy, activityKnown := false, false
 	for {
+		busy := !current.isIdle()
+		if !activityKnown || busy != lastBusy {
+			if current.dependencies.OnActivity != nil {
+				current.dependencies.OnActivity(busy)
+			}
+			lastBusy, activityKnown = busy, true
+		}
 		if !current.isWaitingForOnlyToolCalls() {
 			heartbeat = nil
 		} else if heartbeat == nil && current.dependencies.ToolHeartbeatInterval > 0 {
@@ -184,6 +193,12 @@ func (current *coordinator) Run(ctx context.Context) error {
 		if current.stop.request.Mode == inbox.StopWhenIdle && current.isIdle() {
 			return ctx.Err()
 		}
+		if current.isIdle() && len(current.idleInputs) > 0 {
+			if current.dependencies.OnIdle != nil {
+				current.dependencies.OnIdle(append([]inbox.ID(nil), current.idleInputs...))
+			}
+			current.idleInputs = nil
+		}
 	}
 }
 
@@ -210,6 +225,11 @@ func (current *coordinator) processEvents(ctx context.Context) (bool, error) {
 }
 
 func (current *coordinator) processInputs(ctx context.Context, inputs []inbox.Input) error {
+	for _, input := range inputs {
+		if input.Kind == inbox.InputExternal {
+			current.idleInputs = append(current.idleInputs, input.ID)
+		}
+	}
 	return current.handleInboxInputs(ctx, inputs)
 }
 

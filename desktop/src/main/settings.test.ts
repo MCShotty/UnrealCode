@@ -16,6 +16,16 @@ let temp = ''
 afterEach(async () => { if (temp) await rm(temp, { recursive: true, force: true }); temp = '' })
 
 describe('settings migration and consent', () => {
+  it('defaults new installations to Windows theme and preserves saved themes and bounded layouts', async () => {
+    temp = await mkdtemp(join(tmpdir(), 'unrealcode-theme-'))
+    appData = join(temp, 'appdata'); userData = join(temp, 'new')
+    expect(getSettings().theme).toBe('system')
+    updateSettings({ theme: 'dark' })
+    expect(getSettings().theme).toBe('dark')
+    updateSettings({ layout: { sessionWidth: 900, activityWidth: 10, sessions: false, activity: true, focus: true } })
+    expect(getSettings().layout).toEqual({ sessionWidth: 420, activityWidth: 260, sessions: false, activity: true, focus: true })
+    expect(() => updateSettings({ theme: 'invalid' as never })).toThrow('Invalid theme')
+  })
   it('moves legacy project preferences while preserving the old files', async () => {
     temp = await mkdtemp(join(tmpdir(), 'unrealcode-settings-'))
     appData = join(temp, 'appdata'); userData = join(temp, 'new')
