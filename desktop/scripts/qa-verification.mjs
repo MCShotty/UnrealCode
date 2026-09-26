@@ -1,0 +1,30 @@
+import { _electron as electron } from 'playwright'
+import { createServer } from 'node:http'
+import { mkdtempSync,mkdirSync,writeFileSync,existsSync } from 'node:fs'
+import { join,resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { execFileSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import assert from 'node:assert/strict'
+const root=mkdtempSync(join(tmpdir(),'unrealcode-verification-')),project=join(root,'project');mkdirSync(project);writeFileSync(join(project,'sample.txt'),'fixture\n')
+const git=args=>execFileSync('git',['-C',project,...args],{windowsHide:true,stdio:'ignore'});git(['init']);git(['add','.']);git(['-c','user.name=Fixture','-c','user.email=fixture@localhost','commit','-m','Base'])
+let requests=0;const model=createServer(async(req,res)=>{for await(const _part of req){}requests++;res.writeHead(200,{'content-type':'application/json'});res.write(JSON.stringify({id:randomUUID(),choices:[{index:0,finish_reason:'stop',message:{role:'assistant',content:'Fixture repair inspection complete; deliberate failure remains.'}}],usage:{prompt_tokens:20,completion_tokens:6}}));res.end()});await new Promise(resolve=>model.listen(0,'0.0.0.0',resolve))
+const packaged=process.argv.includes('--packaged'),app=await electron.launch({executablePath:resolve(packaged?'dist/win-unpacked/UnrealCode.exe':'node_modules/electron/dist/electron.exe'),args:packaged?[]:['.'],env:{...process.env,UNREAL_DESKTOP_USER_DATA:join(root,'data'),UNREAL_DESKTOP_BACKGROUND_CHECK:'1'}})
+const report={root,errors:[]};let page=await app.firstWindow()
+const wait=async(predicate,arg)=>{const end=Date.now()+90000;while(Date.now()<end){if(await page.evaluate(predicate,arg))return;await new Promise(resolve=>setTimeout(resolve,100))}throw Error('Verification fixture timed out')}
+try{
+ page.on('pageerror',error=>report.errors.push(error.message));await app.evaluate(({dialog})=>{globalThis.verificationApprovals=[];dialog.showMessageBox=async(...args)=>{const options=args.at(-1);if(options?.title==='Run saved verification?')globalThis.verificationApprovals.push(options.detail);return{response:0,checkboxChecked:false}}})
+ await page.getByRole('button',{name:'Set up later'}).click();await page.evaluate(baseUrl=>window.unreal.updateSettings({provider:'openai-compatible',baseUrl,model:'verification-fixture',executionMode:'ask',taskIsolation:false,theme:'dark'}),`http://localhost:${model.address().port}/v1`)
+ await page.evaluate(path=>window.unreal.openProject(path,true),project);await page.reload();const{sessionId}=await page.evaluate(()=>window.unreal.createSession({}))
+ const settings=await page.evaluate(()=>window.unreal.workflowSettings());settings.profiles=[{id:'fail',name:'Intentional failure',command:"printf 'intentional failure'; exit 7",timeoutSeconds:10},{id:'pass',name:'Passing fixture',command:"printf 'VERIFIED'",timeoutSeconds:10},{id:'cancel',name:'Cancellation fixture',command:'echo started > verify.started; sleep 30',timeoutSeconds:60}];await page.evaluate(value=>window.unreal.workflowSave(value),settings)
+ const failure=await page.evaluate(id=>window.unreal.workflowStart(id,'fail','fix',2),sessionId);await wait(async id=>(await window.unreal.workflowRuns()).find(run=>run.id===id)?.state==='failed',failure)
+ const failed=await page.evaluate(id=>window.unreal.workflowRun(id),failure);assert.equal(failed.repairsStarted,2);assert.equal(failed.attempts.length,3);assert(failed.attempts.every(attempt=>attempt.exitCode===7&&attempt.output==='intentional failure'));assert.equal(requests,2)
+ const passed=await page.evaluate(id=>window.unreal.workflowStart(id,'pass',undefined,0),sessionId);await wait(async id=>(await window.unreal.workflowRuns()).find(run=>run.id===id)?.state==='passed',passed);assert.equal(requests,2)
+ const cancelled=await page.evaluate(id=>window.unreal.workflowStart(id,'cancel',undefined,0),sessionId);const deadline=Date.now()+30000;while(!existsSync(join(project,'verify.started'))){if(Date.now()>deadline)throw Error('Command did not start');await new Promise(resolve=>setTimeout(resolve,100))}await page.evaluate(id=>window.unreal.workflowCancel(id),cancelled);await wait(async id=>(await window.unreal.workflowRuns()).find(run=>run.id===id)?.state==='cancelled',cancelled)
+ const events=await page.evaluate(id=>window.unreal.getEvents(id,0),sessionId);assert.equal(events.filter(event=>event.event==='verification.result').length,5);assert(events.some(event=>event.event==='operation.update'&&event.payload.Type==='verification'&&event.payload.Status==='canceled'))
+ assert((await app.evaluate(()=>globalThis.verificationApprovals)).some(text=>text.includes("printf 'intentional failure'; exit 7")&&text.includes('2 model repair attempts')))
+ await app.evaluate(({BrowserWindow},target)=>BrowserWindow.getAllWindows()[0].webContents.send('app:navigate',target),{project,sessionId});await page.getByLabel('Message UnrealCode').waitFor();await page.getByRole('button',{name:'Workflow',exact:true}).click();await page.getByRole('tab',{name:'Saved workflows'}).click();await page.getByRole('heading',{name:'Saved workflows',exact:true}).waitFor();await page.screenshot({path:join(root,'verification-dark.png'),animations:'disabled'})
+ await page.evaluate(()=>window.unreal.updateSettings({executionMode:'plan'}));const plan=(await page.evaluate(()=>window.unreal.createSession({}))).sessionId;await assert.rejects(page.evaluate(id=>window.unreal.workflowStart(id,'pass',undefined,0),plan),/does not grant/)
+ assert.deepEqual(report.errors,[]);Object.assign(report,{repairAttempts:2,failedChecks:3,nativePreview:true,cancellation:true,planBlocked:true,requests});console.log(JSON.stringify(report))
+}catch(error){report.failure=String(error);report.runs=await page.evaluate(()=>window.unreal.workflowRuns()).catch(()=>[]);writeFileSync(join(root,'report.json'),JSON.stringify(report,null,2));await page.screenshot({path:join(root,'failure.png')}).catch(()=>{});console.log(JSON.stringify(report));throw error}
+finally{await app.close().catch(()=>{});model.closeAllConnections();model.close()}

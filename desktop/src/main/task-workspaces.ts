@@ -28,12 +28,12 @@ export class TaskWorkspaces {
   private mutate<T>(work: () => Promise<T>): Promise<T> { const run = this.metadataTail.then(work); this.metadataTail = run.then(() => {}, () => {}); return run }
   update(id: string, patch: Partial<Pick<TaskWorkspace, 'sessionId' | 'state' | 'title' | 'usage' | 'usageRecords'>>): Promise<TaskWorkspace> { return this.mutate(async () => { const value = await this.read(id); Object.assign(value, patch); await this.save(value); return this.view(value) }) }
   link(id: string, sessionId: string): Promise<void> { return this.mutate(async () => { const value = await this.read(id); value.linkedSessions = [...new Set([...(value.linkedSessions || []), sessionId])]; await this.save(value) }) }
-  async prepare(): Promise<TaskWorkspace> {
+  async prepare(recorded?: { store:CheckpointStore; snapshot:Snapshot; label:string }): Promise<TaskWorkspace> {
     if (!await this.available()) throw new Error('Isolated tasks need a committed Git repository opened at its root')
     const revision = await this.git(['rev-parse', 'HEAD']), id = randomUUID(), branch = `unrealcode/task-${id.slice(0,8)}`
-    const baseline = await this.source.captureSnapshot()
+    const baseline = recorded ? await this.source.importSnapshot(recorded.store, recorded.snapshot) : await this.source.captureSnapshot()
     const path = join(this.directory, 'worktrees', id)
-    const value: StoredWorkspace = { id, path, branch, revision, createdAt: new Date().toISOString(), capturedFiles: Object.keys(baseline.files).length, state: 'prepared', title: 'New isolated task', omitted: baseline.skipped, baseline }
+    const value: StoredWorkspace = { id, path, branch, revision, createdAt: new Date().toISOString(), capturedFiles: Object.keys(baseline.files).length, state: 'prepared', title: recorded ? `Specialist from ${recorded.label}` : 'New isolated task', omitted: baseline.skipped, baseline }
     await this.save(value)
     return this.view(value)
   }

@@ -2,6 +2,25 @@
 
 Active checkout: `I:\UnrealCode`; private origin: `MCShotty/UnrealCode`.
 
+## 0.9 teams and verification acceptance
+
+See RELEASE_0.9.0.md for features, exact artifact hash, test counts and limitations.
+Packaged team acceptance includes simultaneous isolated workers, inherited Plan
+restrictions, independent cancellation, conflicting edits, reviewed integration,
+usage aggregation, queued specialist cancellation, restart and request limits.
+Verification acceptance includes exact native command previews, three failed
+checks/two repairs, cancellation, and Plan-mode refusal. Full Go race tests cover
+command replay after restart and cancellation of a running process group.
+
+The synthetic backend comparison used `0.9.0-d197e9e4735b` and baseline
+`0.6.1-dee18e0eec60`. Parallel tool overlap and live steering were preserved.
+Jev 1.13.0 supported bounded repair-loop behavior (confidence 0.95); its lower
+confidence worker-permission judgments were supplemented by focused Go tests,
+real Docker checks and a live Codex specialist. No claim relies on Jev alone.
+
+Hosted Actions run 36262688853 did not start either job because account billing
+blocked runners. Stable 1.0 still requires signing and fresh-machine acceptance.
+
 ## 0.8 connections and context acceptance
 
 Implemented the official-SDK MCP broker for all three execution locations,

@@ -383,3 +383,24 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .context-result { border-top: 1px solid var(--line); margin: 12px 0; padding-top: 12px; }
 .github-intake pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; }
 .github-intake select { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 8px; max-width: 100%; }
+.task-team-controls { flex-shrink: 0; margin: 4px 16px; font-size: 12px; max-height: 30vh; overflow: auto; }
+.task-team-controls summary, .team-rail summary { cursor: pointer; padding: 6px 0; }
+.team-limits { padding: 8px 0; }.team-limits p { color: var(--sub); font-size: 11px; line-height: 1.5; }
+.team-opt-in { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.team-limit-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(120px,1fr)); gap: 10px; }
+.team-limit-grid label,.team-rail form label,.team-rail details>label { display: grid; gap: 5px; }
+.team-limit-grid input,.team-rail textarea,.team-rail select { width: 100%; min-width: 0; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px; }
+.team-rail { min-width: 0; }.team-rail h3 small { display: block; font-size: 11px; color: var(--sub); font-weight: normal; margin: 7px 0; }
+.team-rail p,.team-rail pre { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; font-size: 12px; }
+.team-rail pre { max-height: 230px; overflow: auto; background: var(--panel-2); padding: 9px; }.team-rail textarea { min-height: 70px; resize: vertical; margin-bottom: 8px; }
+.team-worker-tabs { display: flex; flex-wrap: wrap; gap: 5px; }.team-worker-tabs button { font-size: 11px; border-radius: 7px; }
+.team-worker-tabs button[aria-current] { background: var(--accent-soft); border-color: var(--accent); }
+.team-usage { font-size: 11px; color: var(--sub); }.team-usage>div { display: flex; justify-content: space-between; gap: 8px; margin: 5px 0; }.team-usage dd { margin: 0; }
+.team-worker { margin: 12px 0; border-top: 1px solid var(--line); }.team-worker summary small { display: block; color: var(--sub); font-size: 11px; margin-top: 5px; }
+.team-review-dialog { width: min(1100px,90vw); max-height: 85vh; overflow: auto; padding: 24px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+.team-review-dialog::backdrop { background: #080e1eb3; }.team-review-dialog p { overflow-wrap: anywhere; }
+@media(prefers-reduced-motion:reduce) { .team-worker-tabs button { transition: none; } }
+.saved-workflow-columns { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 18px; margin: 18px 0; }
+.saved-workflows .settings-section { min-width: 0; }.saved-workflows .check-row { display: flex; gap: 8px; margin-top: 18px; }
+.saved-workflows .check-row input { width: auto; }.saved-workflows pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; }
+@media(max-width:1200px) { .saved-workflow-columns { grid-template-columns: 1fr; }.workflow-tabs { flex-wrap: wrap; } }

@@ -384,6 +384,9 @@ func (h *mcpHandler) AddRemoteJob(current operation.Operation) error {
 				if h.kind == repositoryPlan {
 					kind = "host.read"
 				}
+				if h.kind == teamPlan {
+					kind = "host.team"
+				}
 				h.events.enqueue(h.id, kind, map[string]any{"requestId": requestID, "sessionId": h.id, "operationId": current.ID, "workspaceId": h.workspace, "tool": input.Tool, "revision": input.Revision, "arguments": input.Arguments})
 				select {
 				case result := <-reply:

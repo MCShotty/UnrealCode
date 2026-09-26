@@ -148,6 +148,34 @@ func (a *app) dispatch(req request) (any, error) {
 			return run.permissions.list(), nil
 		}
 		return nil, run.permissions.resolve(p.ID, p.Digest, p.Allow)
+	case "session.team":
+		p, err := decodeParams[struct {
+			SessionID string `json:"sessionId"`
+			Enabled   bool   `json:"enabled"`
+			Managed   bool   `json:"managed"`
+		}](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		id, err := requiredID(p.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		release, err := a.contextBoundary(id)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+		config, err := a.loadConfig(id)
+		if err != nil {
+			return nil, err
+		}
+		if config.Specialist {
+			return nil, errors.New("Specialists cannot change delegation permissions")
+		}
+		config.TeamEnabled = p.Enabled
+		config.TeamManaged = p.Managed || p.Enabled
+		return nil, a.saveConfig(id, config)
 	case "session.mode":
 		p, err := decodeParams[struct {
 			SessionID string `json:"sessionId"`
@@ -178,6 +206,9 @@ func (a *app) dispatch(req request) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		if config.Specialist {
+			return nil, errors.New("Specialist execution mode is inherited and cannot be broadened")
+		}
 		config.Mode = p.Mode
 		return nil, a.saveConfig(id, config)
 	case "context.configure":
@@ -191,6 +222,22 @@ func (a *app) dispatch(req request) (any, error) {
 			return nil, err
 		}
 		return map[string]bool{"configured": true}, nil
+	case "verification.run":
+		p, err := decodeParams[verificationParams](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		return a.verifyCommand(p)
+	case "verification.cancel":
+		p, err := decodeParams[verificationParams](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		id, err := requiredID(p.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		return nil, a.verification.cancel(id, p.ID)
 	case "project.idle":
 		a.mu.Lock()
 		defer a.mu.Unlock()
@@ -199,11 +246,11 @@ func (a *app) dispatch(req request) (any, error) {
 				return false, nil
 			}
 		}
-		return true, nil
+		return !a.verification.busy(), nil
 	case "decision.idle":
 		return a.decisionPending.Load() == 0, nil
 	case "health":
-		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion, "capabilities": []string{"permissions.v1", "files.v1", "sessions.v1", "mcp.v1", "context.v1"}}, nil
+		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion, "capabilities": []string{"permissions.v1", "files.v1", "sessions.v1", "mcp.v1", "context.v1", "teams.v1", "verification.v1"}}, nil
 	case "decision.configure":
 		config, err := decodeParams[decisionConfig](req.Params)
 		if err != nil {
@@ -362,6 +409,7 @@ func (a *app) dispatch(req request) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		a.verification.stopSession(id)
 		a.mu.Lock()
 		run := a.running[id]
 		a.mu.Unlock()
@@ -397,6 +445,9 @@ func (a *app) dispatch(req request) (any, error) {
 		if strings.TrimSpace(p.OperationID) == "" {
 			return nil, errors.New("operation ID is required")
 		}
+		if a.verification.cancel(id, p.OperationID) == nil {
+			return map[string]bool{"canceling": true}, nil
+		}
 		a.mu.Lock()
 		run := a.running[id]
 		a.mu.Unlock()
@@ -424,6 +475,11 @@ func (a *app) dispatch(req request) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		if config.Specialist {
+			return nil, errors.New("Fork the parent task; specialists cannot create independent continuations")
+		}
+		config.TeamEnabled = false
+		config.TeamManaged = false
 		probe, _, err := a.makeClient(config, p.Credential)
 		if err != nil {
 			return nil, err

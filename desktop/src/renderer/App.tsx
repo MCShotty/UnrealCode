@@ -23,12 +23,15 @@ import { TaskWorkspaceReview } from './TaskWorkspaceReview'
 import { ConnectionsPage } from './ConnectionsPage'
 import { ComposerContext } from './ComposerContext'
 import { ContextInspector } from './ContextInspector'
+import { TaskTeamControls, TaskTeamRail } from './TaskTeams'
+import { defaultTeamOptions, type TeamOptions } from '../shared/teams'
 import { CommandPalette, ResizeHandle, useTheme } from './DesktopControls'
+import { spatial } from './motion'
+import { parseEvents,type ParsedEntry } from './chat-events'
 
 declare global { interface Window { unreal: import('../shared/api').DesktopAPI } }
 const api = window.unreal
 type View = 'context' | 'connections' | 'diagnostics' | 'workflow' | 'review' | 'projects' | 'chat' | 'sessions' | 'files' | 'skills' | 'usage' | 'github' | 'settings' | 'terminal'
-const spatial = { fast: { type: 'spring' as const, stiffness: 600, damping: 42 }, default: { type: 'spring' as const, stiffness: 390, damping: 36 }, slow: { type: 'spring' as const, stiffness: 250, damping: 32 } }
 const navigation: { id: View; label: string; icon: typeof Folder }[] = [
   { id: 'projects', label: 'Projects', icon: Folder }, { id: 'chat', label: 'Chat', icon: MessageCircle },
   { id: 'workflow', label: 'Workflow', icon: Activity }, { id: 'review', label: 'Review', icon: GitBranch }, { id: 'sessions', label: 'Sessions', icon: Clock3 }, { id: 'files', label: 'Files', icon: File },
@@ -43,21 +46,9 @@ const navigation: { id: View; label: string; icon: typeof Folder }[] = [
 function record(value: unknown): Record<string, unknown> { return value && typeof value === 'object' ? value as Record<string, unknown> : {} }
 function field(value: unknown, ...names: string[]): unknown { const target = record(value); for (const name of names) if (name in target) return target[name]; return undefined }
 function string(value: unknown): string { return typeof value === 'string' ? value : '' }
-function decisionAnswer(value: unknown): string {
-  const answer = record(value)
-  if (answer.type === 'choice') return `${string(answer.choice) || 'unknown'}${typeof answer.confidence === 'number' ? ` (${Math.round(answer.confidence * 100)}% confidence)` : ''}`
-  if (answer.type === 'noul') return `${Math.round(Number(answer.noul || 0) * 100)}% yes`
-  if (answer.type === 'score') return `${String(answer.score ?? 'unknown')}${typeof answer.confidence === 'number' ? ` (${Math.round(answer.confidence * 100)}% confidence)` : ''}`
-  return JSON.stringify(answer)
-}
 function formatTime(value: unknown): string {
   const date = new Date(string(value))
   return Number.isNaN(date.valueOf()) ? '' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-}
-function asMessage(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (value && typeof value === 'object') return string(field(value, 'prompt', 'Text', 'text'))
-  return ''
 }
 function mergeEvents(current: AgentEvent[], incoming: AgentEvent[]): AgentEvent[] {
   const known = new Set(current.map((item) => item.seq))
@@ -78,97 +69,6 @@ async function loadEvents(sessionId: string, maxEvents = 3000): Promise<AgentEve
   return collected.slice(-maxEvents)
 }
 
-type ParsedEntry = { id: string; kind: 'user' | 'assistant' | 'tool' | 'decision' | 'status' | 'question'; seq?: number; text: string; title: string; timestamp: string; status?: string; raw?: unknown }
-function parseEvents(events: AgentEvent[]): ParsedEntry[] {
-  const result: ParsedEntry[] = []
-  const compactionTurns=new Set<string>()
-  const tools = new Map<string, ParsedEntry>()
-  const operationCalls = new Map<string, string>()
-  let sequence = 0
-  const toolEntry = (key: string, update: Partial<ParsedEntry>): void => {
-    update.seq = sequence
-    const existing = tools.get(key)
-    if (existing) { Object.assign(existing, update); return }
-    const created: ParsedEntry = { id: key, kind: 'tool', title: update.title || 'Tool call', text: update.text || '', timestamp: update.timestamp || '', status: update.status, raw: update.raw, seq: sequence }
-    tools.set(key, created)
-    result.push(created)
-  }
-  for (const event of events) {
-    sequence = event.seq
-    if (event.event === 'session.needs_input') {
-      result.push({ id: `${event.seq}:question`, kind: 'question', title: 'Your input is needed', text: string(field(event.payload, 'question')), timestamp: formatTime(event.recordedAt), raw: event.payload })
-      continue
-    }
-    if (event.event === 'decision.result') {
-      const payload = record(event.payload)
-      const answers = record(payload.answers)
-      const choices = Object.entries(answers).map(([name, answer]) => `${name}: ${decisionAnswer(answer)}`).join(' · ')
-      result.push({ id: `${event.seq}:decision`, kind: 'decision', title: `${string(payload.engine).toUpperCase()} decision batch`, text: choices, timestamp: '', status: `${Number(payload.durationMs || 0)} ms`, raw: payload })
-      continue
-    }
-    if (event.event === 'decision.error') {
-      result.push({ id: `${event.seq}:decision-error`, kind: 'status', title: 'Decision engine unavailable', text: string(field(event.payload, 'message')), timestamp: '', status: 'error' })
-      continue
-    }
-    if (event.event === 'session.status') {
-      const state = string(field(event.payload, 'status'))
-      if (state === 'error') result.push({ id: `${event.seq}:error`, kind: 'status', title: 'Agent error', text: string(field(event.payload, 'message')), timestamp: '', status: 'error' })
-      continue
-    }
-    if (event.event === 'operation.update') {
-      const operation = record(event.payload)
-      const operationID = string(field(operation, 'ID', 'id'))
-      const key = operationCalls.get(operationID) || `operation:${operationID}`
-      toolEntry(key, { title: tools.get(key)?.title || string(field(operation, 'Type', 'type')) || 'Operation', text: tools.get(key)?.text || operationID, status: string(field(operation, 'Status', 'status')), raw: event.payload })
-      continue
-    }
-    if(event.event==='context.compaction.completed'){result.push({id:`${event.seq}:compaction`,kind:'status',title:'Context summary created',text:'Earlier history is summarized for future requests. Original events remain available in Context.',timestamp:formatTime(event.recordedAt)});continue}
-    if (event.event !== 'session.item') continue
-    const item = record(event.payload)
-    const kind = string(field(item, 'Kind', 'kind'))
-    const data = field(item, 'Data', 'data')
-    const timestamp = formatTime(field(item, 'RecordedAt', 'recordedAt'))
-    if(kind==='turn'&&field(data,'Type','type')==='compaction'){compactionTurns.add(string(field(data,'ID','id')));continue}
-    if (kind === 'input') {
-      if (string(field(data, 'Kind', 'kind')) !== 'external') continue
-      const payload = field(data, 'Payload', 'payload')
-      const text = (typeof payload === 'string' ? payload : asMessage(payload)).split('<unrealcode_context>')[0].trimEnd()
-      result.push({ id: `${event.seq}:input`, kind: 'user', title: 'You', text, timestamp })
-    } else if (kind === 'model_response') {
-      if(compactionTurns.has(string(field(data,'TurnID','turnId'))))continue
-      const response = field(data, 'Response', 'response')
-      const outputs = field(response, 'Output', 'output')
-      if (!Array.isArray(outputs)) continue
-      for (let index = 0; index < outputs.length; index++) {
-        const output = outputs[index]
-        const outputType = string(field(output, 'Type', 'type'))
-        const content = field(output, 'Data', 'data')
-        if (outputType === 'message') {
-          const text = asMessage(content)
-          if (text) result.push({ id: `${event.seq}:message:${index}`, kind: 'assistant', title: 'UnrealCode', text, timestamp })
-          if (string(field(content, 'Phase', 'phase')) === 'final_answer') for (const pending of tools.values()) {
-            if (pending.status === 'running' || pending.status === 'started' || pending.status === 'awaiting') pending.status = 'completed'
-          }
-        } else if (outputType === 'tool_call') {
-          const callID = string(field(content, 'CallID', 'callId')) || `${event.seq}:${index}`
-          toolEntry(`call:${callID}`, { title: string(field(content, 'Name', 'name')) || 'Tool call', text: string(field(content, 'Arguments', 'arguments')), timestamp, status: 'started', raw: content })
-        }
-      }
-    } else if (kind === 'tool_call_status') {
-      const callID = string(field(data, 'CallID', 'callId'))
-      const key = `call:${callID}`
-      const status = field(data, 'Status', 'status')
-      const operations = field(status, 'WaitingFor', 'waitingFor')
-      if (Array.isArray(operations)) for (const operation of operations) {
-        const operationID = typeof operation === 'string' ? operation : string(field(operation, 'ID', 'id'))
-        if (operationID) operationCalls.set(operationID, key)
-      }
-      const hasError = !!string(field(status, 'Error', 'error'))
-      toolEntry(key, { title: tools.get(key)?.title || 'Tool call', text: tools.get(key)?.text || callID, timestamp, status: hasError ? 'failed' : Array.isArray(operations) && operations.length > 0 ? 'running' : 'complete', raw: data })
-    }
-  }
-  return result
-}
 
 function Brand(): ReactNode {
   return <div className="brand"><div className="brand-mark"><span /><span /><span /></div><div><strong>UnrealCode</strong><small>DESKTOP</small></div></div>
@@ -185,7 +85,7 @@ function EventCard({ entry, onAnswer }: { entry: ParsedEntry; onAnswer?: (answer
   if (entry.kind === 'user') return <div className="chat-entry user-entry"><div className="avatar user-avatar">U</div><div className="entry-body"><div className="entry-heading"><strong>You</strong><time>{entry.timestamp}</time></div><div className="user-bubble">{entry.text}</div></div></div>
   if (entry.kind === 'assistant') return <div className="chat-entry"><div className="avatar agent-avatar"><div className="mini-mark">U</div></div><div className="entry-body"><div className="entry-heading"><strong>UnrealCode</strong><time>{entry.timestamp}</time></div><div className="markdown"><ReactMarkdown>{entry.text}</ReactMarkdown></div></div></div>
   if (entry.kind === 'status') return <div className="error-inline"><CircleAlert size={17}/><span>{entry.text}</span></div>
-  return <motion.div layout={!reduceMotion} transition={reduceMotion ? { duration: 0 } : spatial.fast} className={`tool-card ${entry.kind === 'decision' ? 'decision-card' : ''}`}>
+  return <motion.div className={`tool-card ${entry.kind === 'decision' ? 'decision-card' : ''}`}>
     <button className="tool-summary" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
       <span className="tool-symbol">{entry.kind === 'decision' ? <WandSparkles size={17}/> : <Code2 size={17}/>}</span><span className="tool-copy"><strong>{entry.title}</strong><small>{entry.text || 'Agent operation'}</small></span>
       <span className={`tool-status ${entry.status || ''}`}>{entry.status === 'completed' || entry.status === 'complete' ? <CircleCheck size={16}/> : <Radio size={16}/>} {entry.status || 'event'}</span>
@@ -207,7 +107,7 @@ function Welcome({ settings, busy, status, onOpen, onSettings }: { settings: Set
   </div>
 }
 
-function ChatPanel({ events, session, prompt, setPrompt, onSend, onStop, sending, settings, onSave }: { events: AgentEvent[]; session: SessionInfo | undefined; prompt: string; setPrompt: (value: string) => void; onSend: () => void; onStop: () => void; sending: boolean; settings: Settings; onSave: (patch: Partial<Settings>) => Promise<void> }): ReactNode {
+function ChatPanel({ events, session, prompt, setPrompt, onSend, onStop, sending, settings, onSave, teamDraft, onTeamDraft }: { events: AgentEvent[]; session: SessionInfo | undefined; prompt: string; setPrompt: (value: string) => void; onSend: () => void; onStop: () => void; sending: boolean; settings: Settings; onSave: (patch: Partial<Settings>) => Promise<void>; teamDraft: TeamOptions; onTeamDraft(value: TeamOptions): void }): ReactNode {
   const parsed = useMemo(() => parseEvents(events), [events])
   const [toolsOpen, setToolsOpen] = useState(false)
   const bottom = useRef<HTMLDivElement>(null)
@@ -226,7 +126,7 @@ function ChatPanel({ events, session, prompt, setPrompt, onSend, onStop, sending
     <div ref={bottom}/></div>
     {unread && <button className="jump-latest" onClick={() => { following.current = true; setUnread(false); bottom.current?.scrollIntoView({ block: 'end', behavior: 'instant' }) }}>Jump to latest</button>}
     <ExecutionControls sessionId={session?.id} settings={settings} onSave={onSave}/>
-    <ComposerContext sessionId={session?.id} prompt={prompt} onPrompt={setPrompt}/>
+    <TaskTeamControls sessionId={session?.id} draft={teamDraft} onDraft={onTeamDraft}/><ComposerContext sessionId={session?.id} prompt={prompt} onPrompt={setPrompt}/>
     <div className="composer"><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); onSend() } }} placeholder="Message UnrealCode…" rows={3} aria-label="Message UnrealCode"/>
       <div className="composer-bottom"><div className="composer-actions"><button className="secondary-button" onClick={() => { setToolsOpen(!toolsOpen) }} aria-expanded={toolsOpen}>Tools <ChevronDown size={14}/></button><span>Enter to send · Shift+Enter for a new line</span></div><div><button className="secondary-button" onClick={onStop} disabled={!session || sending}><Square size={13}/> Stop</button><button className="primary-button" onClick={onSend} disabled={sending || !prompt.trim()}><Send size={15}/> {sending ? 'Sending' : 'Send'}</button></div></div>
       {toolsOpen && <div className="composer-popover"><strong>Tools for new sessions</strong>{['ListFiles','ReadFile','ApplyPatch','Bash','ViewImage','RepositorySearch','ProjectSearch','FindTools','DecisionBatch','EntityExtract','SkillUse'].map((tool) => <label className="check-row" key={tool}><input type="checkbox" checked={!settings.disallowedTools.includes(tool)} onChange={(event) => void onSave({ disallowedTools: event.target.checked ? settings.disallowedTools.filter((value) => value !== tool) : [...settings.disallowedTools, tool] })}/>{tool}</label>)}</div>}
@@ -234,14 +134,14 @@ function ChatPanel({ events, session, prompt, setPrompt, onSend, onStop, sending
   </div>
 }
 
-function ContextPanel({ changes, events, projectPath, status, decisionEngine, sessionId }: { changes: string[]; events: AgentEvent[]; projectPath: string; status: DockerStatus; decisionEngine: Settings['decisionEngine']; sessionId?: string }): ReactNode {
+function ContextPanel({ changes, events, projectPath, status, decisionEngine, sessionId, onOpen }: { changes: string[]; events: AgentEvent[]; projectPath: string; status: DockerStatus; decisionEngine: Settings['decisionEngine']; sessionId?: string; onOpen(id:string):void }): ReactNode {
   const activity = useMemo(() => parseEvents(events).filter((item) => item.kind !== 'user').slice(-6).reverse(), [events])
   const [diffPath, setDiffPath] = useState('')
   const [diff, setDiff] = useState('')
   const showDiff = async (path: string): Promise<void> => { setDiffPath(path); try { setDiff(await api.gitDiff(path)) } catch (reason) { setDiff(String(reason)) } }
   return <aside className="context-panel"><div className="context-status"><span className={`status-dot ${status.ready ? 'on' : ''}`}/><div><strong>{status.ready ? 'Container Running' : 'Container Offline'}</strong><small>UnrealCode · local workspace</small></div><ChevronDown size={16}/></div>
     <section className="context-card"><div className="section-heading"><h3>Workspace changes</h3><span className="count-pill">{changes.length}</span></div>{changes.length ? changes.slice(0, 7).map((line) => <button className="change-row" key={line} onClick={() => void showDiff(line.slice(3))}><FileText size={15}/><span>{line.slice(3)}</span><small>{line.slice(0, 2)}</small></button>) : <p className="muted-copy">No Git changes found.</p>}</section>
-    <ExecutionInspector sessionId={sessionId} eventSequence={events.at(-1)?.seq || 0}/>
+    <TaskTeamRail sessionId={sessionId} onOpen={onOpen}/><ExecutionInspector sessionId={sessionId} eventSequence={events.at(-1)?.seq || 0}/>
     <section className="context-card timeline-card"><div className="section-heading"><h3>Activity timeline</h3></div>{activity.length ? activity.map((entry) => <div className="timeline-row" key={entry.id}><span className="timeline-dot"/><div><strong>{entry.kind === 'assistant' ? 'Agent response' : entry.title}</strong><small>{entry.text.slice(0, 68)}</small></div><time>{entry.timestamp}</time></div>) : <p className="muted-copy">Agent activity will appear here.</p>}</section>
     <section className="context-card context-bottom"><div className="section-heading"><h3>Current context</h3></div><div className="context-fact"><Folder size={15}/> <span>Project</span><strong>{projectPath.split(/[\\/]/).at(-1)}</strong></div><div className="context-fact"><GitBranch size={15}/> <span>Workspace</span><strong>Local</strong></div><div className="context-fact"><ShieldCheck size={15}/> <span>Container</span><strong>{status.ready ? 'Running' : 'Offline'}</strong></div><div className="context-fact"><WandSparkles size={15}/> <span>Decision engine</span><strong>{decisionEngine === 'off' ? 'Off' : decisionEngine === 'jev' ? 'Jev' : 'Laya'}</strong></div></section>
     {diffPath && <div className="diff-overlay"><div><strong>{diffPath}</strong><button className="icon-button" onClick={() => setDiffPath('')} aria-label="Close diff"><X size={17}/></button></div><pre>{diff || 'No text diff available.'}</pre></div>}
@@ -402,6 +302,7 @@ export default function App(): ReactNode {
   const [events, setEvents] = useState<AgentEvent[]>([])
   const [changes, setChanges] = useState<string[]>([])
   const [prompt, setPrompt] = useState('')
+  const [teamDraft, setTeamDraft] = useState<TeamOptions>({ ...defaultTeamOptions })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [showSettingsBeforeProject, setShowSettingsBeforeProject] = useState(false)
@@ -476,8 +377,8 @@ export default function App(): ReactNode {
     if (!settings) return null
     try {
       const config: BridgeSessionConfig = { provider: settings.provider, model: settings.model, baseUrl: settings.baseUrl, thinkingLevel: settings.thinkingLevel, systemPrompt: settings.systemPrompt, disallowedTools: settings.disallowedTools }
-      const created = await api.createSession(config)
-      resetConversation(created.sessionId); await refreshSessions(); return created.sessionId
+      const created = await api.createSession(config, teamDraft.allowSpecialists || teamDraft.modelRequestLimit || teamDraft.elapsedMinutes || teamDraft.tokenLimit ? teamDraft : undefined)
+      setTeamDraft({ ...defaultTeamOptions }); resetConversation(created.sessionId); await refreshSessions(); return created.sessionId
     } catch (reason) { setError(String(reason)); return null }
   }
   const send = async (): Promise<void> => {
@@ -559,7 +460,7 @@ export default function App(): ReactNode {
       {error && <div className="banner-error"><CircleAlert size={17}/><span>{error}</span>{/(401|unauthorized|credential|token|api key)/i.test(error) && <button onClick={() => setView('settings')}>Reconnect in Settings</button>}<button onClick={() => setError('')}><X size={15}/></button></div>}
       {highlight && view === 'chat' && <div className="search-location">Showing recorded context around event {highlight}. <button onClick={() => { if (activeId) void selectSession(activeId, undefined, false) }}>Open full history</button></div>}
       <AnimatePresence mode="wait" initial={false}><motion.div key={view} className="view-frame" initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -10 }} transition={spatial.fast}>
-        {view === 'chat' && <div className={`chat-layout ${settings.layout.activity && !settings.layout.focus ? '' : 'without-activity'}`}><AnimatePresence mode="wait" initial={false}><motion.div key={activeId || 'new'} className="chat-motion" initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }} transition={spatial.fast}><ChatPanel events={events} session={active} prompt={prompt} setPrompt={setPrompt} onSend={() => void send()} onStop={() => void stop()} sending={busy} settings={settings} onSave={saveSettings}/></motion.div></AnimatePresence><div className="activity-wrapper"><ResizeHandle label="Activity rail width" value={settings.layout.activityWidth} min={260} max={520} reverse onChange={(activityWidth) => changeLayout({ activityWidth })}/><ContextPanel changes={changes} events={events} projectPath={projectPath} status={status} decisionEngine={settings.decisionEngine} sessionId={activeId || undefined}/></div></div>}
+        {view === 'chat' && <div className={`chat-layout ${settings.layout.activity && !settings.layout.focus ? '' : 'without-activity'}`}><AnimatePresence mode="wait" initial={false}><motion.div key={activeId || 'new'} className="chat-motion" initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }} transition={spatial.fast}><ChatPanel events={events} session={active} prompt={prompt} setPrompt={setPrompt} onSend={() => void send()} onStop={() => void stop()} sending={busy} settings={settings} onSave={saveSettings} teamDraft={teamDraft} onTeamDraft={setTeamDraft}/></motion.div></AnimatePresence><div className="activity-wrapper"><ResizeHandle label="Activity rail width" value={settings.layout.activityWidth} min={260} max={520} reverse onChange={(activityWidth) => changeLayout({ activityWidth })}/><ContextPanel changes={changes} events={events} projectPath={projectPath} status={status} decisionEngine={settings.decisionEngine} sessionId={activeId || undefined} onOpen={id=>void selectSession(id)}/></div></div>}
         {view === 'projects' && <div className="page-content projects-page"><div className="page-heading"><div><h1>Projects</h1><p>Switch between trusted local workspaces.</p></div><button className="primary-button" onClick={() => void openProject()}><Plus size={16}/> Open folder</button></div><div className="project-list">{settings.recentProjects.map((path) => <button key={path} className="project-row" onClick={() => void openProject(path)}><FolderOpen size={21}/><span><strong>{path.split(/[\\/]/).at(-1)}</strong><small>{path}</small></span><ArrowRight size={17}/></button>)}</div></div>}
         {view === 'sessions' && <div className="page-content sessions-page"><div className="page-heading"><div><h1>Sessions</h1><p>Resume your work or fork a completed turn.</p></div><button className="primary-button" onClick={() => void newSession()}><Plus size={16}/> New session</button></div><div className="session-table">{sessions.map((session) => <div className="session-table-row" key={session.id}><div><strong>{session.title}</strong><small>{new Date(session.lastUpdatedAt).toLocaleString()}</small></div><span className="session-id">{session.id.slice(0, 8)}{session.parentSessionId && <button title="Open original session" onClick={() => void selectSession(session.parentSessionId!, undefined, false)}>From {session.parentSessionId.slice(0, 8)}</button>}</span><button className="secondary-button" onClick={() => void selectSession(session.id)}>Open</button><button className="icon-button" title="Fork session" onClick={() => void fork(session.id)}><GitBranch size={17}/></button></div>)}{sessions.length === 0 && <p className="muted-copy pad">No saved sessions yet.</p>}</div></div>}
         {view === 'workflow' && <WorkflowPage project={projectPath} sessionId={activeId} sessions={sessions} onOpen={async (root, id, seq) => { if (root !== projectPath) await openProject(root); await selectSession(id, seq, false) }}/>}

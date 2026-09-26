@@ -165,7 +165,7 @@ func (a *app) createSummary(id session.ID, secret credential) (contextSummary, e
 	a.events.enqueue(id, "context.compaction.started", map[string]string{"sessionId": string(id)})
 	ctx, cancel := context.WithTimeout(a.ctx, 120*time.Second)
 	defer cancel()
-	observed := &observedClient{inner: client, events: a.events, id: id}
+	observed := &observedClient{inner: client, events: a.events, id: id, app: a, config: config}
 	response, err := observed.Respond(ctx, request, llm.RequestOptions{})
 	if err != nil {
 		return value, err

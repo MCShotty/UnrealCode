@@ -17,6 +17,34 @@ const maxSnapshot = 128 * 1024 * 1024
 export class CheckpointStore {
   captureSnapshot(paths?: string[]): Promise<Snapshot> { return this.capture(paths) }
   snapshotBytes(snapshot: Snapshot, path: string): Promise<Buffer | undefined> { return this.bytes(snapshot.files[path]) }
+  async recordedSnapshot(id: string, phase: 'before' | 'after'): Promise<Snapshot> {
+    const record = await this.read(id)
+    if (phase === 'after' ? record.state !== 'complete' : record.state !== 'running') throw new Error('The checkpoint is not a usable recorded task state')
+    const snapshot = record[phase]
+    if (!snapshot) throw new Error('Checkpoint content is unavailable')
+    return structuredClone(snapshot)
+  }
+  async importSnapshot(source: CheckpointStore, snapshot: Snapshot): Promise<Snapshot> {
+    const result = empty(); result.skipped = { ...snapshot.skipped }
+    const names = Object.keys(snapshot.files)
+    if (names.length > 10000) throw new Error('Recorded snapshot exceeds the file limit')
+    let total = 0, available = Math.max(0, 512 * 1024 * 1024 - (await this.storage()).bytes)
+    await fs.mkdir(join(this.directory, 'objects'), { recursive: true })
+    for (const name of names) {
+      await this.safe(name)
+      const entry = snapshot.files[name], bytes = await source.snapshotBytes(snapshot, name)
+      if (!bytes || bytes.length > maxFile || (total += bytes.length) > maxSnapshot) throw new Error('Recorded snapshot exceeds its content limits')
+      const target = this.blob(entry.hash)
+      try { await fs.access(target) } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        if (bytes.length > available) throw new Error('Task snapshot storage limit reached')
+        available -= bytes.length
+        try { await fs.writeFile(target, bytes, { flag:'wx', mode:0o600 }) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
+      }
+      result.files[name] = { ...entry }
+    }
+    return result
+  }
   private directory: string
   constructor(private project: string, data: string) {
     this.directory = join(data, 'checkpoints', hash(Buffer.from(resolve(project).toLowerCase())))

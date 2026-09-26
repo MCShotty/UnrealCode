@@ -32,6 +32,9 @@ const defaultPrompt = "You are UnrealCode, a coding assistant powered by Unreal 
 const decisionPolicy = "For nontrivial work, use DecisionBatch at bounded semantic checkpoints when the globally selected engine is available. After a search returns several plausible files or passages, send focused candidates with independent relevance questions before deeper reading. Select exact source values from shortlists with Choice. After meaningful code changes, send the relevant requirement and focused diff for narrow Noul or Score verification questions. Batch independent questions sharing state; preserve probabilities, source references, model version, and uncertainty. Skip judgments that exact code or a simple lookup can settle. Keep planning, code writing, arithmetic, permissions, and actions with your own reasoning and deterministic tools. If the selected decision engine is unavailable, continue honestly without claiming a decision-model result. EntityExtract handles labeled spans only."
 
 type sessionConfig struct {
+	TeamEnabled     bool     `json:"teamEnabled,omitempty"`
+	TeamManaged     bool     `json:"teamManaged,omitempty"`
+	Specialist      bool     `json:"specialist,omitempty"`
 	Workspace       string   `json:"workspace,omitempty"`
 	Mode            string   `json:"mode,omitempty"`
 	WorkspaceID     string   `json:"workspaceId,omitempty"`
@@ -65,6 +68,7 @@ type runningSession struct {
 }
 
 type app struct {
+	verification    verificationRuns
 	decisionPending atomic.Int64
 	ctx             context.Context
 	store           *lockedStore
@@ -241,8 +245,9 @@ func (a *app) start(id session.ID, secret credential) (*runningSession, error) {
 	files := newFileHandler(ctx, a.workspace, filepath.Join(a.root, "file-recovery"), &a.fileLocks)
 	local := operation.NewLocalOperationManager(ctx,
 		newDecisionJobHandler(ctx, a.decision, decisionPlanType), newDecisionJobHandler(ctx, a.decision, entityPlanType), workflow,
-		files, newMCPHandler(ctx, mcpPlan, a.mcp, &a.host, a.events, id, config.WorkspaceID), newMCPHandler(ctx, catalogPlan, a.mcp, &a.host, a.events, id, config.WorkspaceID), newMCPHandler(ctx, repositoryPlan, a.mcp, &a.host, a.events, id, config.WorkspaceID))
+		files, newMCPHandler(ctx, teamPlan, a.mcp, &a.host, a.events, id, config.WorkspaceID), newMCPHandler(ctx, mcpPlan, a.mcp, &a.host, a.events, id, config.WorkspaceID), newMCPHandler(ctx, catalogPlan, a.mcp, &a.host, a.events, id, config.WorkspaceID), newMCPHandler(ctx, repositoryPlan, a.mcp, &a.host, a.events, id, config.WorkspaceID))
 	permissions := newPermissionManager(ctx, local, config.Mode, config.WorkspaceID, id, a.events)
+	permissions.worker = config.Specialist
 	manager := &observedManager{inner: permissions,
 		updates: make(chan operation.Operation), done: make(chan struct{}), events: a.events, id: id, ctx: ctx, known: make(map[operation.ID]operation.Status)}
 	go manager.forward()
@@ -263,7 +268,7 @@ func (a *app) start(id session.ID, secret credential) (*runningSession, error) {
 		},
 		ToolHeartbeatInterval: 10 * time.Minute, SessionID: id, Inbox: inputs,
 		Restored: restored, Sessions: a.store, ContextBuilder: builder,
-		LLM: &observedClient{inner: client, events: a.events, id: id}, Tools: registry, Operations: manager,
+		LLM: &observedClient{inner: client, events: a.events, id: id, app: a, config: config}, Tools: registry, Operations: manager,
 	})
 	a.running[id] = run
 	a.runs.Add(1)
@@ -365,6 +370,8 @@ func (m *observedManager) forward() {
 }
 
 type observedClient struct {
+	app    *app
+	config sessionConfig
 	inner  agentrunner.Client
 	events *eventLog
 	id     session.ID
@@ -372,6 +379,11 @@ type observedClient struct {
 
 func (c *observedClient) Respond(ctx context.Context, request llm.Request, options llm.RequestOptions) (llm.Response, error) {
 	id := uuid.New().String()
+	if c.config.TeamManaged {
+		if err := c.app.modelPermit(ctx, c.id, c.config.WorkspaceID, id); err != nil {
+			return llm.Response{}, err
+		}
+	}
 	c.events.enqueue(c.id, "model.request.started", map[string]string{"id": id})
 	response, err := c.inner.Respond(ctx, request, options)
 	c.events.enqueue(c.id, "model.request.completed", map[string]any{"id": id, "success": err == nil})
@@ -459,6 +471,12 @@ func (a *app) contextBuilder(id session.ID, config sessionConfig, model, operati
 	extra := append(append(decisionTools(), workflowTools()...), fileTools()...)
 	extra = append(extra, catalogTool())
 	extra = append(extra, repositoryTool())
+	extra = append(extra, teamTools(config.TeamEnabled && !config.Specialist)...)
+	for _, name := range teamNames {
+		if !slices.Contains(config.DisallowedTools, name) {
+			enabled = append(enabled, name)
+		}
+	}
 	for i := range extra {
 		if extra[i].Definition.Tool.Name == "ApplyPatch" {
 			extra[i].Translator = modeTranslator{inner: extra[i].Translator, mode: config.Mode}
@@ -497,6 +515,9 @@ func (a *app) contextBuilder(id session.ID, config sessionConfig, model, operati
 	}
 	builder.SetSystemPrompt(prompt)
 	for _, definition := range registry.StaticDefinitions() {
+		if slices.Contains(teamNames, definition.Tool.Name) && (!config.TeamEnabled || config.Specialist) {
+			continue
+		}
 		if config.Mode == "plan" && (definition.Tool.Name == "Bash" || definition.Tool.Name == "ApplyPatch") {
 			continue
 		}

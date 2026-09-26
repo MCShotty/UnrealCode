@@ -50,6 +50,7 @@ type pendingApproval struct {
 // permissionManager gates dispatch, never the coordinator. Queued approvals are
 // live capabilities, not durable grants: replay always allocates a fresh nonce.
 type permissionManager struct {
+	worker          bool
 	ctx             context.Context
 	inner           operation.Manager
 	mode, workspace string
@@ -91,7 +92,7 @@ func operationPermission(value operation.Operation) (tool string, args any, read
 			if json.Unmarshal(state.Plan.Data, &input) == nil {
 				return map[string]string{"read": "ReadFile", "list": "ListFiles", "patch": "ApplyPatch"}[input.Action], input, input.Action == "read" || input.Action == "list"
 			}
-		case workflowPlan, decisionPlanType, entityPlanType, catalogPlan, repositoryPlan:
+		case workflowPlan, decisionPlanType, entityPlanType, catalogPlan, repositoryPlan, teamPlan:
 			return string(state.Plan.Type), state.Plan.Data, true
 		case mcpPlan:
 			return "MCP", state.Plan.Data, false
@@ -136,7 +137,7 @@ func (m *permissionManager) Add(value operation.Operation) error {
 	}
 	// MCP actions are approved by the main-process broker. Plan was rejected
 	// above; Ask must not create a second, independent approval in the container.
-	if readOnly || tool == "MCP" || m.mode == "agent" || m.mode == "" {
+	if readOnly || tool == "MCP" || ((m.mode == "agent" || m.mode == "") && !(m.worker && value.Type == operation.TypeShell)) {
 		if tool != "MCP" {
 			m.emit("operation.dispatched", value)
 		}

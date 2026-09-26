@@ -8,6 +8,16 @@ import type { BridgeSessionConfig } from '../shared/api'
 let root: string
 const config: BridgeSessionConfig = { provider: 'ollama', model: 'test', baseUrl: '', thinkingLevel: 'low', systemPrompt: '', disallowedTools: [] }
 
+it('persists explicit task specialist options and waits for their review',async()=>{
+ const path=join(root,'team-queue.json'),run=runner(),queue=new TaskQueue(path,run)
+ const options={allowSpecialists:true,concurrency:2,workerLimit:4,modelRequestLimit:20,elapsedMinutes:10,tokenLimit:5000}
+ queue.add('Delegate a focused task',config,undefined,options);queue.add('Next task',config);queue.resume()
+ await vi.waitFor(()=>expect(run.send).toHaveBeenCalledOnce())
+ expect(vi.mocked(run.create).mock.calls[0][0].teamOptions).toEqual(options)
+ queue.needsReview('session-1');queue.settled('session-1','idle');queue.resume();await queue.kick();expect(run.send).toHaveBeenCalledOnce()
+ const restarted=new TaskQueue(path,runner());expect(restarted.snapshot().tasks[0].teamOptions).toEqual(options);expect(restarted.snapshot().paused).toBe(true)
+})
+
 it('does not launch a removed task while its project idle check is pending', async () => {
   const run = runner(); let release!: (value: boolean) => void
   vi.mocked(run.canStart).mockImplementationOnce(() => new Promise(resolve => { release = resolve }))

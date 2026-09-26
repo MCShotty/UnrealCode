@@ -41,7 +41,7 @@ export type FileEntry = { name: string; path: string; directory: boolean; size: 
 export type EditableFile = { path: string; revision: string; content: string; workspace: string }
 export type SkillEntry = { name: string; description: string; content: string }
 export type DockerStatus = { ready: boolean; message: string; container?: string }
-export type BridgeSessionConfig = { provider: Provider; model: string; baseUrl: string; thinkingLevel: string; systemPrompt: string; disallowedTools: string[]; parentSessionId?: string; mode?: ExecutionMode; workspaceId?: string; workspace?: 'project' | 'isolated' }
+export type BridgeSessionConfig = { provider: Provider; model: string; baseUrl: string; thinkingLevel: string; systemPrompt: string; disallowedTools: string[]; parentSessionId?: string; mode?: ExecutionMode; workspaceId?: string; workspace?: 'project' | 'isolated'; teamEnabled?:boolean; teamManaged?:boolean; specialist?:boolean }
 export type GitHubStatus = { installed: boolean; authenticated: boolean; account?: string; message: string }
 export type GitHubRepository = { nameWithOwner: string; description: string; isPrivate: boolean; url: string }
 export type GitHubWorktree = { path: string; branch: string; head: string; current: boolean }
@@ -52,6 +52,22 @@ export type DecisionResult = { engine: 'jev' | 'laya'; model: string; answers: R
 export type DecisionStatus = { engine: DecisionEngine; available: boolean; message: string; glinerAvailable: boolean }
 
 export interface DesktopAPI {
+  workflowSettings():Promise<import('./verification').WorkflowPresets>
+  workflowSave(value:import('./verification').WorkflowPresets):Promise<void>
+  workflowRuns():Promise<import('./verification').WorkflowRun[]>
+  workflowRun(id:string):Promise<import('./verification').WorkflowRun>
+  workflowCancel(id:string):Promise<void>
+  workflowRemove(id:string):Promise<void>
+  workflowTemplate(sessionId:string,id:string):Promise<void>
+  workflowStart(sessionId:string,profileId:string,repairTemplateId:string|undefined,maxRepairAttempts:number):Promise<string>
+  teamView(sessionId:string):Promise<import('./teams').TeamView|null>
+  teamConfigure(sessionId:string,options:import('./teams').TeamOptions):Promise<void>
+  teamDispatch(parent:string,assignment:import('./teams').WorkerAssignment):Promise<import('./teams').SpecialistWorker>
+  teamResume(parent:string):Promise<void>
+  teamStop(parent:string):Promise<void>
+  teamWorkerAction(parent:string,id:string,action:'cancel'|'resume'|'steer'|'retain',prompt?:string):Promise<void>
+  teamPreview(parent:string,id:string):Promise<import('./task-workspaces').WorkspacePreview>
+  teamIntegrate(parent:string,id:string,paths:string[]):Promise<string>
   repositorySearch(query:string,filesOnly?:boolean):Promise<import('./repository-context').RepositorySearch>
   repositoryStatus():Promise<import('./repository-context').RepositoryStatus>
   contextSummaries(sessionId:string):Promise<import('./repository-context').ContextSummary[]>
@@ -93,7 +109,7 @@ export interface DesktopAPI {
   evaluationCancel(id: string): Promise<void>
   evaluationCleanup(id: string): Promise<void>
   queueSnapshot(): Promise<import('./workflow').QueueSnapshot>
-  queueAdd(prompt: string): Promise<import('./workflow').QueueSnapshot>
+  queueAdd(prompt: string,options?:import('./teams').TeamOptions): Promise<import('./workflow').QueueSnapshot>
   queueEdit(id: string, prompt: string): Promise<import('./workflow').QueueSnapshot>
   queueReorder(ids: string[]): Promise<import('./workflow').QueueSnapshot>
   queuePause(paused: boolean): Promise<import('./workflow').QueueSnapshot>
@@ -154,7 +170,7 @@ export interface DesktopAPI {
   projectPath(): Promise<string | null>
   dockerStatus(): Promise<DockerStatus>
   listSessions(): Promise<SessionInfo[]>
-  createSession(config: BridgeSessionConfig): Promise<{ sessionId: string }>
+  createSession(config: BridgeSessionConfig,options?:import('./teams').TeamOptions): Promise<{ sessionId: string }>
   openSession(sessionId: string): Promise<void>
   selectSession(sessionId: string): Promise<void>
   sendMessage(sessionId: string, prompt: string, messageId: string): Promise<void>

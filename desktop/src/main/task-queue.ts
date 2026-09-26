@@ -48,10 +48,10 @@ export class TaskQueue {
     if (!task) throw new Error('Task not found in this project')
     return task
   }
-  add(prompt: string, config: BridgeSessionConfig,source?: import('../shared/github-workflow').GitHubTaskSource): QueueSnapshot {
+  add(prompt: string, config: BridgeSessionConfig,source?: import('../shared/github-workflow').GitHubTaskSource,teamOptions?:import('../shared/teams').TeamOptions): QueueSnapshot {
     if (typeof prompt !== 'string' || !prompt.trim() || Buffer.byteLength(prompt) > 256 * 1024) throw new Error('Task must contain text below 256 KB')
     if (this.value.tasks.length >= 200) throw new Error('Remove finished tasks before adding more; the queue holds 200 tasks')
-    this.value.tasks.push({ id: randomUUID(), prompt: prompt.trim(), config: structuredClone(config), createdAt: new Date().toISOString(), state: 'pending',...(source?{source:structuredClone(source)}:{}) })
+    this.value.tasks.push({ id: randomUUID(), prompt: prompt.trim(), config: structuredClone(config), createdAt: new Date().toISOString(), state: 'pending',...(source?{source:structuredClone(source)}:{}),...(teamOptions?{teamOptions:structuredClone(teamOptions)}:{}) })
     this.save(); this.schedule(); return this.snapshot()
   }
   edit(id: string, prompt: string): QueueSnapshot {
@@ -84,7 +84,7 @@ export class TaskQueue {
     const task = this.task(id)
     this.value.paused = true
     if (task.state === 'starting') { task.state = 'cancelled'; this.save(); return this.snapshot() }
-    if (task.sessionId && ['running', 'waiting_input'].includes(task.state)) await this.runner.stop(task.sessionId)
+    if (task.sessionId && ['running', 'waiting_input', 'waiting_review'].includes(task.state)) await this.runner.stop(task.sessionId)
     task.state = 'cancelled'; task.message = 'Cancelled by user'; this.save(); return this.snapshot()
   }
   needsInput(sessionId: string, question: string): void {

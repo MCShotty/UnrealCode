@@ -14,7 +14,7 @@ measured usage, existing history, and the global decision-engine setting.
 - [x] 0.8: main-process MCP broker for remote HTTP, Windows stdio and Docker
   stdio; explicit server/project grants; focused repository retrieval; versioned
   reversible context summaries; GitHub issue/review intake; context/connections UI.
-- [ ] 0.9: explicitly enabled bounded specialist workers in isolated worktrees;
+- [x] 0.9: explicitly enabled bounded specialist workers in isolated worktrees;
   inherited restrictions; steering/cancellation/integration; verification profiles
   and bounded repair loops; task limits and nonduplicated team usage.
 - [ ] 1.0: guided setup, signed NSIS updates, backups/migrations/recovery,

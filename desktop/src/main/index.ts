@@ -28,6 +28,7 @@ import { McpBroker } from './mcp-broker'
 import { McpOAuth } from './mcp-auth'
 import { HostOperations } from './host-operations'
 import type { HostOperation, ConnectionConfig, ConnectionGrant } from '../shared/connections'
+import { validateAssignment,validateTeamOptions,type TeamOptions,type WorkerAssignment } from '../shared/teams'
 
 const backgroundCheck = process.env.UNREAL_DESKTOP_BACKGROUND_CHECK === '1' && !!process.env.UNREAL_DESKTOP_USER_DATA
 if (backgroundCheck) app.disableHardwareAcceleration()
@@ -131,14 +132,30 @@ function runtime(): WorkspaceRuntime {
 function connectionContext() { const owner = runtime(); return { project: owner.project, container: owner.active.bridge.containerName, workspace:owner.active.project } }
 async function refreshConnectionCatalog(owner: WorkspaceRuntime): Promise<void> { await owner.visitBridges(target=>target.request('mcp.configure',{tools:connections.catalog({project:owner.project,container:target.containerName})})) }
 async function handleHostEvent(owner: WorkspaceRuntime, event: AgentEvent): Promise<void> {
-  if (event.event === 'host.cancel') { hostOperations.cancel(owner.project,event.sessionId,String((event.payload as { operationId: string }).operationId)); return }
+  if (event.event === 'host.cancel') { const operationId=String((event.payload as { operationId: string }).operationId);hostOperations.cancel(owner.project,event.sessionId,operationId);const worker=owner.teams.view(event.sessionId)?.workers.find(item=>item.requestId===operationId);if(worker)await owner.teams.cancel(event.sessionId,worker.id);return }
   if (event.event === 'session.status' && ['stopped','error'].includes(String((event.payload as {status:string}).status))) { hostOperations.cancelSession(owner.project,event.sessionId); return }
-  if (event.event !== 'host.request' && event.event !== 'host.read') return
+  if (!['host.request','host.read','host.team','host.model'].includes(event.event)) return
   const target = await owner.owner(event.sessionId), operation = event.payload as HostOperation
   let result: import('../shared/connections').HostResult
   try {
     const config = await target.bridge.request<BridgeSessionConfig>('session.config',{ sessionId:event.sessionId })
     if (operation.sessionId !== event.sessionId || operation.workspaceId !== config.workspaceId) throw new Error('Host request does not match the active workspace permissions')
+    if(event.event==='host.model') {
+      if(!config.teamManaged||operation.tool!=='ModelPermit'||typeof operation.arguments.modelRequestId!=='string')throw new Error('Invalid task model permit')
+      await owner.teamPermit(event.sessionId,operation.arguments.modelRequestId);result={text:'Allowed'}
+      await target.bridge.request('host.respond',{requestId:operation.requestId,sessionId:event.sessionId,operationId:operation.operationId,...result}).catch(()=>{});return
+    }
+    if(event.event==='host.team') {
+      if(config.specialist||!config.teamEnabled||!owner.teams.options(event.sessionId).allowSpecialists||config.disallowedTools.includes(operation.tool))throw new Error('Specialist delegation is not enabled for this session')
+      let value:unknown
+      if(operation.tool==='TeamDispatch')value=await owner.teams.dispatch(event.sessionId,validateAssignment(operation.arguments as WorkerAssignment),operation.operationId)
+      else if(operation.tool==='TeamStatus')value=owner.teams.view(event.sessionId)
+      else if(operation.tool==='TeamSteer'){await owner.teams.steer(event.sessionId,String(operation.arguments.workerId||''),String(operation.arguments.message||''),operation.operationId);value={steered:true}}
+      else if(operation.tool==='TeamCancel'){await owner.teams.cancel(event.sessionId,String(operation.arguments.workerId||''));value={cancelled:true}}
+      else throw new Error('Unsupported team operation')
+      result={text:JSON.stringify(value)}
+      await target.bridge.request('host.respond',{requestId:operation.requestId,sessionId:event.sessionId,operationId:operation.operationId,...result}).catch(()=>{});return
+    }
     if(event.event==='host.read') {
       if(operation.tool!=='RepositorySearch'||config.disallowedTools.includes('RepositorySearch'))throw new Error('Unsupported repository operation')
       const search=await target.repository.search(String(operation.arguments.query||'')),settings=getSettings()
@@ -207,7 +224,7 @@ async function openWorkspace(requested: string): Promise<ReturnType<DockerBridge
       }
     }
   }
-  if (!current.bridge.status().ready) await current.start()
+  await current.ensureStarted()
   selected = current; bridge = current.bridge; sessionUsage = current.usage; checkpoints = current.checkpoints
   current.active = current
   rememberProject(canonical)
@@ -297,12 +314,14 @@ function registerIPC(): void {
     })
   })
   ipcMain.handle('queue:get', () => runtime().queue.snapshot())
-  ipcMain.handle('queue:add', (_event, prompt: string) => { const owner = runtime(); return owner.queue.add(prompt, owner.config()) })
+  ipcMain.handle('queue:add', (_event, prompt: string,options?:TeamOptions) => { const owner = runtime(); return owner.queue.add(prompt, owner.config(),undefined,options?validateTeamOptions(options):undefined) })
   ipcMain.handle('queue:edit', (_event, id: string, prompt: string) => runtime().queue.edit(id, prompt))
   ipcMain.handle('queue:reorder', (_event, ids: string[]) => runtime().queue.reorder(ids))
   ipcMain.handle('queue:pause', (_event, paused: boolean) => { if (typeof paused !== 'boolean') throw new Error('Invalid pause preference'); return paused ? runtime().queue.pause() : runtime().queue.resume() })
   ipcMain.handle('queue:action', (_event, id: string, action: string) => {
-    const queue = runtime().queue
+    const owner=runtime(),queue = owner.queue
+    const task=queue.snapshot().tasks.find(item=>item.id===id)
+    if(['retry','remove'].includes(action)&&task?.sessionId&&owner.teams.hasPending(task.sessionId))throw new Error('Open the prior task and review or retain its specialists before retrying or removing it')
     if (action === 'cancel') return queue.cancel(id)
     if (action === 'retry') return queue.retry(id)
     if (action === 'remove') return queue.remove(id)
@@ -403,6 +422,7 @@ function registerIPC(): void {
   ipcMain.handle('workspace:retain', async (_event, id: string) => {
     const owner = runtime(), task = (await owner.tasks.list()).find(item => item.id === id)
     if (!task?.sessionId) throw new Error('Unknown task workspace')
+    if(owner.teams.hasPending(task.sessionId))throw new Error('Resolve the task specialists before retaining the parent workspace')
     const child = await owner.owner(task.sessionId)
     if (child.checkpoints.busy || !await child.bridge.request('project.idle', {})) throw new Error('Finish or stop task work first')
     await owner.tasks.update(id, { state: 'retained' })
@@ -415,13 +435,14 @@ function registerIPC(): void {
     return owner.checkpoints.exclusive(async () => {
       if (terminals.size || owner.checkpoints.busy || child.checkpoints.busy || !await child.bridge.request('project.idle', {}) || !await owner.bridge.request('project.idle', {})) throw new Error('Finish or stop project operations and close terminals before integration')
       const recovery = await owner.tasks.integrate(id, paths)
-      if (!(await owner.tasks.preview(id)).changes.length) owner.queue.reviewed(task.sessionId!)
+      if (!(await owner.tasks.preview(id)).changes.length&&!owner.teams.hasPending(task.sessionId!)) owner.queue.reviewed(task.sessionId!)
       return recovery
     })
   })
   ipcMain.handle('session:list', () => runtime().sessions())
   ipcMain.handle('session:config', (_event, sessionId: string) => sessionRequest('session.config', sessionId))
   ipcMain.handle('session:mode', async (_event, sessionId: string, mode: string) => {
+    if(runtime().teams.worker(sessionId)||runtime().teams.hasPending(sessionId))throw new Error('Resolve task specialists before changing the parent execution mode; specialist modes are inherited')
     const owner = await runtime().owner(sessionId)
     return owner.checkpoints.exclusive(async () => {
       if (owner.checkpoints.busy) throw new Error('Finish or stop active work before changing execution mode')
@@ -433,7 +454,28 @@ function registerIPC(): void {
     if (typeof allow !== 'boolean') throw new Error('Approval needs an explicit choice')
     return sessionRequest('permission.respond', sessionId, { id, digest, allow })
   })
-  ipcMain.handle('session:create', async () => { closeTerminals(); const owner = runtime(); const sessionId = await owner.create(); window?.webContents.send('docker:status-changed', owner.active.bridge.status()); return { sessionId } })
+  ipcMain.handle('session:create', async (_event,_config:unknown,options?:TeamOptions) => { const valid=options?validateTeamOptions(options):undefined;closeTerminals(); const owner = runtime(); if(valid?.allowSpecialists&&!await owner.tasks.available())throw new Error('Specialists require a committed Git repository opened at its root. Disable specialists to continue in this folder.'); const config={...owner.config(),teamEnabled:valid?.allowSpecialists,teamManaged:!!valid&&(valid.allowSpecialists||valid.modelRequestLimit>0||valid.elapsedMinutes>0||valid.tokenLimit>0)};const sessionId = await owner.create(config);if(valid)await owner.teams.configure(sessionId,valid); window?.webContents.send('docker:status-changed', owner.active.bridge.status()); return { sessionId } })
+  ipcMain.handle('team:view',(_event,sessionId:string)=>runtime().teams.view(sessionId))
+  ipcMain.handle('team:configure',(_event,sessionId:string,options:TeamOptions)=>runtime().configureTeam(sessionId,options))
+  ipcMain.handle('team:dispatch',(_event,parent:string,assignment:WorkerAssignment)=>runtime().teams.dispatch(parent,assignment,randomUUID()))
+  ipcMain.handle('team:resume',async(_event,parent:string)=>{const owner=runtime(),task=owner.teams.view(parent);if(!task||task.parentSessionId!==parent)throw new Error('Select the parent task');await Promise.all([parent,...task.workers.flatMap(worker=>worker.sessionId?[worker.sessionId]:[])].map(id=>owner.refreshTeamUsage(id)));await owner.teams.resume(parent)})
+  ipcMain.handle('team:stop',(_event,parent:string)=>runtime().teams.stopAll(parent))
+  ipcMain.handle('team:worker-action',(_event,parent:string,id:string,action:string,prompt?:string)=>{const owner=runtime();if(action==='cancel')return owner.teams.cancel(parent,id);if(action==='resume')return owner.teams.resumeWorker(parent,id);if(action==='steer')return owner.teams.steer(parent,id,String(prompt||''));if(action==='retain')return owner.specialistRetain(parent,id);throw new Error('Unknown specialist action')})
+  ipcMain.handle('team:preview',(_event,parent:string,id:string)=>runtime().specialistPreview(parent,id))
+  ipcMain.handle('team:integrate',(_event,parent:string,id:string,paths:string[])=>runtime().specialistIntegrate(parent,id,paths))
+  ipcMain.handle('workflow:settings',()=>runtime().workflows.settings())
+  ipcMain.handle('workflow:save',(_event,value:import('../shared/verification').WorkflowPresets)=>runtime().workflows.update(value))
+  ipcMain.handle('workflow:runs',()=>runtime().workflows.summaries())
+  ipcMain.handle('workflow:run',(_event,id:string)=>runtime().workflows.record(id))
+  ipcMain.handle('workflow:cancel',(_event,id:string)=>runtime().workflows.cancel(id))
+  ipcMain.handle('workflow:remove',async(_event,id:string)=>{const owner=runtime();const answer=await dialog.showMessageBox(window!,{type:'question',buttons:['Remove record','Keep record'],defaultId:1,cancelId:1,message:'Remove this saved verification run record?',detail:'Its session history and project checkpoints are retained.'});if(answer.response===0)await owner.workflows.remove(id)})
+  ipcMain.handle('workflow:template',async(_event,sessionId:string,id:string)=>{const owner=runtime();const template=owner.workflows.template(id);await owner.send(sessionId,template.prompt,randomUUID())})
+  ipcMain.handle('workflow:start',async(_event,sessionId:string,profileId:string,repairTemplateId:string|undefined,maxRepairAttempts:number)=>{
+    const owner=runtime(),target=await owner.workflowReady(sessionId),snapshot=owner.workflows.snapshot(profileId,repairTemplateId,maxRepairAttempts)
+    const answer=await dialog.showMessageBox(window!,{type:'warning',title:'Run saved verification?',buttons:['Run reviewed workflow','Cancel'],defaultId:1,cancelId:1,message:`Run ${snapshot.profile.name} in ${target.project}?`,detail:`Exact container command:\n${snapshot.profile.command}\n\nTimeout: ${snapshot.profile.timeoutSeconds} seconds per run.\n${snapshot.repairTemplate?`Allow up to ${snapshot.maxRepairAttempts} model repair attempts using the session's current provider and permissions, with a command rerun after each attempt. Fix instructions:\n${snapshot.repairTemplate.prompt}`:'No model repair attempts. The command runs once.'}`})
+    if(answer.response!==0)throw new Error('Verification workflow cancelled')
+    await owner.workflowReady(sessionId);owner.queue.pause();return owner.workflows.start(sessionId,snapshot)
+  })
   ipcMain.handle('session:open', async (_event, sessionId: string) => { closeTerminals(); const owner = runtime(); await owner.open(sessionId); window?.webContents.send('docker:status-changed', owner.active.bridge.status()) })
   ipcMain.handle('session:select', async (_event, sessionId: string) => { closeTerminals(); const owner = runtime(); await owner.select(sessionId); window?.webContents.send('docker:status-changed', owner.active.bridge.status()) })
   ipcMain.handle('session:send', (_event, sessionId: string, prompt: string, messageId: string) => runtime().send(sessionId, prompt, messageId, terminals.size > 0))
