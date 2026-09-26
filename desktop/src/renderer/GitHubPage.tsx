@@ -24,11 +24,18 @@ export function GitHubPage({ onOpenProject }: { onOpenProject: (path: string) =>
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const refresh = useCallback(async () => {
-    const [auth, current, trees, files, prs] = await Promise.all([
+    const [auth, current, trees, files, prs] = await Promise.allSettled([
       api.githubStatus(), api.githubBranch(), api.githubWorktrees(), api.gitChanges(), api.githubPullRequests()
     ])
-    setStatus(auth); setBranch(current); setWorktrees(trees); setChanges(files); setRequests(prs)
-    if (auth.authenticated) setRepositories(await api.githubRepositories())
+    setStatus(auth.status === 'fulfilled' ? auth.value : { installed: false, authenticated: false, message: 'GitHub status is unavailable. Check the GitHub CLI installation and retry.' })
+    setBranch(current.status === 'fulfilled' ? current.value : '')
+    setWorktrees(trees.status === 'fulfilled' ? trees.value : [])
+    setChanges(files.status === 'fulfilled' ? files.value : [])
+    setRequests(prs.status === 'fulfilled' ? prs.value : [])
+    const failed = [auth, current, trees, files, prs].find(result => result.status === 'rejected')
+    setError(failed?.status === 'rejected' ? String(failed.reason) : '')
+    setRepositories([])
+    if (auth.status === 'fulfilled' && auth.value.authenticated) setRepositories(await api.githubRepositories())
   }, [])
   useEffect(() => { void refresh().catch((reason) => setError(String(reason))) }, [refresh])
   useEffect(() => {

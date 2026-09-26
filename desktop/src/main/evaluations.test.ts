@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
-const state = vi.hoisted(() => ({ calls: [] as Array<{ method: string; params: any }>, finish: true }))
+const state = vi.hoisted(() => ({ calls: [] as Array<{ method: string; params: any }>, finish: true, binary: false }))
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>()
   const { promisify } = await import('node:util')
@@ -16,11 +16,13 @@ vi.mock('./settings', () => ({ credentialFor: () => ({ apiKey: 'fixture-credenti
 vi.mock('./session-usage', () => ({ consumeUsage: () => {}, SessionUsageService: class { async summaries() { return [{ sessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', totals: { input: 20, output: 5, cached: 0, decisionInput: 0, decisionOutput: 0 } }] } } }))
 vi.mock('./docker', () => ({ DockerBridge: class {
   containerName = 'fake-container'; onEvent = (_: any): void => {}
-  async start() {} async stop() {}
+  directory = ''
+  async start(directory: string) { this.directory = directory } async stop() {}
   async request(method: string, params: any) {
     state.calls.push({ method, params })
     if (method === 'decision.configure') return { available: params.engine !== 'off' }
     if (method === 'session.create') return { sessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }
+    if (method === 'session.send' && state.binary) await import('node:fs/promises').then(fs => fs.writeFile(join(this.directory, 'asset.bin'), Buffer.from([0, 9, 2])))
     if (method === 'session.send' && state.finish) this.onEvent({ v: 1, seq: 1, sessionId: params.sessionId, event: 'session.idle', payload: {} })
     if (method === 'decision.idle') return true
     return {}
@@ -31,7 +33,7 @@ let root: string, project: string
 const config = { provider: 'openai-compatible' as const, model: 'fixture', baseUrl: 'http://localhost:1/v1', thinkingLevel: 'low', systemPrompt: 'instructions', disallowedTools: [] }
 const request = { tasks: [{ prompt: 'Implement the selected change', criteria: 'The behavior matches the task', testCommand: '' }], runLimit: 2, timeoutMinutes: 1 }
 beforeEach(async () => {
-  state.calls = []; state.finish = true
+  state.calls = []; state.finish = true; state.binary = false
   root = await mkdtemp(join(tmpdir(), 'unrealcode-eval-test-')); project = join(root, 'project'); await mkdir(project)
   execFileSync('git', ['init', project], { windowsHide: true, stdio: 'ignore' })
   await writeFile(join(project, 'sample.txt'), 'original')
@@ -83,4 +85,18 @@ it('shows interrupted persisted runs after restart without launching a model', a
   expect(reports[0].state).toBe('interrupted')
   expect(reports[0].error).toContain('not resume automatically')
   expect(state.calls).toEqual([])
+})
+
+it('retains modified tracked binary files that textual diff cannot recover', async () => {
+  await writeFile(join(project, 'asset.bin'), Buffer.from([0, 1, 2]))
+  execFileSync('git', ['-C', project, 'add', '.'], { windowsHide: true })
+  execFileSync('git', ['-C', project, '-c', 'user.name=Test', '-c', 'user.email=test@localhost', 'commit', '-m', 'binary fixture'], { windowsHide: true, stdio: 'ignore' })
+  state.binary = true
+  const service = new Evaluations(join(root, 'reports'))
+  await service.start(project, config, request, { engine: 'jev', model: 'jev-latest', apiKey: 'fixture', glinerEnabled: false }, [])
+  await vi.waitFor(async () => expect((await service.list(project))[0].state).toBe('completed'), { timeout: 10000 })
+  for (const arm of (await service.list(project))[0].arms) {
+    expect(arm.worktree).toBeTruthy()
+    expect(await readFile(join(arm.worktree!, 'asset.bin'))).toEqual(Buffer.from([0, 9, 2]))
+  }
 })

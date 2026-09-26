@@ -49,6 +49,8 @@ type credential struct {
 }
 
 type runningSession struct {
+	submitMu sync.Mutex
+	accepted map[inbox.ID]struct{}
 	inbox    *inbox.Inbox
 	manager  *observedManager
 	cancel   context.CancelFunc
@@ -261,6 +263,10 @@ func (a *app) start(id session.ID, secret credential) (*runningSession, error) {
 		updates: make(chan operation.Operation), done: make(chan struct{}), events: a.events, id: id, ctx: ctx, known: make(map[operation.ID]operation.Status)}
 	go manager.forward()
 	run := &runningSession{inbox: inputs, manager: manager, workflow: workflow, cancel: cancel, done: make(chan struct{})}
+	run.accepted = make(map[inbox.ID]struct{}, len(restored.ExternalInputIDs))
+	for _, seen := range restored.ExternalInputIDs {
+		run.accepted[seen] = struct{}{}
+	}
 	run.busy.Store(true)
 	current := coordinator.New(coordinator.Dependencies{
 		OnActivity: func(busy bool) {
@@ -389,6 +395,11 @@ func (a *app) submit(id session.ID, input inbox.Input, secret credential) error 
 	if err != nil {
 		return err
 	}
+	run.submitMu.Lock()
+	defer run.submitMu.Unlock()
+	if _, duplicate := run.accepted[input.ID]; duplicate {
+		return nil
+	}
 	var reply string
 	if json.Unmarshal(input.Payload, &reply) != nil {
 		var body struct {
@@ -397,10 +408,20 @@ func (a *app) submit(id session.ID, input inbox.Input, secret credential) error 
 		_ = json.Unmarshal(input.Payload, &body)
 		reply = body.Prompt
 	}
-	if run.workflow != nil && reply != "" {
-		run.workflow.answer(reply)
+	questions := run.workflow.pendingQuestions()
+	advice := a.preflight(id, reply)
+	a.rememberPostflight(id, string(input.ID), reply)
+	prepared, err := externalInputWithAdvice(reply, string(input.ID), advice)
+	if err == nil {
+		err = run.inbox.Submit(a.ctx, prepared)
 	}
-	return run.inbox.Submit(a.ctx, input)
+	if err != nil {
+		a.forgetPostflight(id, string(input.ID))
+		return err
+	}
+	run.accepted[input.ID] = struct{}{}
+	run.workflow.answerQuestions(questions, reply)
+	return nil
 }
 
 func externalInput(prompt, messageID string) (inbox.Input, error) {

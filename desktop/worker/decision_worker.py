@@ -2,6 +2,7 @@
 
 import json
 import sys
+from contextlib import redirect_stdout
 
 
 router = None
@@ -42,21 +43,24 @@ def extract(payload):
 
 
 def main():
-    for line in sys.stdin:
-        try:
-            request = json.loads(line)
-            method = request.get("method")
-            if method == "evaluate":
-                result = evaluate(request["payload"])
-            elif method == "extract":
-                result = extract(request["payload"])
-            else:
-                raise ValueError("unsupported worker method")
-            response = {"ok": True, "result": result}
-        except Exception as error:  # Keep the worker alive for the next request.
-            response = {"ok": False, "error": f"{type(error).__name__}: {error}"}
-        sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
-        sys.stdout.flush()
+    protocol_output = sys.stdout
+    # Model libraries may print progress; stdout is reserved for protocol frames.
+    with redirect_stdout(sys.stderr):
+        for line in sys.stdin:
+            try:
+                request = json.loads(line)
+                method = request.get("method")
+                if method == "evaluate":
+                    result = evaluate(request["payload"])
+                elif method == "extract":
+                    result = extract(request["payload"])
+                else:
+                    raise ValueError("unsupported worker method")
+                response = {"ok": True, "result": result}
+            except Exception as error:  # Keep the worker alive for the next request.
+                response = {"ok": False, "error": f"{type(error).__name__}: {error}"}
+            protocol_output.write(json.dumps(response, ensure_ascii=False) + "\n")
+            protocol_output.flush()
 
 
 if __name__ == "__main__":

@@ -289,6 +289,9 @@ type pythonWorker struct {
 func (worker *pythonWorker) call(ctx context.Context, python, method string, payload any, result any) error {
 	worker.mu.Lock()
 	defer worker.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if worker.cmd == nil {
 		cmd := exec.Command(python, "/usr/local/lib/unrealcode/decision_worker.py")
 		cmd.Env = append(os.Environ(), "HF_HOME=/state/model-cache")
@@ -319,7 +322,8 @@ func (worker *pythonWorker) call(ctx context.Context, python, method string, pay
 		err  error
 	}
 	done := make(chan outcome, 1)
-	go func() { data, err := worker.stdout.ReadBytes('\n'); done <- outcome{data, err} }()
+	reader := worker.stdout
+	go func() { data, err := reader.ReadBytes('\n'); done <- outcome{data, err} }()
 	select {
 	case <-ctx.Done():
 		worker.stop()

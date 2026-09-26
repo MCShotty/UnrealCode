@@ -208,15 +208,11 @@ func (a *app) dispatch(req request) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		advice := a.preflight(id, p.Prompt)
-		a.rememberPostflight(id, p.MessageID, p.Prompt)
-		input, err := externalInputWithAdvice(p.Prompt, p.MessageID, advice)
+		input, err := externalInput(p.Prompt, p.MessageID)
 		if err != nil {
-			a.forgetPostflight(id, p.MessageID)
 			return nil, err
 		}
 		if err := a.submit(id, input, p.Credential); err != nil {
-			a.forgetPostflight(id, p.MessageID)
 			return nil, err
 		}
 		return map[string]string{"messageId": string(input.ID)}, nil

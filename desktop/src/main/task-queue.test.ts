@@ -7,6 +7,29 @@ import type { BridgeSessionConfig } from '../shared/api'
 
 let root: string
 const config: BridgeSessionConfig = { provider: 'ollama', model: 'test', baseUrl: '', thinkingLevel: 'low', systemPrompt: '', disallowedTools: [] }
+
+it('does not launch a removed task while its project idle check is pending', async () => {
+  const run = runner(); let release!: (value: boolean) => void
+  vi.mocked(run.canStart).mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
+  const queue = new TaskQueue(join(root, 'queue.json'), run)
+  const first = queue.add('remove me', config).tasks[0].id
+  queue.resume(); await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+  queue.remove(first); release(true)
+  await new Promise(resolve => setTimeout(resolve, 30))
+  expect(run.create).not.toHaveBeenCalled()
+  expect(queue.snapshot().paused).toBe(false)
+})
+
+it('honors reordering performed during the project idle check', async () => {
+  const run = runner(); let release!: (value: boolean) => void
+  vi.mocked(run.canStart).mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
+  const queue = new TaskQueue(join(root, 'queue.json'), run)
+  queue.add('first', config); queue.add('second', config)
+  queue.resume(); await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+  queue.reorder(queue.snapshot().tasks.map(task => task.id).reverse()); release(true)
+  await vi.waitFor(() => expect(run.send).toHaveBeenCalledOnce())
+  expect(vi.mocked(run.send).mock.calls[0][0].prompt).toBe('second')
+})
 beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'unrealcode-queue-')) })
 afterEach(async () => { await rm(root, { recursive: true, force: true }) })
 function runner(): QueueRunner {

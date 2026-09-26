@@ -428,21 +428,33 @@ export default function App(): ReactNode {
   useEffect(() => { if (!projectPath) return; const timer = setInterval(() => { void api.gitChanges().then(setChanges); void refreshSessions() }, 10000); return () => clearInterval(timer) }, [projectPath, refreshSessions])
   useTheme(settings?.theme)
 
+  const resetConversation = (id: string | null): void => {
+    activeRef.current = id
+    pending.current = []
+    pendingMessage.current = null
+    if (frame.current !== null) cancelAnimationFrame(frame.current)
+    frame.current = null
+    highlightedEvent.current = ''
+    setHighlight(null)
+    setActiveId(id)
+    setEvents([])
+  }
+
   const openProject = async (path?: string): Promise<void> => {
     setBusy(true); setError('')
     try {
       const selected = path || await api.pickProject()
       if (!selected) return
       await api.openProject(selected, true)
-      setProjectPath(await api.projectPath()); activeRef.current = null; pendingMessage.current = null; setActiveId(null); setEvents([]); setView('chat'); setShowSettingsBeforeProject(false)
+      setProjectPath(await api.projectPath()); resetConversation(null); setView('chat'); setShowSettingsBeforeProject(false)
       setSettings(await api.getSettings())
     } catch (reason) { setError(String(reason)) }
     finally { setBusy(false) }
   }
   const selectSession = async (id: string, sequence?: number, resume = true): Promise<void> => {
+    resetConversation(id)
     setHighlight(sequence || null)
-    activeRef.current = id; pending.current = []; pendingMessage.current = null; if (frame.current !== null) cancelAnimationFrame(frame.current); frame.current = null
-    setActiveId(id); setEvents([]); setError(''); setView('chat')
+    setError(''); setView('chat')
     try { const history = sequence ? await api.getEventWindow(id, sequence) : await loadEvents(id); if (activeRef.current === id) setEvents((current) => mergeEvents(current, history)); if (resume && !sequence) await api.openSession(id); await refreshSessions() } catch (reason) { setError(String(reason)) }
   }
   const newSession = async (): Promise<string | null> => {
@@ -450,7 +462,7 @@ export default function App(): ReactNode {
     try {
       const config: BridgeSessionConfig = { provider: settings.provider, model: settings.model, baseUrl: settings.baseUrl, thinkingLevel: settings.thinkingLevel, systemPrompt: settings.systemPrompt, disallowedTools: settings.disallowedTools }
       const created = await api.createSession(config)
-      activeRef.current = created.sessionId; setActiveId(created.sessionId); setEvents([]); await refreshSessions(); return created.sessionId
+      resetConversation(created.sessionId); await refreshSessions(); return created.sessionId
     } catch (reason) { setError(String(reason)); return null }
   }
   const send = async (): Promise<void> => {

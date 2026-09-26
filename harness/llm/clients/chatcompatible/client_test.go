@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/unreallabsai/unreal-agent/harness/llm"
@@ -46,5 +47,74 @@ func TestToolRoundTripAndMeasuredUsage(t *testing.T) {
 	}
 	if response.Usage.InputTokens != 34 || response.Usage.OutputTokens != 9 || response.Usage.CachedInputTokens != 4 {
 		t.Fatalf("usage: %#v", response.Usage)
+	}
+}
+
+func TestSteeringAndLateResultsKeepValidToolPairs(t *testing.T) {
+	request, err := buildRequest(llm.Request{Model: llm.Model{ID: "fixture"}, Input: []llm.Item{
+		{Data: llm.Message{Role: llm.RoleUser, Text: "Start"}},
+		{Data: llm.ToolCall{CallID: "a", Name: "Bash", Arguments: `{}`}},
+		{Data: llm.ToolCall{CallID: "b", Name: "Bash", Arguments: `{}`}},
+		{Data: llm.Message{Role: llm.RoleUser, Text: "Steering"}},
+		{Data: llm.ToolResult{CallID: "a", Output: []llm.ToolResultOutput{{Kind: llm.ToolResultText, Value: "running"}}}},
+		{Data: llm.ToolResult{CallID: "b", Output: []llm.ToolResultOutput{{Kind: llm.ToolResultText, Value: "done"}}}},
+		{Data: llm.Message{Role: llm.RoleAssistant, Text: "Continuing"}},
+		{Data: llm.ToolResult{CallID: "a", Output: []llm.ToolResultOutput{{Kind: llm.ToolResultText, Value: "late result"}}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Messages[2].Role != "tool" || request.Messages[3].Role != "tool" {
+		t.Fatalf("steering separated tool replies: %#v", request.Messages)
+	}
+	count := 0
+	for _, message := range request.Messages {
+		if message.Role == "tool" {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("unexpected repeated tool reply: %d", count)
+	}
+	data, _ := json.Marshal(request)
+	if !strings.Contains(string(data), "late result") || !strings.Contains(string(data), "Steering") {
+		t.Fatal("lost steering or late result")
+	}
+}
+
+func TestViewImageIsNotSilentlyDiscarded(t *testing.T) {
+	request, err := buildRequest(llm.Request{Model: llm.Model{ID: "fixture"}, Input: []llm.Item{
+		{Data: llm.ToolCall{CallID: "image", Name: "ViewImage", Arguments: `{}`}},
+		{Data: llm.ToolResult{CallID: "image", Output: []llm.ToolResultOutput{{Kind: llm.ToolResultImage, Value: "data:image/png;base64,aGVsbG8="}}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(request)
+	if !strings.Contains(string(encoded), "image_url") || !strings.Contains(string(encoded), "data:image/png;base64,aGVsbG8=") {
+		t.Fatalf("image lost: %s", encoded)
+	}
+}
+
+func TestReportedReasoningTokensAndRateLimitsArePreserved(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-ratelimit-remaining-tokens", "900")
+		_, _ = w.Write([]byte(`{"id":"fixture","choices":[{"finish_reason":"stop","message":{"content":"OK"}}],"usage":{"prompt_tokens":20,"completion_tokens":12,"completion_tokens_details":{"reasoning_tokens":8}}}`))
+	}))
+	defer server.Close()
+	client, err := NewClient("", server.URL, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	response, err := client.Respond(context.Background(), llm.Request{Model: llm.Model{ID: "fixture"}}, llm.RequestOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Usage.ReasoningTokens != 8 || response.Usage.OutputTokens != 12 {
+		t.Fatalf("lost usage: %+v", response.Usage)
+	}
+	if response.RateLimits["x-ratelimit-remaining-tokens"] != "900" {
+		t.Fatalf("lost limits: %+v", response.RateLimits)
 	}
 }

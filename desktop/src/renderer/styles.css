@@ -1,6 +1,6 @@
 :root { font-family: Inter, "Segoe UI", system-ui, sans-serif; color-scheme: dark; font-synthesis: none; }
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 1000px; background: #101726; }
+body { margin: 0; min-width: 0; background: #101726; }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .52; }
@@ -277,7 +277,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .command-results button { display: flex; justify-content: space-between; width: 100%; padding: 12px; border: 0; background: transparent; color: var(--text); border-radius: 7px; }
 .command-results button.selected { background: var(--accent-soft); }
 .command-palette small, kbd { color: var(--muted); }
-@media (max-width: 1200px) { .topbar-controls label { max-width: 135px; }.app-shell .nav-rail { width: 160px; flex-basis: 160px; }.focus-layout .nav-rail { width: 64px; flex-basis: 64px; } }
+@media (max-width: 1200px) {
+  .topbar-controls { gap: 8px; }
+  .topbar-controls > label { min-width: 110px; max-width: 135px; }
+  .app-shell .nav-rail { width: 160px; flex-basis: 160px; }
+  .nav-rail .brand { padding-left: 12px; padding-right: 12px; gap: 9px; }
+  .nav-rail .brand strong { font-size: 14px; }
+  .nav-rail nav { grid-template-columns: minmax(0, 1fr); }
+  .nav-item { min-width: 0; gap: 10px; padding-left: 12px; padding-right: 12px; font-size: 13px; }
+  .nav-item svg { flex-shrink: 0; }
+  .focus-layout .nav-rail { width: 64px; flex-basis: 64px; }
+}
 .review-grid { display: grid; grid-template-columns: 240px minmax(0,1fr); gap: 20px; }
 .review-list { display: flex; flex-direction: column; gap: 6px; }
 .review-list button { text-align: left; padding: 12px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }

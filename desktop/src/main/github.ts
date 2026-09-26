@@ -156,17 +156,35 @@ function parsePR(value: unknown): GitHubPullRequest {
 
 const prFields = 'number,title,state,isDraft,url,headRefName,baseRefName,reviewDecision,statusCheckRollup'
 
+async function originRepository(project: string): Promise<string> {
+  const remote = await run('git', ['remote', 'get-url', 'origin'], project)
+  const scp = /^(?:[^@/:]+@)?([A-Za-z0-9.-]+):([^/].*)$/.exec(remote)
+  let host: string, path: string
+  if (scp && !remote.includes('://')) { host = scp[1]; path = scp[2] }
+  else {
+    let url: URL
+    try { url = new URL(remote) } catch { throw new Error('Origin must be a GitHub HTTPS or SSH remote') }
+    if (!['https:', 'ssh:'].includes(url.protocol)) throw new Error('Origin must be a GitHub HTTPS or SSH remote')
+    host = url.hostname; path = url.pathname.replace(/^\//, '')
+  }
+  path = path.replace(/\/$/, '').replace(/\.git$/, '')
+  if (!/^[A-Za-z0-9.-]+$/.test(host) || !githubName.test(path)) throw new Error('Origin does not identify a GitHub repository')
+  return `${host}/${path}`
+}
+
 export async function githubPullRequests(root: string): Promise<GitHubPullRequest[]> {
-  const output = await run('gh', ['pr', 'list', '--state', 'all', '--limit', '100', '--json', prFields], await repo(root))
+  const project = await repo(root)
+  const output = await run('gh', ['pr', 'list', '--repo', await originRepository(project), '--state', 'all', '--limit', '100', '--json', prFields], project)
   return (JSON.parse(output) as unknown[]).map(parsePR)
 }
 
 export async function githubPullRequest(root: string, number: number): Promise<GitHubPullRequest & { body: string; diff: string; comments: string[] }> {
   if (!Number.isSafeInteger(number) || number < 1) throw new Error('Invalid pull request number')
   const project = await repo(root)
-  const output = await run('gh', ['pr', 'view', String(number), '--json', `${prFields},body,comments`], project)
+  const repository = await originRepository(project)
+  const output = await run('gh', ['pr', 'view', String(number), '--repo', repository, '--json', `${prFields},body,comments`], project)
   const item = JSON.parse(output) as Record<string, unknown>
-  const diff = await run('gh', ['pr', 'diff', String(number), '--color', 'never'], project)
+  const diff = await run('gh', ['pr', 'diff', String(number), '--repo', repository, '--color', 'never'], project)
   const comments = Array.isArray(item.comments) ? item.comments.map((value) => String((value as Record<string, unknown>).body || '')) : []
   return { ...parsePR(item), body: String(item.body || ''), diff, comments }
 }
@@ -186,7 +204,8 @@ export async function githubCreatePullRequest(root: string, title: string, body:
   if (!title.trim() || title.length > 500) throw new Error('Enter a pull request title')
   checkRef(base, 'Base branch')
   if (current === base) throw new Error('Create a feature branch before opening a pull request')
-  return withBody(body, (file) => run('gh', ['pr', 'create', '--title', title.trim(), '--body-file', file, '--base', base, '--head', current, ...(draft ? ['--draft'] : [])], project, 120000))
+  const repository = await originRepository(project)
+  return withBody(body, (file) => run('gh', ['pr', 'create', '--repo', repository, '--title', title.trim(), '--body-file', file, '--base', base, '--head', current, ...(draft ? ['--draft'] : [])], project, 120000))
 }
 
 export async function githubReviewPullRequest(root: string, number: number, action: 'approve' | 'comment' | 'request-changes', body: string): Promise<void> {
@@ -195,5 +214,6 @@ export async function githubReviewPullRequest(root: string, number: number, acti
   if (action !== 'approve' && !body.trim()) throw new Error('Review comment is required')
   const project = await repo(root)
   const flag = action === 'approve' ? '--approve' : action === 'comment' ? '--comment' : '--request-changes'
-  await withBody(body, (file) => run('gh', ['pr', 'review', String(number), flag, '--body-file', file], project, 120000))
+  const repository = await originRepository(project)
+  await withBody(body, (file) => run('gh', ['pr', 'review', String(number), '--repo', repository, flag, '--body-file', file], project, 120000))
 }

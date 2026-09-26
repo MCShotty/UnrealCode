@@ -2,6 +2,19 @@
 
 Active checkout: `I:\UnrealCode`; private origin: `MCShotty/UnrealCode`.
 
+## 0.6.1 stabilization
+
+Bug-hunt fixes cover queue/message races, provider tool histories, GitHub origin
+targeting and partial-load UI, evaluation binary retention, worker cancellation,
+conversation event isolation and minimum window sizing. See RELEASE_0.6.1.md.
+
+Verified 53 desktop tests, TypeScript, full Go race suite and vet, three Python
+worker tests, packaged Docker/Electron workflow and diagnostics, light/dark and
+reduced-motion navigation, encrypted key storage, instructions and terminal.
+Secret/package audit: zero matches, 554 files/artifacts, 96 production npm notices.
+Installer SHA-256: `F2B3B18409E802E0495F167F66124DF2EE06609BF449D14C23E3F5F3C4CF1EBF`.
+Installer remains unsigned. No new live-provider claims.
+
 ## Released 0.4
 
 Commit `0333306b1f452ac30ed213962c15f98918c6b7dd`, published as v0.4.0.

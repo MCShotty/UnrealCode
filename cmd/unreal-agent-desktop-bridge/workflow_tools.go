@@ -214,10 +214,24 @@ func (h *workflowHandler) CancelRemoteJob(id operation.ID, _ string) error {
 	}
 	return nil
 }
-func (h *workflowHandler) answer(text string) {
+func (h *workflowHandler) pendingQuestions() []operation.ID {
 	h.mu.Lock()
-	waiting := h.waiting
-	h.waiting = make(map[operation.ID]operation.Operation)
+	defer h.mu.Unlock()
+	ids := make([]operation.ID, 0, len(h.waiting))
+	for id := range h.waiting {
+		ids = append(ids, id)
+	}
+	return ids
+}
+func (h *workflowHandler) answerQuestions(ids []operation.ID, text string) {
+	h.mu.Lock()
+	waiting := make([]operation.Operation, 0, len(ids))
+	for _, id := range ids {
+		if value, found := h.waiting[id]; found {
+			waiting = append(waiting, value)
+			delete(h.waiting, id)
+		}
+	}
 	h.mu.Unlock()
 	for _, value := range waiting {
 		state, err := operation.DecodeRemoteJobState(value)

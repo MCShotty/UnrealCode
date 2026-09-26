@@ -95,12 +95,15 @@ export class TaskQueue {
   }
   async kick(): Promise<void> {
     if (this.launching || this.value.paused || this.value.tasks.some((task) => ['starting', 'running', 'waiting_input'].includes(task.state))) return
-    const task = this.value.tasks.find((task) => task.state === 'pending')
+    let task = this.value.tasks.find((task) => task.state === 'pending')
     if (!task) return
     this.launching = true
     let attempted = false
     try {
-      if (!await this.runner.canStart() || this.value.paused || task.state !== 'pending') return
+      if (!await this.runner.canStart() || this.value.paused) return
+      // The user may edit, remove, or reorder pending work during the idle check.
+      task = this.value.tasks.find((item) => item.state === 'pending')
+      if (!task) return
       attempted = true; this.launchingId = task.id; task.state = 'starting'; this.save()
       const sessionId = await this.runner.create(structuredClone(task))
       task.sessionId = sessionId
@@ -108,7 +111,8 @@ export class TaskQueue {
       task.state = 'running'; this.save()
       await this.runner.send(structuredClone(task))
     } catch (error) {
-      task.state = 'failed'; task.message = (error as Error).message; this.value.paused = true; this.save()
+      if (task && this.value.tasks.includes(task)) { task.state = 'failed'; task.message = (error as Error).message }
+      this.value.paused = true; this.save()
     } finally {
       this.launching = false
       this.launchingId = ''

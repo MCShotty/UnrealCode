@@ -135,7 +135,12 @@ try {
       await page.getByRole('button', { name: 'Settings', exact: true }).click()
       await page.getByPlaceholder('Optional instructions for this workspace').fill('QA project instructions')
       await page.getByRole('button', { name: 'Save settings' }).click()
-      result.projectInstructionsSaved = await page.evaluate((path) => window.unreal.getSettings().then((settings) => settings.projectInstructions[path] === 'QA project instructions'), workspace)
+      await page.getByText('Settings saved', { exact: true }).waitFor()
+      result.projectInstructionsSaved = await page.evaluate(async () => {
+        const path = await window.unreal.projectPath()
+        return !!path && (await window.unreal.getSettings()).projectInstructions[path] === 'QA project instructions'
+      })
+      if (!result.projectInstructionsSaved) throw new Error('Project instructions were not persisted under the canonical project path')
       await page.getByRole('button', { name: 'Terminal', exact: true }).click()
       await page.getByRole('heading', { name: 'Terminal' }).waitFor()
       await page.locator('.xterm-screen').waitFor({ timeout: 10000 })

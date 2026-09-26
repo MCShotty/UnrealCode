@@ -128,7 +128,12 @@ export class Evaluations {
         arm.decisionTrace = decisionTraces(events)
         // Includes created/deleted tracked files; list untracked paths separately for review.
         let captured = true
-        arm.diff = await command('git', ['diff', report.revision, '--'], directory).catch(() => { captured = false; return 'Diff unavailable; worktree retained' })
+        arm.diff = await command('git', ['diff', '--no-ext-diff', '--no-textconv', report.revision, '--'], directory).catch(() => { captured = false; return 'Diff unavailable; worktree retained' })
+        const stats = await command('git', ['diff', '--no-ext-diff', '--no-textconv', '--numstat', '-z', report.revision, '--'], directory).catch(() => { captured = false; return '' })
+        if (stats.split('\0').some(record => record.startsWith('-\t-\t'))) {
+          captured = false
+          arm.diff += '\nBinary changes are not recoverable from a text diff; worktree retained.'
+        }
         const untracked = await command('git', ['ls-files', '--others', '--exclude-standard', '-z'], directory).catch(() => { captured = false; return '' })
         const names = untracked.split('\0').filter(Boolean); arm.createdFiles = []
         if (names.length > 100) captured = false

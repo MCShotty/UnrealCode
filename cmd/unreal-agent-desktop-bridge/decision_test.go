@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,17 @@ import (
 	"github.com/unreallabsai/unreal-agent/harness/session"
 	"github.com/unreallabsai/unreal-agent/harness/tool"
 )
+
+func TestCanceledLocalDecisionDoesNotStartWorker(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	worker := &pythonWorker{}
+	var result any
+	err := worker.call(ctx, filepath.Join(t.TempDir(), "missing-python"), "evaluate", map[string]any{}, &result)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled inference tried to start a process: %v", err)
+	}
+}
 
 func TestDecisionBatchUsesConfiguredJevAndPreservesProbabilities(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
