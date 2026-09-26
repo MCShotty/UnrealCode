@@ -7,6 +7,7 @@ import { getCACertificates } from 'node:tls'
 import { promisify } from 'node:util'
 import type { AgentEvent, DockerStatus } from '../shared/api'
 import { backendEnvironment } from './child-environment'
+import { resolveVolume } from './state-volumes'
 
 const execFileAsync = promisify(execFile)
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timeout: NodeJS.Timeout }
@@ -18,7 +19,7 @@ export function backendSourceTag(source: string, version: string): string {
     if (stat.isDirectory()) for (const name of readdirSync(path).sort()) visit(join(path, name))
     else if (stat.isFile()) { hash.update(relative(source, path).replaceAll('\\', '/')); hash.update(readFileSync(path)) }
   }
-  for (const name of ['Dockerfile.desktop', 'go.mod', 'go.sum', 'cmd', 'harness', 'internal', 'desktop/worker']) visit(join(source, name))
+  for (const name of ['Dockerfile.desktop', '.dockerignore', 'LICENSE', 'go.mod', 'go.sum', 'cmd', 'harness', 'internal', 'desktop/worker', 'desktop/third-party-licenses']) visit(join(source, name))
   return `unrealcode:${version}-${hash.digest('hex').slice(0, 12)}`
 }
 
@@ -90,7 +91,7 @@ export class DockerBridge {
     catch { throw new Error('Docker Desktop Linux engine is not running. Start Docker Desktop and try again.') }
     await this.ensureImage()
     const digest = createHash('sha256').update(projectPath.toLocaleLowerCase()).digest('hex').slice(0, 20)
-    const volume = `unrealcode-${evaluationGit ? 'eval-' : ''}${digest}`
+    const volume = await resolveVolume(app.getPath('userData'), projectPath, evaluationGit)
     await this.migrateStateVolume(projectPath, volume)
     this.container = `unrealcode-${digest.slice(0, 8)}-${randomUUID().slice(0, 8)}`
     this.project = projectPath
@@ -113,7 +114,7 @@ export class DockerBridge {
     child.on('exit', (code) => this.fail(new Error(stderr.trim() || `Docker backend exited (${code})`)))
     try {
       const health = await this.request<{ version: number; capabilities?: string[] }>('health', {}, 30000)
-      if (health.version !== 1 || !['permissions.v1', 'files.v1', 'sessions.v1', 'mcp.v1', 'context.v1', 'teams.v1', 'verification.v1'].every(value => health.capabilities?.includes(value))) {
+      if (health.version !== 1 || !['permissions.v1', 'files.v1', 'sessions.v1', 'mcp.v1', 'context.v1', 'teams.v1', 'verification.v1', 'history.latest.v1'].every(value => health.capabilities?.includes(value))) {
         throw new Error('The Docker backend is incompatible with this desktop version. Rebuild the backend image and reopen the project.')
       }
       if (evaluationGit) await this.docker(['exec', this.container, 'sh', '-c', 'if test ! -f /state/evaluation-git/HEAD; then env -u GIT_DIR -u GIT_WORK_TREE git init --bare /state/evaluation-git && git add --all && git -c user.name=UnrealCode -c user.email=evaluation@localhost commit --allow-empty -m "Task input snapshot"; fi'], 60000)

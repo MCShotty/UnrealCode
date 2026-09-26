@@ -1,10 +1,22 @@
 import { it, expect } from 'vitest'
-import { mkdtemp, writeFile, readFile, unlink } from 'node:fs/promises'
+import { mkdtemp, writeFile, readFile, unlink,stat } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { TaskWorkspaces } from './task-workspaces'
 import { CheckpointStore } from './checkpoints'
+
+it('archives only integrated captured work and restores binary/deleted files without running a session',async()=>{
+ const project=await mkdtemp(join(tmpdir(),'unrealcode-archive-project-')),data=await mkdtemp(join(tmpdir(),'unrealcode-archive-data-'))
+ const git=(args:string[])=>execFileSync('git',['-C',project,...args],{windowsHide:true,stdio:'ignore'})
+ git(['init']);await writeFile(join(project,'a.txt'),'base');await writeFile(join(project,'gone.txt'),'base');await writeFile(join(project,'.gitignore'),'ignored.log\n');git(['add','.']);git(['-c','user.name=Fixture','-c','user.email=fixture@localhost','commit','-m','Base'])
+ const service=new TaskWorkspaces(project,data),prepared=await service.prepare(),task=await service.materialize(prepared.id)
+ await expect(service.archive(task.id)).rejects.toThrow('fully integrated')
+ await writeFile(join(task.path,'binary.dat'),Buffer.from([0,8,9]));await unlink(join(task.path,'gone.txt'));await service.integrate(task.id,['binary.dat','gone.txt'])
+ await writeFile(join(task.path,'ignored.log'),'keep');await expect(service.archive(task.id)).rejects.toThrow('ignored');await unlink(join(task.path,'ignored.log'))
+ await service.archive(task.id);expect((await service.list())[0].state).toBe('archived');await expect(stat(task.path)).rejects.toThrow();const restored=await service.restoreArchived(task.id);expect(restored.state).toBe('integrated');expect(await readFile(join(task.path,'binary.dat'))).toEqual(Buffer.from([0,8,9]));await expect(readFile(join(task.path,'gone.txt'))).rejects.toThrow();expect((await service.preview(task.id)).changes).toEqual([])
+ await writeFile(join(task.path,'a.txt'),'later edit');await expect(service.archive(task.id)).rejects.toThrow('later');expect(await readFile(join(task.path,'a.txt'),'utf8')).toBe('later edit')
+},30000)
 
 it('snapshots dirty inputs and integrates binary creations/deletions without overwriting later edits', async () => {
   const project = await mkdtemp(join(tmpdir(), 'unrealcode-task-fixture-')), data = await mkdtemp(join(tmpdir(), 'unrealcode-task-data-'))

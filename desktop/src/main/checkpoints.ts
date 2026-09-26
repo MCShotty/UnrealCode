@@ -265,11 +265,11 @@ export class CheckpointStore {
   }
   private async prune(): Promise<void> {
     const entries = await this.list()
-    for (const entry of entries.slice(30)) if (!['running', 'capturing'].includes(entry.state)) await fs.unlink(this.metadata(entry.id))
+    for (const entry of entries.slice(30)) if (entry.state === 'complete') await fs.unlink(this.metadata(entry.id))
     await this.collect()
     for (const entry of entries.slice(1).reverse()) {
       if ((await this.storage()).bytes <= 512 * 1024 * 1024) break
-      if (!['running', 'capturing'].includes(entry.state)) await fs.unlink(this.metadata(entry.id)).catch(() => {})
+      if (entry.state === 'complete') await fs.unlink(this.metadata(entry.id)).catch(() => {})
       await this.collect()
     }
   }

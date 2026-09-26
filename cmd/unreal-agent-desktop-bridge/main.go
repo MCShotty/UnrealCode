@@ -250,7 +250,7 @@ func (a *app) dispatch(req request) (any, error) {
 	case "decision.idle":
 		return a.decisionPending.Load() == 0, nil
 	case "health":
-		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion, "capabilities": []string{"permissions.v1", "files.v1", "sessions.v1", "mcp.v1", "context.v1", "teams.v1", "verification.v1"}}, nil
+		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion, "capabilities": []string{"permissions.v1", "files.v1", "sessions.v1", "mcp.v1", "context.v1", "teams.v1", "verification.v1", "history.latest.v1"}}, nil
 	case "decision.configure":
 		config, err := decodeParams[decisionConfig](req.Params)
 		if err != nil {
@@ -496,7 +496,7 @@ func (a *app) dispatch(req request) (any, error) {
 			return nil, err
 		}
 		return map[string]string{"sessionId": string(id)}, nil
-	case "session.events":
+	case "session.events", "session.events.latest":
 		p, err := decodeParams[historyParams](req.Params)
 		if err != nil {
 			return nil, err
@@ -508,6 +508,9 @@ func (a *app) dispatch(req request) (any, error) {
 		a.events.flush()
 		if err := a.events.reconcile(a.store, id); err != nil {
 			return nil, err
+		}
+		if req.Method == "session.events.latest" {
+			return a.events.latest(id, p.Limit)
 		}
 		return a.events.entries(id, p.After, p.Limit)
 	case "session.items":

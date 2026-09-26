@@ -2,6 +2,47 @@
 
 Active checkout: `I:\UnrealCode`; private origin: `MCShotty/UnrealCode`.
 
+## 1.0 preview — local only
+
+User instruction: **do not push or publish 1.0 yet**. No 1.0 GitHub release or
+visibility change is authorized. Features and limits: RELEASE_1.0_PREVIEW.md.
+
+Version: `1.0.0-preview.1`. Installer:
+`desktop/dist/UnrealCode-Setup-1.0.0-preview.1.exe`.
+SHA-256: `1E00847D1A081DAD962F0FAE21690FE8CC7DD95B5B67866B13B90F6631C17042`.
+
+Local acceptance: 99 desktop tests; TypeScript; full Go race suite and vet, with
+the bridge race suite repeated after the latest-history capability; three Python
+worker tests and private-key scanner regression. Packaged fixtures passed recovery,
+damaged-profile preservation, 3,500-event history replay, archived worktree restore,
+editor conflicts/unsaved buffers/search, execution modes, parallel teams, queue
+cancellation, verification repair bounds, MCP transports, compaction, retrieval,
+workflow, handoff, local search and diagnostics. Final rebuild repeated recovery
+and coding checks. Reopening the latest 3,000 fixture events took 546 ms.
+The final backend comparison against 0.6.1 measured median task 371.8 → 371.4 ms,
+steering acknowledgement 1.76 → 1.75 ms and independent-tool overlap 276 → 277 ms
+(12 synthetic runs each; no real-task savings claim). Required capabilities passed
+for `unrealcode:1.0.0-preview.1-f79c10fee166`.
+
+Automated WCAG A/AA checks passed on setup and dark/light Settings, including
+150% scaling and reduced motion; keyboard close/focus restoration passed. This
+does not establish full assistive-technology coverage. The final UI checks were
+offscreen. Native desktop placement/chrome and fresh-machine install/upgrade
+remain unverified. Valid publisher signing and live signed-update installation
+are external prerequisites for stable 1.0. The installer is unsigned and its
+update controls deliberately remain unavailable.
+
+Source/payload audit: 905 files/artifacts, 212 reviewed production npm packages,
+seven local credential values compared privately, zero hits. Dev-only testing
+and build dependencies are checked for exclusion from the packaged application.
+The reachable-history and retained-release-asset checks are recorded in the
+preview notes; no 1.0 artifacts were uploaded.
+
+Jev 1.13.0 supported the fresh-volume restore, publisher recheck and rollback
+claims (confidence 0.90/0.97/0.95). Its vault-exclusion/permission-reset judgments
+were uncertain; those properties were established through focused unit and real
+Docker recovery checks instead of treating the model output as proof.
+
 ## 0.9 teams and verification acceptance
 
 See RELEASE_0.9.0.md for features, exact artifact hash, test counts and limitations.

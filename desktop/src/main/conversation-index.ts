@@ -27,6 +27,7 @@ export function searchableText(event: AgentEvent): string {
 }
 
 export class ConversationIndex {
+  async flush():Promise<void>{await this.writes}
   private rows = new Map<string, Map<number, Row>>()
   private loading: Promise<void> | null = null
   private writes: Promise<void> = Promise.resolve()

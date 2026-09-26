@@ -271,3 +271,40 @@ func (l *eventLog) entries(id session.ID, after uint64, limit int) ([]event, err
 	end := min(int(after)+limit, len(all))
 	return all[after:end], nil
 }
+
+// Retain only the latest renderer window; original events remain on disk.
+func (l *eventLog) latest(id session.ID, limit int) ([]event, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if limit < 1 || limit > 3000 {
+		limit = 3000
+	}
+	f, err := os.Open(l.path(id))
+	if errors.Is(err, fs.ErrNotExist) {
+		return []event{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	ring := make([]event, limit)
+	count := 0
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	for scanner.Scan() {
+		var value event
+		if err := json.Unmarshal(scanner.Bytes(), &value); err != nil {
+			return nil, err
+		}
+		ring[count%limit] = value
+		count++
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if count <= limit {
+		return ring[:count], nil
+	}
+	start := count % limit
+	return append(ring[start:], ring[:start]...), nil
+}

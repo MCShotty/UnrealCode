@@ -3,6 +3,14 @@ import type { DesktopAPI } from '../shared/api'
 
 const invoke = (name: string, ...args: unknown[]): Promise<any> => ipcRenderer.invoke(name, ...args)
 const api: DesktopAPI = {
+  workspaceArchive:id=>invoke('workspace:archive',id),workspaceRestore:id=>invoke('workspace:restore',id),
+  onMaintenance:(callback)=>{ipcRenderer.on('app:maintenance-finished',callback);return ()=>ipcRenderer.removeListener('app:maintenance-finished',callback)},
+  latestEvents:(id)=>invoke('session:latest',id),
+  recoveryStatus:()=>invoke('recovery:status'),recoveryRetry:()=>invoke('recovery:retry'),
+  backupExport:()=>invoke('recovery:export'),backupPreview:()=>invoke('recovery:preview'),backupRestore:id=>invoke('recovery:restore',id),
+  storageList:()=>invoke('storage:list'),storageRemove:ids=>invoke('storage:remove',ids),
+  supportPreview:()=>invoke('support:preview'),supportExport:()=>invoke('support:export'),
+  updateStatus:()=>invoke('updates:status'),updateCheck:channel=>invoke('updates:check',channel),updateDownload:()=>invoke('updates:download'),updateCancel:()=>invoke('updates:cancel'),updateInstall:()=>invoke('updates:install'),
   repositorySearch:(query,filesOnly)=>invoke('repository:search',query,filesOnly),
   repositoryStatus:()=>invoke('repository:status'),
   contextSummaries:sessionId=>invoke('context:summaries',sessionId),

@@ -52,6 +52,22 @@ export type DecisionResult = { engine: 'jev' | 'laya'; model: string; answers: R
 export type DecisionStatus = { engine: DecisionEngine; available: boolean; message: string; glinerAvailable: boolean }
 
 export interface DesktopAPI {
+  onMaintenance(callback:()=>void):()=>void
+  latestEvents(sessionId:string):Promise<AgentEvent[]>
+  recoveryStatus():Promise<import('./recovery').RecoveryStatus>
+  recoveryRetry():Promise<void>
+  backupExport():Promise<string|null>
+  backupPreview():Promise<import('./recovery').BackupPreview|null>
+  backupRestore(id:string):Promise<void>
+  storageList():Promise<import('./recovery').StorageItem[]>
+  storageRemove(ids:string[]):Promise<void>
+  supportPreview():Promise<string>
+  supportExport():Promise<string|null>
+  updateStatus():Promise<import('./recovery').UpdateState>
+  updateCheck(channel:'stable'|'preview'):Promise<import('./recovery').UpdateState>
+  updateDownload():Promise<import('./recovery').UpdateState>
+  updateCancel():Promise<void>
+  updateInstall():Promise<void>
   workflowSettings():Promise<import('./verification').WorkflowPresets>
   workflowSave(value:import('./verification').WorkflowPresets):Promise<void>
   workflowRuns():Promise<import('./verification').WorkflowRun[]>
@@ -93,6 +109,8 @@ export interface DesktopAPI {
   workspacePreview(id: string): Promise<import('./task-workspaces').WorkspacePreview>
   workspaceIntegrate(id: string, paths: string[]): Promise<string>
   workspaceRetain(id: string): Promise<void>
+  workspaceArchive(id:string):Promise<boolean>
+  workspaceRestore(id:string):Promise<boolean>
   editorRead(path: string): Promise<EditableFile>
   editorSave(path: string, revision: string, content: string, workspace: string): Promise<EditableFile>
   editorBase(path: string): Promise<string>

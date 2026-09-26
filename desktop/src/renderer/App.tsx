@@ -10,6 +10,9 @@ import {
   X, Zap
 } from 'lucide-react'
 import type { AgentEvent, BridgeSessionConfig, DockerStatus, FileEntry, Provider, SessionInfo, Settings, SkillEntry } from '../shared/api'
+import { RecoveryPanel } from './RecoveryPanel'
+import { SettingsOverlay } from './SettingsOverlay'
+import { SetupGuide } from './SetupGuide'
 import { GitHubPage } from './GitHubPage'
 import { WorkflowPage } from './WorkflowPage'
 import { DiagnosticsPage } from './DiagnosticsPage'
@@ -54,20 +57,7 @@ function mergeEvents(current: AgentEvent[], incoming: AgentEvent[]): AgentEvent[
   const known = new Set(current.map((item) => item.seq))
   return [...current, ...incoming.filter((item) => !known.has(item.seq))].sort((a, b) => a.seq - b.seq).slice(-3000)
 }
-async function loadEvents(sessionId: string, maxEvents = 3000): Promise<AgentEvent[]> {
-  const collected: AgentEvent[] = []
-  let after = 0
-  while (collected.length < maxEvents) {
-    const page = await api.getEvents(sessionId, after)
-    if (!page.length) break
-    collected.push(...page)
-    const latest = page.at(-1)!.seq
-    if (latest <= after) break
-    after = latest
-    if (page.length < 1000) break
-  }
-  return collected.slice(-maxEvents)
-}
+async function loadEvents(sessionId: string): Promise<AgentEvent[]> { return api.latestEvents(sessionId) }
 
 
 function Brand(): ReactNode {
@@ -102,6 +92,7 @@ function Welcome({ settings, busy, status, onOpen, onSettings }: { settings: Set
       <button className="primary-button large-button" onClick={() => onOpen()} disabled={busy}><FolderOpen size={18}/>{busy ? 'Preparing backend…' : 'Open project folder'}</button>
       <div className={`backend-note ${status.ready ? 'ready' : ''}`}><span className="status-dot"/>{status.message}</div>
       {settings.recentProjects.length > 0 && <div className="recent-projects"><h2>Recent projects</h2>{settings.recentProjects.map((path) => <button key={path} onClick={() => onOpen(path)} disabled={busy}><Folder size={17}/><span>{path}</span><ArrowRight size={16}/></button>)}</div>}
+      <SetupGuide settings={settings} onSettings={onSettings}/>
       <button className="text-button" onClick={onSettings}><Settings2 size={16}/> Provider settings</button>
     </div>
   </div>
@@ -157,7 +148,7 @@ function FileBrowser(): ReactNode {
   const [content, setContent] = useState('')
   const [error, setError] = useState('')
   useEffect(() => { void api.listFiles(folder).then(setEntries).catch((reason) => setError(String(reason))) }, [folder])
-  useEffect(() => { void api.gitChanges().then(setChanges).catch((reason) => setError(String(reason))) }, [])
+  useEffect(() => { void api.gitChanges().then(setChanges).catch(()=>{}).catch((reason) => setError(String(reason))) }, [])
   const open = async (entry: FileEntry): Promise<void> => {
     if (entry.directory) { setFolder(entry.path); setSelected(''); setContent(''); return }
     setSelected(entry.path)
@@ -215,6 +206,7 @@ function SettingsPage({ settings, onSave, projectPath }: { settings: Settings; o
       {(draft.provider === 'ollama' || draft.provider === 'openai-compatible') && <><label>Local server URL<input value={draft.baseUrl} onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })} placeholder="http://localhost:11434/v1"/></label><button className="secondary-button" onClick={() => void discover()}>Discover models</button>{models.length > 0 && <p>{models.length} model{models.length === 1 ? '' : 's'} available</p>}</>}
     </section><section className="settings-section"><h2>Credentials</h2>{isKeyProvider ? <><p>Enter a {draft.provider} key. It is encrypted by Windows when available, and sent to the container only in memory.</p><label>API key<input type="password" value={key} onChange={(event) => setKey(event.target.value)} placeholder={keySaved ? 'Saved key available' : draft.provider === 'openai-compatible' ? 'Optional for local server' : 'No key saved'} autoComplete="off"/></label></> : draft.provider === 'openai-codex' ? <p className={codex?.available ? 'success-text' : 'muted-copy'}><KeyRound size={16}/> {codex?.message || 'Checking existing Codex login…'}</p> : <p>Ollama runs locally. No API key is needed.</p>}</section>
       <AdminKeySettings/>
+      <RecoveryPanel/>
       <section className="settings-section wide-section decision-settings"><h2>Decision model</h2><p>One engine for all projects and chats. A selected engine receives bounded Choice, Noul, and Score questions. UnrealCode keeps planning, coding, permissions, and Git actions.</p><label>Global engine<select value={draft.decisionEngine} onChange={(event) => setDraft({ ...draft, decisionEngine: event.target.value as Settings['decisionEngine'] })}><option value="off">Disabled</option><option value="jev">Jev · TypeSafe cloud</option><option value="laya">Laya · local worker</option></select></label>{draft.decisionEngine === 'jev' && <><label>Jev model<input value={draft.decisionModel} onChange={(event) => setDraft({ ...draft, decisionModel: event.target.value })} placeholder="jev-latest"/></label><p>Reads TYPESAFE_API_KEY from Windows. Project text is sent only after you grant that project's cloud consent.</p>{projectPath && !settings.decisionCloudProjects.includes(projectPath) && <button className="secondary-button" onClick={() => void api.decisionConsent().then(async () => { setDecisionStatus(await api.decisionStatus()); setDraft(await api.getSettings()) })}>Allow TypeSafe for this project</button>}</>}{draft.decisionEngine === 'laya' && <button className="secondary-button" disabled={installing} onClick={() => void install('laya')}>{installing ? 'Installing…' : 'Install local Laya worker'}</button>}{decisionStatus && <p className={decisionStatus.available ? 'success-text' : 'muted-copy'}>{decisionStatus.message}</p>}<label className="check-row"><input type="checkbox" checked={draft.glinerEnabled} onChange={(event) => setDraft({ ...draft, glinerEnabled: event.target.checked })}/><span>Enable GLiNER entity extraction separately</span></label>{draft.glinerEnabled && <button className="secondary-button" disabled={installing} onClick={() => void install('gliner')}>{installing ? 'Installing…' : decisionStatus?.glinerAvailable ? 'Reinstall GLiNER' : 'Install GLiNER'}</button>}{projectPath && draft.decisionEngine !== 'off' && <div className="decision-sample"><label>Try a bounded decision<input value={sample} onChange={(event) => setSample(event.target.value)} placeholder="Short sample text"/></label><button className="secondary-button" disabled={!sample.trim()} onClick={() => void evaluate()}>Evaluate</button>{sampleResult && <pre>{sampleResult}</pre>}</div>}</section>
       <section className="settings-section wide-section"><h2>{projectPath ? 'Project instructions' : 'Default agent instructions'}</h2><p>Applied as the system prompt when a new session starts.</p><textarea value={instructions} onChange={(event) => setDraft(projectPath ? { ...draft, projectInstructions: { ...draft.projectInstructions, [projectPath]: event.target.value } } : { ...draft, systemPrompt: event.target.value })} placeholder="Optional instructions for this workspace" rows={6}/></section>
       <section className="settings-section"><h2>Tools</h2>{['Bash','ViewImage','SkillUse','DecisionBatch','EntityExtract'].map((tool) => <label className="check-row" key={tool}><input type="checkbox" checked={!draft.disallowedTools.includes(tool)} onChange={(event) => setDraft({ ...draft, disallowedTools: event.target.checked ? draft.disallowedTools.filter((value) => value !== tool) : [...draft.disallowedTools, tool] })}/><span>{tool}</span></label>)}</section>
@@ -288,6 +280,9 @@ function TerminalView(): ReactNode {
 }
 
 export default function App(): ReactNode {
+  const [recoveryError,setRecoveryError]=useState('')
+  useEffect(()=>{const refresh=()=>void api.recoveryStatus().then(value=>setRecoveryError(value.migrationError||''));refresh();return api.onMaintenance(()=>{setProjectPath(null);setSessions([]);setActiveId('');setEvents([]);setShowSettingsBeforeProject(true);void api.getSettings().then(setSettings);refresh()})},[])
+
   useEffect(() => { const guard = (event: BeforeUnloadEvent) => { if (hasDirtyEditors()) { event.preventDefault(); event.returnValue = '' } }; window.addEventListener('beforeunload', guard); return () => window.removeEventListener('beforeunload', guard) }, [])
   const [settings, setSettings] = useState<Settings | null>(null)
   const [appVersion, setAppVersion] = useState('')
@@ -298,7 +293,8 @@ export default function App(): ReactNode {
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [editingWorkspace, setEditingWorkspace] = useState('')
-  useEffect(() => { let live = true; if (projectPath) void api.activeWorkspace().then(value => { if (live) setEditingWorkspace(value.path) }); return () => { live = false } }, [projectPath, activeId])
+  const [selectingWorkspace,setSelectingWorkspace]=useState(false)
+  useEffect(() => { let live = true;const selection=activeRef.current; if (projectPath) void api.activeWorkspace().then(value => { if (live&&activeRef.current===selection) setEditingWorkspace(value.path) }).catch(()=>{}); return () => { live = false } }, [projectPath])
   const [events, setEvents] = useState<AgentEvent[]>([])
   const [changes, setChanges] = useState<string[]>([])
   const [prompt, setPrompt] = useState('')
@@ -340,11 +336,12 @@ export default function App(): ReactNode {
     return () => { unsubscribe(); if (frame.current !== null) cancelAnimationFrame(frame.current) }
   }, [])
   const refreshSessions = useCallback(async () => { try { setSessions(await api.listSessions()) } catch (reason) { setError(String(reason)) } }, [])
-  useEffect(() => { if (projectPath) { void refreshSessions(); void api.gitChanges().then(setChanges) } }, [projectPath, refreshSessions])
-  useEffect(() => { if (!projectPath) return; const timer = setInterval(() => { void api.gitChanges().then(setChanges); void refreshSessions() }, 10000); return () => clearInterval(timer) }, [projectPath, refreshSessions])
+  useEffect(() => { if (projectPath) { void refreshSessions(); void api.gitChanges().then(setChanges).catch(()=>{}) } }, [projectPath, refreshSessions])
+  useEffect(() => { if (!projectPath) return; const timer = setInterval(() => { void api.gitChanges().then(setChanges).catch(()=>{}); void refreshSessions() }, 10000); return () => clearInterval(timer) }, [projectPath, refreshSessions])
   useTheme(settings?.theme)
 
   const resetConversation = (id: string | null): void => {
+    if(id===null)setSelectingWorkspace(false)
     activeRef.current = id
     pending.current = []
     pendingMessage.current = null
@@ -362,23 +359,24 @@ export default function App(): ReactNode {
       const selected = path || await api.pickProject()
       if (!selected) return
       await api.openProject(selected, true)
-      setProjectPath(await api.projectPath()); resetConversation(null); setView('chat'); setShowSettingsBeforeProject(false)
+      setProjectPath(await api.projectPath()); setEditingWorkspace((await api.activeWorkspace()).path); resetConversation(null); setView('chat'); setShowSettingsBeforeProject(false)
       setSettings(await api.getSettings())
     } catch (reason) { setError(String(reason)) }
     finally { setBusy(false) }
   }
   const selectSession = async (id: string, sequence?: number, resume = false): Promise<void> => {
+    setSelectingWorkspace(true)
     resetConversation(id)
     setHighlight(sequence || null)
     setError(''); setView('chat')
-    try { await api.selectSession(id); const workspace = await api.activeWorkspace(); if (activeRef.current === id) setEditingWorkspace(workspace.path); const history = sequence ? await api.getEventWindow(id, sequence) : await loadEvents(id); if (activeRef.current === id) setEvents((current) => mergeEvents(current, history)); if (resume && !sequence) await api.openSession(id); await refreshSessions() } catch (reason) { setError(String(reason)) }
+    try { await api.selectSession(id); const workspace = await api.activeWorkspace(); if (activeRef.current === id) setEditingWorkspace(workspace.path); const history = sequence ? await api.getEventWindow(id, sequence) : await loadEvents(id); if (activeRef.current === id) setEvents((current) => mergeEvents(current, history)); if (resume && !sequence) await api.openSession(id); await refreshSessions() } catch (reason) { setError(String(reason)) } finally {if(activeRef.current===id)setSelectingWorkspace(false)}
   }
   const newSession = async (): Promise<string | null> => {
-    if (!settings) return null
+    if (!settings || recoveryError) return null
     try {
       const config: BridgeSessionConfig = { provider: settings.provider, model: settings.model, baseUrl: settings.baseUrl, thinkingLevel: settings.thinkingLevel, systemPrompt: settings.systemPrompt, disallowedTools: settings.disallowedTools }
       const created = await api.createSession(config, teamDraft.allowSpecialists || teamDraft.modelRequestLimit || teamDraft.elapsedMinutes || teamDraft.tokenLimit ? teamDraft : undefined)
-      setTeamDraft({ ...defaultTeamOptions }); resetConversation(created.sessionId); await refreshSessions(); return created.sessionId
+      setEditingWorkspace((await api.activeWorkspace()).path); setTeamDraft({ ...defaultTeamOptions }); resetConversation(created.sessionId); await refreshSessions(); return created.sessionId
     } catch (reason) { setError(String(reason)); return null }
   }
   const send = async (): Promise<void> => {
@@ -440,9 +438,10 @@ export default function App(): ReactNode {
     return () => clearTimeout(timer)
   }, [highlight, events, view, activeId])
   const active = sessions.find((item) => item.id === activeId)
+  if(recoveryError)return <div className="recovery-screen"><Brand/><h1>Recover UnrealCode</h1><RecoveryPanel/></div>
   if (!settings) return <div className="boot-screen"><Brand/><span>Loading desktop…</span></div>
   if (!settings.decisionSetupSeen) return <DecisionWelcome onChoose={async (engine) => { try { await saveSettings({ decisionEngine: engine, decisionSetupSeen: true }) } catch (reason) { setError(String(reason)) } }}/>
-  if (!projectPath) return <><Welcome settings={settings} busy={busy} status={status} onOpen={(path) => void openProject(path)} onSettings={() => setShowSettingsBeforeProject(true)}/><AnimatePresence>{showSettingsBeforeProject && <motion.div className="setup-overlay" initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: .98 }} animate={{ opacity: 1, scale: 1 }} exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: .98 }} transition={spatial.slow}><button className="close-overlay" onClick={() => setShowSettingsBeforeProject(false)}><X size={20}/></button><SettingsPage settings={settings} onSave={saveSettings}/></motion.div>}</AnimatePresence>{error && <div className="global-error"><CircleAlert size={18}/>{error}<button onClick={() => setError('')}><X size={16}/></button></div>}</>
+  if (!projectPath) return <><div inert={showSettingsBeforeProject}><Welcome settings={settings} busy={busy} status={status} onOpen={(path) => void openProject(path)} onSettings={() => setShowSettingsBeforeProject(true)}/></div><AnimatePresence>{showSettingsBeforeProject && <SettingsOverlay onClose={() => setShowSettingsBeforeProject(false)}><SettingsPage settings={settings} onSave={saveSettings}/></SettingsOverlay>}</AnimatePresence>{error && <div className="global-error"><CircleAlert size={18}/>{error}<button onClick={() => setError('')}><X size={16}/></button></div>}</>
   return <div className={`app-shell ${settings.layout.focus ? 'focus-layout' : ''}`} style={{ '--session-width': `${settings.layout.sessionWidth}px`, '--activity-width': `${settings.layout.activityWidth}px` } as CSSProperties}>
     {palette && <CommandPalette onClose={() => setPalette(false)} commands={[
       ...navigation.map((item) => ({ id: item.id, label: `Go to ${item.label}`, run: () => setView(item.id) })),
@@ -459,7 +458,7 @@ export default function App(): ReactNode {
     <main className={`main-area ${view === 'chat' ? 'with-chat' : ''}`}><header className="app-topbar"><div className="topbar-project"><strong>{projectPath.split(/[\\/]/).at(-1)}</strong><ChevronDown size={15}/>{view === 'chat' && active && <span className="topbar-session">{active.title} · {sessionStates[active.id] || active.state || 'idle'}</span>}</div><div className="topbar-controls"><button className="icon-button" title="Commands (Ctrl+K)" onClick={() => setPalette(true)}><Search size={16}/></button><button className="secondary-button" onClick={() => changeLayout({ focus: !settings.layout.focus })}>{settings.layout.focus ? 'Exit focus' : 'Focus'}</button><button className="icon-button" title="Toggle session pane" onClick={() => changeLayout({ sessions: !settings.layout.sessions })}><MessageCircle size={16}/></button><button className="icon-button" title="Toggle activity rail" onClick={() => changeLayout({ activity: !settings.layout.activity })}><Activity size={16}/></button><label><small>Provider · next session</small><select value={settings.provider} onChange={(event) => void saveSettings({ provider: event.target.value as Provider, model: '' })}><option value="openai-codex">Codex subscription</option><option value="openai">OpenAI API</option><option value="anthropic">Claude API</option><option value="ollama">Ollama</option><option value="openai-compatible">Local compatible</option><option value="openrouter">OpenRouter</option><option value="fireworks">Fireworks</option></select></label><label><small>Model · next session</small><input value={settings.model} onChange={(event) => setSettings({ ...settings, model: event.target.value })} onBlur={() => void saveSettings({ model: settings.model })} placeholder="Model ID"/></label><span className={`topbar-dot ${status.ready ? 'on' : ''}`}/></div></header>
       {error && <div className="banner-error"><CircleAlert size={17}/><span>{error}</span>{/(401|unauthorized|credential|token|api key)/i.test(error) && <button onClick={() => setView('settings')}>Reconnect in Settings</button>}<button onClick={() => setError('')}><X size={15}/></button></div>}
       {highlight && view === 'chat' && <div className="search-location">Showing recorded context around event {highlight}. <button onClick={() => { if (activeId) void selectSession(activeId, undefined, false) }}>Open full history</button></div>}
-      <AnimatePresence mode="wait" initial={false}><motion.div key={view} className="view-frame" initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -10 }} transition={spatial.fast}>
+      {selectingWorkspace?<div className="editor-empty" role="status">Preparing the selected task workspace…</div>:<AnimatePresence mode="wait" initial={false}><motion.div key={view} className="view-frame" initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -10 }} transition={spatial.fast}>
         {view === 'chat' && <div className={`chat-layout ${settings.layout.activity && !settings.layout.focus ? '' : 'without-activity'}`}><AnimatePresence mode="wait" initial={false}><motion.div key={activeId || 'new'} className="chat-motion" initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }} transition={spatial.fast}><ChatPanel events={events} session={active} prompt={prompt} setPrompt={setPrompt} onSend={() => void send()} onStop={() => void stop()} sending={busy} settings={settings} onSave={saveSettings} teamDraft={teamDraft} onTeamDraft={setTeamDraft}/></motion.div></AnimatePresence><div className="activity-wrapper"><ResizeHandle label="Activity rail width" value={settings.layout.activityWidth} min={260} max={520} reverse onChange={(activityWidth) => changeLayout({ activityWidth })}/><ContextPanel changes={changes} events={events} projectPath={projectPath} status={status} decisionEngine={settings.decisionEngine} sessionId={activeId || undefined} onOpen={id=>void selectSession(id)}/></div></div>}
         {view === 'projects' && <div className="page-content projects-page"><div className="page-heading"><div><h1>Projects</h1><p>Switch between trusted local workspaces.</p></div><button className="primary-button" onClick={() => void openProject()}><Plus size={16}/> Open folder</button></div><div className="project-list">{settings.recentProjects.map((path) => <button key={path} className="project-row" onClick={() => void openProject(path)}><FolderOpen size={21}/><span><strong>{path.split(/[\\/]/).at(-1)}</strong><small>{path}</small></span><ArrowRight size={17}/></button>)}</div></div>}
         {view === 'sessions' && <div className="page-content sessions-page"><div className="page-heading"><div><h1>Sessions</h1><p>Resume your work or fork a completed turn.</p></div><button className="primary-button" onClick={() => void newSession()}><Plus size={16}/> New session</button></div><div className="session-table">{sessions.map((session) => <div className="session-table-row" key={session.id}><div><strong>{session.title}</strong><small>{new Date(session.lastUpdatedAt).toLocaleString()}</small></div><span className="session-id">{session.id.slice(0, 8)}{session.parentSessionId && <button title="Open original session" onClick={() => void selectSession(session.parentSessionId!, undefined, false)}>From {session.parentSessionId.slice(0, 8)}</button>}</span><button className="secondary-button" onClick={() => void selectSession(session.id)}>Open</button><button className="icon-button" title="Fork session" onClick={() => void fork(session.id)}><GitBranch size={17}/></button></div>)}{sessions.length === 0 && <p className="muted-copy pad">No saved sessions yet.</p>}</div></div>}
@@ -474,6 +473,6 @@ export default function App(): ReactNode {
         {view === 'github' && <GitHubPage onOpenProject={async (path) => openProject(path)}/>}
         {view === 'settings' && <SettingsPage settings={settings} onSave={saveSettings} projectPath={projectPath}/>}
         {view === 'terminal' && <TerminalView/>}
-      </motion.div></AnimatePresence>
+      </motion.div></AnimatePresence>}
     </main></div>
 }

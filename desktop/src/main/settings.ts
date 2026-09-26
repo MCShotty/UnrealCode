@@ -1,5 +1,6 @@
 import { app, safeStorage } from 'electron'
-import { existsSync, readFileSync, mkdirSync, writeFileSync, copyFileSync } from 'node:fs'
+import { existsSync, readFileSync, mkdirSync, writeFileSync, copyFileSync, renameSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { Provider, Settings } from '../shared/api'
@@ -25,31 +26,27 @@ export function migrateLegacySettings(): void {
   const previous = join(legacy, 'settings.json')
   if (!existsSync(previous)) return
   const current = readJSON<Partial<Settings>>(previous, {})
-  const oldPath = 'I:\\UnrealGUI'
-  const newPath = 'I:\\UnrealCode'
-  const remap = (value: string): string => value.toLocaleLowerCase() === oldPath.toLocaleLowerCase() ? newPath : value
-  current.recentProjects = (current.recentProjects || []).map(remap)
-  current.trustedProjects = (current.trustedProjects || []).map(remap)
-  const instructions: Record<string, string> = {}
-  for (const [key, value] of Object.entries(current.projectInstructions || {})) instructions[remap(key)] = value
-  current.projectInstructions = instructions
   writeJSON(settingsPath(), { ...defaults, ...current })
   const oldSecrets = join(legacy, 'secrets.json')
   if (existsSync(oldSecrets) && !existsSync(secretsPath())) copyFileSync(oldSecrets, secretsPath())
 }
 
 function readJSON<T>(path: string, fallback: T): T {
-  try { return JSON.parse(readFileSync(path, 'utf8')) as T } catch { return fallback }
+  if (!existsSync(path)) return fallback
+  try { return JSON.parse(readFileSync(path, 'utf8')) as T } catch { throw new Error('Saved app data is unreadable. Restore a recovery backup; the original file has been preserved.') }
 }
 function writeJSON(path: string, data: unknown): void {
   mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, JSON.stringify(data, null, 2), { mode: 0o600 })
+  const temporary=`${path}.${randomUUID()}.tmp`
+  writeFileSync(temporary, JSON.stringify(data, null, 2), { mode: 0o600 })
+  renameSync(temporary,path)
 }
 
 export function getSettings(): Settings {
   const stored = readJSON<Partial<Settings>>(settingsPath(), {})
   return { ...defaults, ...stored, layout: { ...defaults.layout, ...stored.layout } }
 }
+export function defaultSettings():Settings{return structuredClone(defaults)}
 
 export function updateSettings(patch: Partial<Settings>): Settings {
   const allowed: (keyof Settings)[] = ['provider', 'model', 'thinkingLevel', 'systemPrompt', 'projectInstructions', 'theme', 'disallowedTools', 'baseUrl', 'decisionEngine', 'decisionSetupSeen', 'decisionModel', 'glinerEnabled']

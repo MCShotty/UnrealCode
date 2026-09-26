@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs'
 import { dirname,resolve } from 'node:path'
 
 const pending = new Map<string,Promise<void>>()
+export async function drainMetadata():Promise<void>{while(pending.size)await Promise.all([...pending.values()])}
 // Windows readers and antivirus can briefly deny replacement. Keep the prior
 // metadata intact and retry only sharing-related failures; never delete it first.
 export async function replaceMetadata(source:string,target:string,rename=fs.rename):Promise<void> {

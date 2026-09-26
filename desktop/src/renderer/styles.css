@@ -17,7 +17,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   --bg: #f3f5fb; --panel: #ffffff; --panel-2: #edf0fa; --panel-3: #e0e7f9;
   --line: #cbd3e1; --line-soft: #e1e6f0; --text: #101a30; --sub: #45536b;
   --muted: #59677d; --accent: #0027cc; --accent-soft: #e1e8ff;
-  --green: #167f50; --purple: #6945a6; --danger: #d10d0d; --brand-gray: #79858d;
+  --green: #116b43; --purple: #6945a6; --danger: #d10d0d; --brand-gray: #79858d;
   color-scheme: light;
 }
 #root { height: 100vh; overflow: hidden; background: var(--bg); color: var(--text); }
@@ -404,3 +404,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .saved-workflows .settings-section { min-width: 0; }.saved-workflows .check-row { display: flex; gap: 8px; margin-top: 18px; }
 .saved-workflows .check-row input { width: auto; }.saved-workflows pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; }
 @media(max-width:1200px) { .saved-workflow-columns { grid-template-columns: 1fr; }.workflow-tabs { flex-wrap: wrap; } }
+.recovery-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px }
+.recovery-panel h3 { margin:24px 0 10px }.button-row { display:flex;gap:8px;flex-wrap:wrap;margin-top:12px }
+.storage-list { display:grid;gap:12px;margin:16px 0 }.storage-list label { display:flex;align-items:start;gap:12px }.storage-list span { display:grid;gap:5px;min-width:0 }.storage-list code,.storage-path { overflow-wrap:anywhere }.storage-list small { color:var(--text-secondary) }
+.recovery-preview,.support-preview { padding:18px;border:1px solid var(--line);border-radius:12px;margin-top:16px }.support-preview { max-height:320px;overflow:auto;white-space:pre-wrap }
+.recovery-panel button,.setup-steps button { color:var(--text);border:1px solid var(--line);background:var(--panel-2);border-radius:8px;padding:8px 12px;font-size:12px;font-weight:650;margin-right:6px }
+.recovery-panel button:hover:not(:disabled),.setup-steps button:hover:not(:disabled) { border-color:var(--accent) }
+.recovery-panel small,.setup-steps span { color:var(--muted) }.recovery-panel input[type=checkbox] { width:auto }.recovery-panel a,.setup-steps a { color:var(--accent) }
+.setup-steps { text-align:left;display:grid;gap:14px;max-width:660px;padding-left:24px;margin:25px auto }.setup-steps li { padding-left:6px }.setup-steps strong,.setup-steps span { display:block }.setup-steps span { color:var(--text-secondary);font-size:13px;line-height:1.5;margin:4px 0 }
+.recovery-screen { padding:32px;max-width:1100px;margin:auto;overflow:auto;height:100vh }

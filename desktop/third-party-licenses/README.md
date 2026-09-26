@@ -8,7 +8,12 @@ and Chromium's component notices are at the application root as
 - `NPM_NOTICES.txt` contains the license text for every production dependency
   listed in `desktop/package-lock.json`. The build regenerates it from the
   installed packages and stops if a license is missing or outside the reviewed
-  MIT, ISC, and 0BSD set. `node-pty` includes a separate winpty MIT license in
+  MIT, ISC, 0BSD, BSD-2-Clause and BSD-3-Clause set, plus the specifically reviewed
+  DOMPurify Apache-2.0 alternative, argparse 2.0.1 Python-2.0 license and sax 1.6.1
+  BlueOak-1.0.0 license. Their complete notices are included.
+  `lazy-val` 1.0.5 declares MIT in its upstream package metadata but omits a license
+  file; `lazy-val-NOTICE.txt` preserves its declared author and standard MIT terms,
+  explicitly identifying that provenance. `node-pty` includes a separate winpty MIT license in
   its bundled `deps/winpty/LICENSE`.
 - `go/` contains the license texts for the Go toolchain and the five modules
   in `go.mod`, copied from the exact versions used to build the backend.

@@ -23,6 +23,8 @@ type Runner={
   stop(session:string):Promise<void>;
 }
 export class AgentTeams {
+  async flush():Promise<void>{await this.tail}
+  modelView(session:string):unknown{const view=this.view(session);if(!view)return null;return {parentSessionId:view.parentSessionId,paused:view.paused,message:view.message?.slice(0,500),modelRequests:view.modelRequests,elapsedMs:view.elapsedMs,totalUsage:view.totalUsage,workers:view.workers.map(worker=>({id:worker.id,role:worker.role,state:worker.state,assignment:worker.assignment.slice(0,300),findings:worker.findings?.slice(0,1800),findingsTruncated:(worker.findings?.length||0)>1800,message:worker.message?.slice(0,300)}))}}
   private tasks=new Map<string,TeamTask>()
   private tail:Promise<unknown>=Promise.resolve()
   private launches=new Map<string,AbortController>()

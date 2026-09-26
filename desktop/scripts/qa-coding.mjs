@@ -1,6 +1,6 @@
 import { _electron as electron } from 'playwright'
 import { createServer } from 'node:http'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
@@ -57,6 +57,13 @@ try {
  await page.getByRole('button', { name: 'Integrate selected files', exact: true }).click()
  await page.getByText(/Integrated selected files/).waitFor()
  assert.equal(readFileSync(join(project, 'sample.txt'), 'utf8'), 'agent edit\n'); report.integration = true
+ assert(await page.evaluate(id=>window.unreal.workspaceArchive(id),task.id))
+ assert(!existsSync(task.path));await page.evaluate(path=>window.unreal.openProject(path,true),project)
+ assert(await page.evaluate(id=>window.unreal.workspaceRestore(id),task.id))
+ assert.equal(readFileSync(join(task.path,'sample.txt'),'utf8'),'agent edit\n')
+ await page.evaluate(path=>window.unreal.openProject(path,true),project);await page.reload()
+ await page.locator('.session-row').filter({hasText:'EDIT_NATIVE fixture'}).click()
+ await page.getByLabel('Message UnrealCode').waitFor();report.archiveRestore=true
  await page.getByRole('button', { name: 'Files', exact: true }).click()
  await page.locator('.file-row').filter({ hasText: 'sample.txt' }).click()
  await page.locator('.monaco-editor').first().waitFor({ timeout: 30000 })
@@ -82,6 +89,8 @@ try {
  await page.getByRole('button', { name: 'Files', exact: true }).click()
  await page.getByRole('tab', { name: /sample.txt/ }).waitFor()
  assert((await page.locator('.editor-tabs').innerText()).includes('●'))
+ report.returnedEditor=await page.evaluate(async()=>({active:await window.unreal.activeWorkspace(),read:(await window.unreal.editorRead('sample.txt')).workspace,rendered:document.querySelector('.files-page')?.getAttribute('data-workspace'),tabs:document.querySelector('.editor-tabs')?.textContent}))
+ assert.equal(report.returnedEditor.active.path,report.returnedEditor.read);assert.equal(report.returnedEditor.rendered,report.returnedEditor.read)
  writeFileSync(join(task.path, 'sample.txt'), 'external later edit\n')
  await page.getByRole('button', { name: 'Save', exact: true }).click()
  await page.getByRole('alert').filter({ hasText: 'changed on disk' }).waitFor()
@@ -111,6 +120,6 @@ try {
  console.log(JSON.stringify(report))
 } catch (error) {
   report.failure = String(error)
-  try { const page = await app.firstWindow(); report.visibleErrors = await page.locator('.error-inline,.banner-error').allTextContents(); await page.screenshot({ path: join(root, 'failure.png') }) } catch {}
+  try { const page = await app.firstWindow(); report.visibleErrors = await page.locator('.error-inline,.banner-error').allTextContents();report.failedEditor=await page.evaluate(async()=>({active:await window.unreal.activeWorkspace(),read:(await window.unreal.editorRead('sample.txt')).workspace,rendered:document.querySelector('.files-page')?.getAttribute('data-workspace'),tabs:document.querySelector('.editor-tabs')?.textContent})); await page.screenshot({ path: join(root, 'failure.png') }) } catch {}
   writeFileSync(join(root, 'report.json'), JSON.stringify(report, null, 2)); console.log(JSON.stringify(report)); throw error
 } finally { await app.close().catch(() => {}); server.close() }

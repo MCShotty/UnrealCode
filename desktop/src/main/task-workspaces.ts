@@ -8,7 +8,7 @@ import { editorPath } from './editor-files'
 import type { TaskWorkspace, WorkspacePreview } from '../shared/task-workspaces'
 
 const exec = promisify(execFile)
-type StoredWorkspace = TaskWorkspace & { baseline: Snapshot }
+type StoredWorkspace = TaskWorkspace & { baseline: Snapshot; archive?: { snapshot:Snapshot; revision:string } }
 export class TaskWorkspaces {
   private source: CheckpointStore
   private serial = Promise.resolve()
@@ -18,13 +18,13 @@ export class TaskWorkspaces {
   private metadata(id: string): string { if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error('Invalid task workspace'); return join(this.directory, `${id}.json`) }
   private async read(id: string): Promise<StoredWorkspace> { const value: StoredWorkspace = JSON.parse(await fs.readFile(this.metadata(id), 'utf8')); if (value.id !== id || value.path !== join(this.directory, 'worktrees', id)) throw new Error('Invalid owned workspace metadata'); Object.setPrototypeOf(value.baseline.files, null); Object.setPrototypeOf(value.baseline.skipped, null); return value }
   private async save(value: StoredWorkspace): Promise<void> { await fs.mkdir(this.directory, { recursive: true }); const path = this.metadata(value.id), temporary = `${path}.${randomUUID()}.tmp`; await fs.writeFile(temporary, JSON.stringify(value), { mode: 0o600 }); await fs.rename(temporary, path) }
-  private view({ baseline: _, ...value }: StoredWorkspace): TaskWorkspace { return value }
+  private view({ baseline: _, archive: _archive, ...value }: StoredWorkspace): TaskWorkspace { return value }
   async available(): Promise<boolean> { try { await this.git(['rev-parse', '--verify', 'HEAD']); const root = await fs.realpath(await this.git(['rev-parse', '--show-toplevel'])); return root.toLowerCase() === (await fs.realpath(this.project)).toLowerCase() } catch { return false } }
   async list(): Promise<TaskWorkspace[]> {
     let names: string[]; try { names = await fs.readdir(this.directory) } catch { return [] }
     return Promise.all(names.filter(name => /^[a-f0-9-]{36}\.json$/.test(name)).map(async name => this.view(await this.read(name.slice(0,-5)))))
   }
-  async recover(): Promise<void> { for (const item of await this.list()) if (item.state === 'running') await this.update(item.id, { state: 'interrupted' }) }
+  async recover(): Promise<void> { for (const item of await this.list()) {if(item.state==='running')await this.update(item.id,{state:'interrupted'});else if(item.state==='integrated'){const value=await this.read(item.id);if(value.archive&&!await fs.stat(value.path).then(()=>true,error=>{if(error.code==='ENOENT')return false;throw error}))await this.update(item.id,{state:'archived'})}} }
   private mutate<T>(work: () => Promise<T>): Promise<T> { const run = this.metadataTail.then(work); this.metadataTail = run.then(() => {}, () => {}); return run }
   update(id: string, patch: Partial<Pick<TaskWorkspace, 'sessionId' | 'state' | 'title' | 'usage' | 'usageRecords'>>): Promise<TaskWorkspace> { return this.mutate(async () => { const value = await this.read(id); Object.assign(value, patch); await this.save(value); return this.view(value) }) }
   link(id: string, sessionId: string): Promise<void> { return this.mutate(async () => { const value = await this.read(id); value.linkedSessions = [...new Set([...(value.linkedSessions || []), sessionId])]; await this.save(value) }) }
@@ -65,6 +65,30 @@ export class TaskWorkspaces {
       changes.push({ path, change: !before ? 'added' : !next ? 'deleted' : 'modified', binary, conflict: !!omitted[path] || current.files[path]?.hash !== before?.hash || current.files[path]?.mode !== before?.mode, reason: omitted[path], before: binary ? undefined : a?.toString('utf8'), after: binary ? undefined : b?.toString('utf8') })
     }
     return { workspace: this.view(value), changes, omitted }
+  }
+  async archivePreview(id:string):Promise<{path:string;files:number;bytes:number}>{
+    const value=await this.read(id);if(value.state!=='integrated')throw new Error('Only fully integrated tasks can be archived. Retained or unfinished work stays available.')
+    const preview=await this.preview(id);if(preview.changes.length||Object.keys(preview.omitted).length)throw new Error('Task has later or uncaptured edits. Review it before archiving.')
+    const ignored=await this.git(['ls-files','--others','--ignored','--exclude-standard','-z'],value.path);if(ignored)throw new Error('This workspace contains ignored files. Preserve or remove them explicitly before archiving; UnrealCode will not discard them.')
+    const store=new CheckpointStore(value.path,join(this.directory,'snapshot-data')),snapshot=await store.captureSnapshot();if(Object.keys(snapshot.skipped).length)throw new Error('Some task files cannot be captured; archive is blocked')
+    return {path:value.path,files:Object.keys(snapshot.files).length,bytes:Object.values(snapshot.files).reduce((total,item)=>total+item.size,0)}
+  }
+  archive(id:string):Promise<void>{const run=this.serial.then(async()=>{
+    await this.archivePreview(id);const value=await this.read(id),store=new CheckpointStore(value.path,join(this.directory,'snapshot-data'))
+    const snapshot=await this.source.importSnapshot(store,await store.captureSnapshot()),revision=await this.git(['rev-parse','HEAD'],value.path)
+    // The recovery snapshot is persisted before removing the checkout. Session
+    // volumes and the task branch remain. No unfinished task is eligible.
+    value.archive={snapshot,revision};await this.save(value)
+    await this.archivePreview(id)
+    const current=await store.captureSnapshot();if(Object.keys(current.skipped).length||Object.keys(current.files).length!==Object.keys(snapshot.files).length||Object.entries(snapshot.files).some(([name,entry])=>current.files[name]?.hash!==entry.hash||current.files[name]?.mode!==entry.mode))throw new Error('Workspace changed during archive preparation')
+    await this.git(['worktree','remove','--force',value.path]);value.state='archived';await this.save(value)
+  });this.serial=run.catch(()=>{});return run}
+  async restoreArchived(id:string):Promise<TaskWorkspace>{
+    const value=await this.read(id);if(value.state!=='archived')return this.view(value);if(!value.archive)throw new Error('Archived task is missing its recovery snapshot')
+    if((await this.git(['rev-parse',value.branch]))!==value.archive.revision)throw new Error('The retained task branch changed. Recover the snapshot before reopening this workspace.')
+    await fs.mkdir(dirname(value.path),{recursive:true});await this.git(['worktree','add',value.path,value.branch])
+    try{const tracked=(await this.git(['ls-files','-z'],value.path)).split('\0').filter(Boolean);for(const name of tracked)if(!value.archive.snapshot.files[name])await fs.unlink(await editorPath(value.path,name));for(const [name,entry]of Object.entries(value.archive.snapshot.files)){const target=await editorPath(value.path,name);await fs.mkdir(dirname(target),{recursive:true});await fs.writeFile(target,(await this.source.snapshotBytes(value.archive.snapshot,name))!,{mode:entry.mode})}value.state='integrated';await this.save(value);return this.view(value)}
+    catch(error){value.state='interrupted';await this.save(value);throw error}
   }
   integrate(id: string, paths: string[]): Promise<string> {
     const run = this.serial.then(() => this.apply(id, paths)); this.serial = run.then(() => {}, () => {}); return run

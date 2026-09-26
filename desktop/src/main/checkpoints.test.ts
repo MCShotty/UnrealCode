@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtemp, mkdir, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, unlink, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CheckpointStore } from './checkpoints'
@@ -14,6 +15,7 @@ beforeEach(async () => {
 afterEach(async () => { await rm(root, { recursive: true, force: true }) })
 
 describe('checkpoint recovery', () => {
+  it('retains incomplete captures beyond the completed-checkpoint count limit',async()=>{const interrupted=await store.begin('session','interrupted','Interrupted work');await store.finish(interrupted,'Stopped before completion');const folder=join(data,'checkpoints',(await readdir(join(data,'checkpoints')))[0]);const fixture=JSON.parse(await readFile(join(folder,`${interrupted}.json`),'utf8'));fixture.createdAt='2000-01-01T00:00:00.000Z';await writeFile(join(folder,`${interrupted}.json`),JSON.stringify(fixture));for(let index=0;index<31;index++){const id=randomUUID();await writeFile(join(folder,`${id}.json`),JSON.stringify({...fixture,id,state:'complete',createdAt:new Date(Date.now()+index).toISOString()}))}const latest=await store.begin('session','latest','Complete');await store.finish(latest);expect((await store.list()).find(item=>item.id===interrupted)?.state).toBe('incomplete')})
   it('restores selected modified, created, deleted and binary files and retains recovery', async () => {
     await writeFile(join(project, 'edit.txt'), 'before\n')
     await writeFile(join(project, 'delete.txt'), 'retained')

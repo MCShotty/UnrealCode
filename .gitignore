@@ -19,6 +19,7 @@ __pycache__/
 .DS_Store
 /desktop/node_modules/
 /desktop/out/
+/desktop/generated/
 /desktop/dist/
 /desktop/design/desktop-*-current.png
 /desktop/design/desktop-current.png

@@ -16,7 +16,7 @@ export function EditorWorkspace({ project, onAttach }: { project: string; onAtta
   const open = async (path: string) => {
     setError('')
     if (state.tabs.some(item => item.path === path)) { changeEditor(project, value => ({ ...value, active: path })); return }
-    try { const [file, base] = await Promise.all([api.editorRead(path), api.editorBase(path)]); changeEditor(project, value => ({ tabs: value.tabs.some(item => item.path === path) ? value.tabs : [...value.tabs, { ...file, saved: file.content, base }], active: path })) }
+    try { const [file, base] = await Promise.all([api.editorRead(path), api.editorBase(path)]); changeEditor(file.workspace, value => ({ tabs: value.tabs.some(item => item.path === path) ? value.tabs : [...value.tabs, { ...file, saved: file.content, base }], active: path })) }
     catch (reason) { setError(String(reason)) }
   }
   const save = async () => {
@@ -30,7 +30,7 @@ export function EditorWorkspace({ project, onAttach }: { project: string; onAtta
     try { const file = await api.editorRead(tab.path); changeEditor(project, value => ({ ...value, tabs: value.tabs.map(item => item.path === tab.path ? { ...item, ...file, saved: file.content } : item) })); setError('') }
     catch (reason) { setError(String(reason)) }
   }
-  return <div className="page-content files-page"><div className="page-heading"><div><h1>Files</h1><p>Edit project files, inspect changes, and attach a selection to chat.</p></div><div className="segmented"><button className={!changed ? 'selected' : ''} onClick={() => setChanged(false)}>Explorer</button><button className={changed ? 'selected' : ''} onClick={() => setChanged(true)}>Changes {changes.length}</button></div></div>
+  return <div className="page-content files-page" data-workspace={project}><div className="page-heading"><div><h1>Files</h1><p>Edit project files, inspect changes, and attach a selection to chat.</p></div><div className="segmented"><button className={!changed ? 'selected' : ''} onClick={() => setChanged(false)}>Explorer</button><button className={changed ? 'selected' : ''} onClick={() => setChanged(true)}>Changes {changes.length}</button></div></div>
     <div className="file-layout"><div className="file-list"><div className="file-breadcrumb"><button onClick={() => setFolder('')}>Project</button><span>{folder}</span></div>{folder && <button className="file-row" onClick={() => setFolder(folder.split('/').slice(0,-1).join('/'))}>..</button>}
       {changed ? changes.map(line => <button className="file-row" key={line} onClick={() => { setDiff(true); void open(line.slice(3)) }}>{line.slice(0,2)} {line.slice(3)}</button>) : entries.map(entry => <button className="file-row" key={entry.path} onClick={() => entry.directory ? setFolder(entry.path) : void open(entry.path)}>{entry.directory ? '▸ ' : ''}{entry.name}</button>)}
       <form className="editor-new-file" onSubmit={event => { event.preventDefault(); if (newPath) { void open(newPath); setNewPath('') } }}><input aria-label="New file path" placeholder="New file path" value={newPath} onChange={event => setNewPath(event.target.value)}/><button className="secondary-button" type="submit">Open / create</button></form>

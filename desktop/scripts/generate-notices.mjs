@@ -17,17 +17,22 @@ const sections = [
 
 for (const [location, metadata] of packages) {
   const apacheElection = location === 'node_modules/dompurify' && metadata.license === '(MPL-2.0 OR Apache-2.0)'
-  if (!allowedLicenses.has(metadata.license) && !apacheElection) {
+  const argparsePython = location === 'node_modules/argparse' && metadata.version === '2.0.1' && metadata.license === 'Python-2.0'
+  const saxBlueOak=location==='node_modules/sax' && metadata.version==='1.6.1' && metadata.license==='BlueOak-1.0.0'
+  if (!allowedLicenses.has(metadata.license) && !apacheElection && !argparsePython && !saxBlueOak) {
     throw new Error(`Review the license for ${location}: ${metadata.license || 'missing'}`)
   }
   const directory = path.join(desktop, location)
   const licenseFiles = readdirSync(directory)
     .filter((name) => /^(license|licence|copying|notice)([.-]|$)|^thirdparty.?notices/i.test(name))
     .sort()
-  if (licenseFiles.length === 0) throw new Error(`Missing license text for ${location}`)
+  const lazyValNotice=location==='node_modules/lazy-val' && metadata.version==='1.0.5' && metadata.license==='MIT'
+  if (licenseFiles.length === 0 && !lazyValNotice) throw new Error(`Missing license text for ${location}`)
 
   sections.push('', `===== ${location.slice('node_modules/'.length)} ${metadata.version} (${metadata.license}) =====`)
   if (apacheElection) sections.push('UnrealCode distributes this dependency under the Apache-2.0 alternative. The bundled LICENSE contains that license text.')
+  if (argparsePython) sections.push('The argparse JavaScript port is redistributed without UnrealCode modifications. Its complete Python-derived license and copyright notices follow.')
+  if (lazyValNotice) sections.push(readFileSync(path.join(desktop,'third-party-licenses/lazy-val-NOTICE.txt'),'utf8').trimEnd())
   for (const filename of licenseFiles) {
     sections.push(`----- ${filename} -----`, readFileSync(path.join(directory, filename), 'utf8').trimEnd())
   }

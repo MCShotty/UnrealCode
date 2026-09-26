@@ -25,6 +25,7 @@ export function validateEvaluation(request: EvaluationRequest): void {
 }
 type DecisionConfig = { engine: string; model: string; apiKey: string; glinerEnabled: boolean }
 export class Evaluations {
+  get busy():boolean{return this.starting||this.active.size>0}
   private starting = false
   private active = new Map<string, { cancel: AbortController; bridge?: DockerBridge }>()
   constructor(private directory: string) {}

@@ -32,6 +32,7 @@ export class WorkspaceRuntime {
   private starting: Promise<void> | null = null
   readonly tasks: TaskWorkspaces
   active: WorkspaceRuntime = this
+  private selectionVersion=0
   private children = new Map<string, WorkspaceRuntime>()
   readonly bridge = new DockerBridge()
   readonly usage = new SessionUsageService(this.bridge)
@@ -145,9 +146,10 @@ export class WorkspaceRuntime {
     if(worker)return this.specialistOwner(worker)
     if (this.isolated) return this
     const task = (await this.tasks.list()).find(item => item.sessionId === sessionId || item.linkedSessions?.includes(sessionId))
+    if(task?.state==='archived')throw new Error('This task workspace is archived. Restore it in Review → Isolated tasks to view or resume the session.')
     return task ? this.child(task) : this
   }
-  async select(sessionId: string): Promise<WorkspaceRuntime> { this.active = await this.owner(sessionId); return this.active }
+  async select(sessionId: string): Promise<WorkspaceRuntime> { const version=++this.selectionVersion,owner=await this.owner(sessionId);if(version===this.selectionVersion)this.active=owner;return owner }
   async sessions(): Promise<SessionInfo[]> {
     const [sessions, tasks] = await Promise.all([this.bridge.request<SessionInfo[]>('session.list', {}), this.tasks.list()])
     return [...sessions, ...tasks.filter(item => item.sessionId).flatMap(item => [item.sessionId!, ...(item.linkedSessions || [])].map(id => ({ id, title: `${id === item.sessionId ? 'Isolated' : 'Continuation'} · ${item.title}`, lastUpdatedAt: item.createdAt, active: item.state === 'running', state: item.state === 'running' ? 'running' : 'stopped' }))), ...this.teams.list().flatMap(task=>task.workers.filter(worker=>worker.sessionId).map(worker=>({id:worker.sessionId!,title:`${worker.role} · ${worker.assignment.slice(0,90)}`,lastUpdatedAt:worker.createdAt,active:['running','waiting_input'].includes(worker.state),state:worker.state,parentSessionId:task.parentSessionId})))]
@@ -167,6 +169,7 @@ export class WorkspaceRuntime {
     return all
   }
   async stopAll(): Promise<void> { this.workflows.stopAll();clearInterval(this.teamTimer);this.teamTimer=undefined;this.repository.close();await Promise.all([this.bridge.stop(), ...[...this.children.values(),...this.specialistOwners.values()].map(child => child.stopAll())]) }
+  async maintenanceReady():Promise<void>{if(this.hooks.hasTerminal())throw new Error('Close project terminals before maintenance');if(this.pending||this.checkpoints.busy||this.workflows.busy||this.teams.list().some(task=>task.parentState==='running'||task.workers.some(worker=>['starting','running','waiting_input'].includes(worker.state))))throw new Error('Finish or stop active tasks and specialists before maintenance');this.queue.pause();if(this.bridge.status().ready&&!await this.bridge.request<boolean>('project.idle',{}))throw new Error('Finish or stop active operations before maintenance');await Promise.all([...this.children.values(),...this.specialistOwners.values()].map(child=>child.maintenanceReady()));await this.teams.flush();await this.index.flush()}
   async configureAll(): Promise<void> { await this.hooks.configure(this.bridge); await Promise.all([...this.children.values(),...this.specialistOwners.values()].filter(child => child.bridge.status().ready).map(child => child.configureAll())) }
   async visitBridges(work: (bridge: DockerBridge) => Promise<void>): Promise<void> { if (this.bridge.status().ready) await work(this.bridge); await Promise.all([...this.children.values(),...this.specialistOwners.values()].map(child => child.visitBridges(work))) }
   private async workerStore(parentSessionId:string):Promise<TaskWorkspaces>{

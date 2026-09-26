@@ -4,12 +4,16 @@ import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
 import { secretPatterns } from './secret-patterns.mjs'
+import { localCredentials } from './local-credentials.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const paths = new Set(execFileSync('git', ['ls-files', '-co', '--exclude-standard', '-z'], { cwd: root }).toString().split('\0').filter(Boolean).map((path) => join(root, path)))
 const resources = join(root, 'desktop/dist/win-unpacked/resources')
 if (!existsSync(join(resources, 'app.asar'))) throw new Error('Build the Windows package before auditing')
+const entries=createRequire(import.meta.url)('@electron/asar').listPackage(join(resources,'app.asar')).map(path=>path.replaceAll('\\','/'))
+for(const name of ['@axe-core','axe-core','playwright','playwright-core','electron-builder','vitest'])if(entries.some(path=>path.includes(`/node_modules/${name}/`)))throw new Error(`Development-only dependency was packaged: ${name}`)
 for (const path of ['backend/LICENSE', 'licenses/NPM_NOTICES.txt', 'licenses/openai-openapi-LICENSE.txt', 'licenses/microsoft-terminal-LICENSE.txt', '../LICENSE.electron.txt', '../LICENSES.chromium.html']) {
   if (!existsSync(join(resources, path))) throw new Error(`Missing packaged license notice: ${path}`)
 }
@@ -19,7 +23,9 @@ let reviewedPackages = 0
 for (const [location, metadata] of Object.entries(lock.packages)) {
   if (!location.startsWith('node_modules/') || metadata.dev) continue
   const apacheElection = location === 'node_modules/dompurify' && metadata.license === '(MPL-2.0 OR Apache-2.0)'
-  if (!['MIT', 'ISC', '0BSD', 'BSD-2-Clause', 'BSD-3-Clause'].includes(metadata.license) && !apacheElection) throw new Error(`Unreviewed license: ${location}`)
+  const argparsePython = location === 'node_modules/argparse' && metadata.version === '2.0.1' && metadata.license === 'Python-2.0'
+  const saxBlueOak=location==='node_modules/sax' && metadata.version==='1.6.1' && metadata.license==='BlueOak-1.0.0'
+  if (!['MIT', 'ISC', '0BSD', 'BSD-2-Clause', 'BSD-3-Clause'].includes(metadata.license) && !apacheElection && !argparsePython && !saxBlueOak) throw new Error(`Unreviewed license: ${location}`)
   if (!notices.includes(`===== ${location.slice('node_modules/'.length)} ${metadata.version} (${metadata.license}) =====`)) throw new Error(`Missing npm notice: ${location}`)
   reviewedPackages++
 }
@@ -30,28 +36,7 @@ const visit = (path) => {
 }
 // Scan the entire unpacked installer payload, including native dependencies.
 visit(join(resources, '..'))
-const known = []
-const collect = (value, field = '') => {
-  if (value && typeof value === 'object') for (const [name, item] of Object.entries(value)) collect(item, name)
-  else if (typeof value === 'string' && value.length > 30 && /token|secret/i.test(field)) known.push(Buffer.from(value))
-}
-for (const path of new Set([join(homedir(), '.codex/auth.json'), ...(process.env.CODEX_HOME ? [join(process.env.CODEX_HOME, 'auth.json')] : [])])) {
-  if (existsSync(path)) collect(JSON.parse(readFileSync(path, 'utf8')))
-}
-for (const [name, value] of Object.entries(process.env)) if (value && value.length > 30 && /(_API_KEY|_TOKEN)$/.test(name)) known.push(Buffer.from(value))
-// A long-running desktop host may not inherit newly configured user variables.
-// Capture only named credential sources in private pipes; never print values.
-if (process.platform === 'win32') {
-  try {
-    const script = "$values=@{}; foreach($name in @('TYPESAFE_API_KEY','OPENAI_API_KEY','ANTHROPIC_API_KEY','OPENROUTER_API_KEY','FIREWORKS_API_KEY','GH_TOKEN','GITHUB_TOKEN')) { $value=[Environment]::GetEnvironmentVariable($name,'User'); if($value){$values[$name]=$value} }; $values | ConvertTo-Json -Compress"
-    const values = JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-Command', script], { windowsHide:true, stdio:['ignore','pipe','ignore'], timeout:10000 }).toString())
-    for(const value of Object.values(values))if(typeof value==='string'&&value.length>16)known.push(Buffer.from(value))
-  } catch { throw new Error('Could not securely inspect named user-environment credentials') }
-}
-try {
-  const token=execFileSync('gh',['auth','token'],{windowsHide:true,stdio:['ignore','pipe','ignore'],timeout:10000}).toString().trim()
-  if(token.length>16)known.push(Buffer.from(token))
-} catch { /* No accessible GitHub CLI token; pattern scanning still applies. */ }
+const known=localCredentials()
 const hits = []
 let scanned = 0
 for (const path of paths) {

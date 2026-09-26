@@ -12,7 +12,7 @@ child.stdout.on('data', chunk => {
     const value = JSON.parse(line)
     if (value.id !== 'compatibility') continue
     assert.equal(value.ok, true); assert.equal(value.result.version, 1)
-    for (const name of ['permissions.v1', 'files.v1', 'sessions.v1', 'mcp.v1', 'context.v1', 'teams.v1', 'verification.v1']) assert(value.result.capabilities.includes(name))
+    for (const name of ['permissions.v1', 'files.v1', 'sessions.v1', 'mcp.v1', 'context.v1', 'teams.v1', 'verification.v1', 'history.latest.v1']) assert(value.result.capabilities.includes(name))
     verified = true; clearTimeout(timer); console.log('Bridge protocol and required capabilities verified'); child.stdin.end()
   }
 })
