@@ -3,6 +3,20 @@ import type { DesktopAPI } from '../shared/api'
 
 const invoke = (name: string, ...args: unknown[]): Promise<any> => ipcRenderer.invoke(name, ...args)
 const api: DesktopAPI = {
+  queueSnapshot: () => invoke('queue:get'),
+  queueAdd: (prompt) => invoke('queue:add', prompt),
+  queueEdit: (id, prompt) => invoke('queue:edit', id, prompt),
+  queueReorder: (ids) => invoke('queue:reorder', ids),
+  queuePause: (paused) => invoke('queue:pause', paused),
+  queueAction: (id, action) => invoke('queue:action', id, action),
+  contextView: (sessionId) => invoke('context:view', sessionId),
+  updateContext: (sessionId, patch) => invoke('context:update', sessionId, patch),
+  handoffPreview: (sessionId) => invoke('handoff:preview', sessionId),
+  handoffStart: (sessionId, summary, destination) => invoke('handoff:start', sessionId, summary, destination),
+  searchHistory: (query, sessionId, allProjects) => invoke('history:search', query, sessionId, allProjects),
+  getEventWindow: (sessionId, sequence) => invoke('session:event-window', sessionId, sequence),
+  onNavigate: (callback) => { const listener = (_event: Electron.IpcRendererEvent, value: Parameters<typeof callback>[0]): void => callback(value); ipcRenderer.on('app:navigate', listener); return () => ipcRenderer.removeListener('app:navigate', listener) },
+  onWorkflowChanged: (callback) => { const listener = (_event: Electron.IpcRendererEvent, project: string): void => callback(project); ipcRenderer.on('workflow:changed', listener); return () => ipcRenderer.removeListener('workflow:changed', listener) },
   checkpoints: () => invoke('checkpoints:list'),
   checkpointPreview: (id, path) => invoke('checkpoints:preview', id, path),
   checkpointRestore: (id, paths) => invoke('checkpoints:restore', id, paths),

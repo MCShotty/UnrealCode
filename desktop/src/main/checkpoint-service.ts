@@ -18,7 +18,7 @@ export class CheckpointService {
   send(sessionId: string, messageId: string, prompt: string, submit: () => Promise<unknown>, externalWork = false): Promise<void> {
     return this.exclusive(async () => {
       let active = this.active.get(sessionId)
-      if (!active && (await this.store.list()).some((item) => item.messageIds.includes(messageId))) { await submit(); return }
+      if (!active && (await this.store.list()).some((item) => item.sessionId === sessionId && item.messageIds.includes(messageId))) { await submit(); return }
       if (!active) {
         const overlap = this.active.size > 0 || externalWork
         for (const other of this.active.values()) other.overlap = true

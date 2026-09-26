@@ -301,3 +301,23 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .review-page .deleted { color: var(--danger); background: color-mix(in srgb, var(--danger) 9%, transparent); }
 .diff-number { display: inline-block; width: 42px; padding-right: 10px; color: var(--muted); text-align: right; border: 0; background: none; font: inherit; user-select: none; }
 .review-evidence pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.nav-rail nav { overflow-y: auto; min-height: 0; }
+.workflow-tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--line); padding-bottom: 12px; margin-bottom: 22px; }
+.workflow-tabs button, .workflow-page button:not(.primary-button), .workflow-page input:not([type=checkbox]), .workflow-page select { border: 1px solid var(--line); color: var(--text); background: var(--panel-2); border-radius: 7px; padding: 8px 12px; }
+.workflow-tabs button.selected { border-color: var(--accent); background: var(--accent-soft); }
+.workflow-page textarea { display: block; width: 100%; min-height: 110px; margin: 8px 0 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); resize: vertical; }
+.workflow-page label { display: block; color: var(--sub); margin-bottom: 12px; }
+.workflow-page label > input:not([type=checkbox]), .workflow-page label > select { display: block; width: 100%; margin-top: 8px; }
+.workflow-columns { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 15px; margin-top: 20px; }
+.workflow-page pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 400px; overflow: auto; padding: 12px; background: var(--panel); }
+.workflow-page .handoff-summary { min-height: 340px; font-family: Consolas, monospace; font-size: 13px; }
+.queue-list { display: grid; gap: 12px; margin-top: 20px; }
+.queue-card { border: 1px solid var(--line); border-radius: 10px; padding: 16px; background: var(--panel); }
+.queue-card p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.workflow-page table { width: 100%; border-collapse: collapse; }.workflow-page th,.workflow-page td { text-align: left; padding: 10px; border-bottom: 1px solid var(--line); }
+.search-hit { display: block; width: 100%; text-align: left; margin-bottom: 10px; }
+.search-hit small { display: block; color: var(--muted); margin-top: 7px; }
+.search-hit p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.input-question { margin: 15px 0; padding: 15px; background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 10px; }
+.input-question button { margin-right: 8px; }
+.search-location { padding: 8px 16px; background: var(--accent-soft); font-size: 12px; }

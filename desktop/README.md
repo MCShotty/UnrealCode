@@ -28,7 +28,7 @@ node scripts/qa.mjs --workspace --flows --motion
 node scripts/qa.mjs --workspace --flows --packaged
 ```
 
-The installer is `dist/UnrealCode Setup 0.4.0.exe`. It bundles backend source and builds a Docker image tagged with the app version and source fingerprint, so a rebuilt installer does not reuse an older backend image. No host Go installation is required. For a live Codex tool call, use `node scripts/qa.mjs --workspace --temp-workspace --live --tool`. A synthetic Jev integration check is `node scripts/qa.mjs --workspace --temp-workspace --decision` when `TYPESAFE_API_KEY` is available.
+The installer is `dist/UnrealCode Setup 0.5.0.exe`. It bundles backend source and builds a Docker image tagged with the app version and source fingerprint, so a rebuilt installer does not reuse an older backend image. No host Go installation is required. For a live Codex tool call, use `node scripts/qa.mjs --workspace --temp-workspace --live --tool`. A synthetic Jev integration check is `node scripts/qa.mjs --workspace --temp-workspace --decision` when `TYPESAFE_API_KEY` is available.
 
 The installer includes third-party license texts in `resources/licenses`, plus Electron and Chromium notices at the application root. `npm run build:win` regenerates the npm notices and stops if a new dependency's license needs review.
 
@@ -68,3 +68,28 @@ review the selected files before restoring.
 
 The local file comparison detects changes since capture; it does not lock files
 against unrelated external editors. Existing session history remains unchanged.
+
+## Task continuity (0.5)
+
+Workflow contains a persistent queue per project. Resume starts pending tasks;
+successful completion advances the queue. Failure, cancellation, or RequestInput
+pauses it. Restart always pauses execution and marks unfinished tasks interrupted.
+Independent projects keep their own containers and can run concurrently. Tools
+within an active session retain Unreal Agent's parallel execution.
+
+Context lets you pin project files, attach session files, edit a reviewed summary,
+and exclude paths from automatic context and ProjectSearch. Exclusions are context
+preferences, not filesystem access restrictions. Selected text has explicit size
+limits; unavailable files require review before sending. Token estimates for this
+selection are separate from measured provider usage.
+
+Provider handoff requires an idle project and a reviewed summary. It creates a
+fresh session linked to its source, preserving original history and usage. Native
+provider tool histories are not copied between providers. Conversation search is
+local and incremental, covers messages/tool output/recorded changed filenames,
+and links to event context. Other projects become searchable after being opened.
+
+Windows notifications are opt-in under Appearance, for completion, failure, and
+required input. Clicking one opens its project and session. Queue, context, links,
+and indexes live in app data. `node scripts/qa-workflow.mjs --packaged` runs the
+fake-provider Docker/Electron workflow verification without live provider keys.

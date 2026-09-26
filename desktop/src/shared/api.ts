@@ -13,6 +13,7 @@ export type Settings = {
   projectInstructions: Record<string, string>
   theme: 'dark' | 'light' | 'system'
   layout: { sessionWidth: number; activityWidth: number; sessions: boolean; activity: boolean; focus: boolean }
+  notifications: boolean
   disallowedTools: string[]
   baseUrl: string
   decisionEngine: DecisionEngine
@@ -22,7 +23,7 @@ export type Settings = {
   decisionCloudDeclinedProjects: string[]
   glinerEnabled: boolean
 }
-export type SessionInfo = { id: string; title: string; lastUpdatedAt: string; active: boolean; state?: string }
+export type SessionInfo = { id: string; title: string; lastUpdatedAt: string; active: boolean; state?: string; parentSessionId?: string }
 export type AgentEvent = { v: number; event: string; sessionId: string; seq: number; sourceSequence?: number; recordedAt?: string; payload: unknown }
 export type UsageTotals = { input: number; output: number; cached: number; cacheWrite: number; reasoning: number; calls: number; decisionInput: number; decisionOutput: number; decisionCalls: number; latestInput: number }
 export type SessionUsage = { sessionId: string; title: string; provider: Provider; model: string; totals: UsageTotals; contextLimit?: number; contextSource?: string; rateLimits?: Record<string, string> }
@@ -34,7 +35,7 @@ export type ExecutionSummary = { operations: OperationLane[]; modelMs: number; t
 export type FileEntry = { name: string; path: string; directory: boolean; size: number }
 export type SkillEntry = { name: string; description: string; content: string }
 export type DockerStatus = { ready: boolean; message: string; container?: string }
-export type BridgeSessionConfig = { provider: Provider; model: string; baseUrl: string; thinkingLevel: string; systemPrompt: string; disallowedTools: string[] }
+export type BridgeSessionConfig = { provider: Provider; model: string; baseUrl: string; thinkingLevel: string; systemPrompt: string; disallowedTools: string[]; parentSessionId?: string }
 export type GitHubStatus = { installed: boolean; authenticated: boolean; account?: string; message: string }
 export type GitHubRepository = { nameWithOwner: string; description: string; isPrivate: boolean; url: string }
 export type GitHubWorktree = { path: string; branch: string; head: string; current: boolean }
@@ -45,6 +46,20 @@ export type DecisionResult = { engine: 'jev' | 'laya'; model: string; answers: R
 export type DecisionStatus = { engine: DecisionEngine; available: boolean; message: string; glinerAvailable: boolean }
 
 export interface DesktopAPI {
+  queueSnapshot(): Promise<import('./workflow').QueueSnapshot>
+  queueAdd(prompt: string): Promise<import('./workflow').QueueSnapshot>
+  queueEdit(id: string, prompt: string): Promise<import('./workflow').QueueSnapshot>
+  queueReorder(ids: string[]): Promise<import('./workflow').QueueSnapshot>
+  queuePause(paused: boolean): Promise<import('./workflow').QueueSnapshot>
+  queueAction(id: string, action: 'cancel' | 'retry' | 'remove'): Promise<import('./workflow').QueueSnapshot>
+  contextView(sessionId?: string): Promise<import('./workflow').ContextView>
+  updateContext(sessionId: string, patch: Partial<import('./workflow').ContextSelection>): Promise<import('./workflow').ContextSelection>
+  handoffPreview(sessionId: string): Promise<import('./workflow').HandoffPreview>
+  handoffStart(sessionId: string, summary: string, destination: Pick<BridgeSessionConfig, 'provider' | 'model' | 'baseUrl' | 'thinkingLevel'>): Promise<{ sessionId: string }>
+  searchHistory(query: string, sessionId?: string, allProjects?: boolean): Promise<import('./workflow').SearchHit[]>
+  getEventWindow(sessionId: string, sequence: number): Promise<AgentEvent[]>
+  onNavigate(callback: (target: { project: string; sessionId: string; seq?: number }) => void): () => void
+  onWorkflowChanged(callback: (project: string) => void): () => void
   checkpoints(): Promise<Checkpoint[]>
   checkpointPreview(id: string, path: string): Promise<CheckpointPreview>
   checkpointRestore(id: string, paths: string[]): Promise<string>

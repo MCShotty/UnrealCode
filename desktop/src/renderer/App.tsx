@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import type { AgentEvent, BridgeSessionConfig, DockerStatus, FileEntry, Provider, SessionInfo, Settings, SkillEntry } from '../shared/api'
 import { GitHubPage } from './GitHubPage'
+import { WorkflowPage } from './WorkflowPage'
 import { ReviewWorkspace } from './ReviewWorkspace'
 import { UsageDashboard } from './UsageDashboard'
 import { ExecutionInspector } from './ExecutionInspector'
@@ -18,11 +19,11 @@ import { CommandPalette, ResizeHandle, useTheme } from './DesktopControls'
 
 declare global { interface Window { unreal: import('../shared/api').DesktopAPI } }
 const api = window.unreal
-type View = 'review' | 'projects' | 'chat' | 'sessions' | 'files' | 'skills' | 'usage' | 'github' | 'settings' | 'terminal'
+type View = 'workflow' | 'review' | 'projects' | 'chat' | 'sessions' | 'files' | 'skills' | 'usage' | 'github' | 'settings' | 'terminal'
 const spatial = { fast: { type: 'spring' as const, stiffness: 600, damping: 42 }, default: { type: 'spring' as const, stiffness: 390, damping: 36 }, slow: { type: 'spring' as const, stiffness: 250, damping: 32 } }
 const navigation: { id: View; label: string; icon: typeof Folder }[] = [
   { id: 'projects', label: 'Projects', icon: Folder }, { id: 'chat', label: 'Chat', icon: MessageCircle },
-  { id: 'review', label: 'Review', icon: GitBranch }, { id: 'sessions', label: 'Sessions', icon: Clock3 }, { id: 'files', label: 'Files', icon: File },
+  { id: 'workflow', label: 'Workflow', icon: Activity }, { id: 'review', label: 'Review', icon: GitBranch }, { id: 'sessions', label: 'Sessions', icon: Clock3 }, { id: 'files', label: 'Files', icon: File },
   { id: 'skills', label: 'Skills', icon: Zap }, { id: 'usage', label: 'Usage', icon: BarChart3 },
   { id: 'github', label: 'GitHub', icon: GitPullRequest },
   { id: 'settings', label: 'Settings', icon: Settings2 }, { id: 'terminal', label: 'Terminal', icon: TerminalSquare }
@@ -66,19 +67,26 @@ async function loadEvents(sessionId: string, maxEvents = 3000): Promise<AgentEve
   return collected.slice(-maxEvents)
 }
 
-type ParsedEntry = { id: string; kind: 'user' | 'assistant' | 'tool' | 'decision' | 'status'; text: string; title: string; timestamp: string; status?: string; raw?: unknown }
+type ParsedEntry = { id: string; kind: 'user' | 'assistant' | 'tool' | 'decision' | 'status' | 'question'; seq?: number; text: string; title: string; timestamp: string; status?: string; raw?: unknown }
 function parseEvents(events: AgentEvent[]): ParsedEntry[] {
   const result: ParsedEntry[] = []
   const tools = new Map<string, ParsedEntry>()
   const operationCalls = new Map<string, string>()
+  let sequence = 0
   const toolEntry = (key: string, update: Partial<ParsedEntry>): void => {
+    update.seq = sequence
     const existing = tools.get(key)
     if (existing) { Object.assign(existing, update); return }
-    const created: ParsedEntry = { id: key, kind: 'tool', title: update.title || 'Tool call', text: update.text || '', timestamp: update.timestamp || '', status: update.status, raw: update.raw }
+    const created: ParsedEntry = { id: key, kind: 'tool', title: update.title || 'Tool call', text: update.text || '', timestamp: update.timestamp || '', status: update.status, raw: update.raw, seq: sequence }
     tools.set(key, created)
     result.push(created)
   }
   for (const event of events) {
+    sequence = event.seq
+    if (event.event === 'session.needs_input') {
+      result.push({ id: `${event.seq}:question`, kind: 'question', title: 'Your input is needed', text: string(field(event.payload, 'question')), timestamp: formatTime(event.recordedAt), raw: event.payload })
+      continue
+    }
     if (event.event === 'decision.result') {
       const payload = record(event.payload)
       const answers = record(payload.answers)
@@ -155,9 +163,10 @@ function DecisionWelcome({ onChoose }: { onChoose: (engine: Settings['decisionEn
   return <div className="decision-onboarding"><div className="decision-onboarding-card"><Brand/><div className="eyebrow">FIRST-RUN SETUP</div><h1>Choose a decision engine</h1><p>UnrealCode can send small, typed questions to one engine across every project and chat. The main agent still handles planning, coding, and actions.</p><div className="engine-options"><button onClick={() => void onChoose('jev')}><WandSparkles size={21}/><strong>Jev</strong><small>TypeSafe cloud · requires a key and project consent</small></button><button onClick={() => void onChoose('laya')}><Zap size={21}/><strong>Laya</strong><small>Local worker · install on demand</small></button></div><button className="text-button" onClick={() => void onChoose('off')}>Set up later</button></div></div>
 }
 
-function EventCard({ entry }: { entry: ParsedEntry }): ReactNode {
+function EventCard({ entry, onAnswer }: { entry: ParsedEntry; onAnswer?: (answer: string) => void }): ReactNode {
   const [expanded, setExpanded] = useState(false)
   const reduceMotion = useReducedMotion()
+  if (entry.kind === 'question') return <section className="input-question"><strong>{entry.title}</strong><p>{entry.text}</p>{Array.isArray(field(entry.raw, 'choices')) && (field(entry.raw, 'choices') as string[]).map((choice) => <button className="secondary-button" key={choice} onClick={() => onAnswer?.(choice)}>{choice}</button>)}</section>
   if (entry.kind === 'user') return <div className="chat-entry user-entry"><div className="avatar user-avatar">U</div><div className="entry-body"><div className="entry-heading"><strong>You</strong><time>{entry.timestamp}</time></div><div className="user-bubble">{entry.text}</div></div></div>
   if (entry.kind === 'assistant') return <div className="chat-entry"><div className="avatar agent-avatar"><div className="mini-mark">U</div></div><div className="entry-body"><div className="entry-heading"><strong>UnrealCode</strong><time>{entry.timestamp}</time></div><div className="markdown"><ReactMarkdown>{entry.text}</ReactMarkdown></div></div></div>
   if (entry.kind === 'status') return <div className="error-inline"><CircleAlert size={17}/><span>{entry.text}</span></div>
@@ -186,6 +195,7 @@ function Welcome({ settings, busy, status, onOpen, onSettings }: { settings: Set
 function ChatPanel({ events, session, prompt, setPrompt, onSend, onStop, sending, settings, onSave }: { events: AgentEvent[]; session: SessionInfo | undefined; prompt: string; setPrompt: (value: string) => void; onSend: () => void; onStop: () => void; sending: boolean; settings: Settings; onSave: (patch: Partial<Settings>) => Promise<void> }): ReactNode {
   const parsed = useMemo(() => parseEvents(events), [events])
   const [mentionOpen, setMentionOpen] = useState(false)
+  const [attachmentError, setAttachmentError] = useState('')
   const [toolsOpen, setToolsOpen] = useState(false)
   const [projectFiles, setProjectFiles] = useState<FileEntry[]>([])
   useEffect(() => { if (mentionOpen) void api.listFiles('').then(setProjectFiles).catch(() => setProjectFiles([])) }, [mentionOpen])
@@ -201,12 +211,12 @@ function ChatPanel({ events, session, prompt, setPrompt, onSend, onStop, sending
     following.current = element.scrollHeight - element.scrollTop - element.clientHeight < 60
     if (following.current) setUnread(false)
   }}>
-    {parsed.length === 0 ? <div className="empty-chat"><div className="empty-orbit"><WandSparkles size={30}/></div><h2>Start with a task</h2><p>Ask UnrealCode to inspect, change, or explain something in this workspace. Tool activity appears here as it runs.</p></div> : parsed.map((entry) => <EventCard key={entry.id} entry={entry}/>)}
+    {parsed.length === 0 ? <div className="empty-chat"><div className="empty-orbit"><WandSparkles size={30}/></div><h2>Start with a task</h2><p>Ask UnrealCode to inspect, change, or explain something in this workspace. Tool activity appears here as it runs.</p></div> : parsed.map((entry) => <div key={entry.id} data-event-seq={entry.seq || Number(entry.id.split(':')[0])}><EventCard entry={entry} onAnswer={setPrompt}/></div>)}
     <div ref={bottom}/></div>
     {unread && <button className="jump-latest" onClick={() => { following.current = true; setUnread(false); bottom.current?.scrollIntoView({ block: 'end', behavior: 'instant' }) }}>Jump to latest</button>}
     <div className="composer"><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); onSend() } }} placeholder="Message UnrealCode…" rows={3} aria-label="Message UnrealCode"/>
       <div className="composer-bottom"><div className="composer-actions"><button className="secondary-button" onClick={() => { setMentionOpen(!mentionOpen); setToolsOpen(false) }} aria-expanded={mentionOpen}>@ Files</button><button className="secondary-button" onClick={() => { setToolsOpen(!toolsOpen); setMentionOpen(false) }} aria-expanded={toolsOpen}>Tools <ChevronDown size={14}/></button><span>Enter to send · Shift+Enter for a new line</span></div><div><button className="secondary-button" onClick={onStop} disabled={!session || sending}><Square size={13}/> Stop</button><button className="primary-button" onClick={onSend} disabled={sending || !prompt.trim()}><Send size={15}/> {sending ? 'Sending' : 'Send'}</button></div></div>
-      {mentionOpen && <div className="composer-popover"><strong>Reference a project file</strong>{projectFiles.filter((file) => !file.directory).slice(0, 20).map((file) => <button key={file.path} onClick={() => { setPrompt(`${prompt}${prompt && !prompt.endsWith(' ') ? ' ' : ''}@${file.path} `); setMentionOpen(false) }}><FileText size={14}/>{file.path}</button>)}</div>}
+      {attachmentError && <p role="alert" className="error-text">{attachmentError}</p>}{mentionOpen && <div className="composer-popover"><strong>Reference a project file</strong>{projectFiles.filter((file) => !file.directory).slice(0, 20).map((file) => <button key={file.path} onClick={() => { void api.contextView(session?.id || 'draft').then((view) => api.updateContext(session?.id || 'draft', { attached: [...new Set([...view.selection.attached, file.path])] })).then(() => setAttachmentError('')).catch((error) => setAttachmentError(String(error))); setPrompt(`${prompt}${prompt && !prompt.endsWith(' ') ? ' ' : ''}@${file.path} `); setMentionOpen(false) }}><FileText size={14}/>{file.path}</button>)}</div>}
       {toolsOpen && <div className="composer-popover"><strong>Tools for new sessions</strong>{['Bash','ViewImage','DecisionBatch','EntityExtract','SkillUse'].map((tool) => <label className="check-row" key={tool}><input type="checkbox" checked={!settings.disallowedTools.includes(tool)} onChange={(event) => void onSave({ disallowedTools: event.target.checked ? settings.disallowedTools.filter((value) => value !== tool) : [...settings.disallowedTools, tool] })}/>{tool}</label>)}</div>}
     </div>
   </div>
@@ -296,7 +306,7 @@ function SettingsPage({ settings, onSave, projectPath }: { settings: Settings; o
       <section className="settings-section wide-section decision-settings"><h2>Decision model</h2><p>One engine for all projects and chats. A selected engine receives bounded Choice, Noul, and Score questions. UnrealCode keeps planning, coding, permissions, and Git actions.</p><label>Global engine<select value={draft.decisionEngine} onChange={(event) => setDraft({ ...draft, decisionEngine: event.target.value as Settings['decisionEngine'] })}><option value="off">Disabled</option><option value="jev">Jev · TypeSafe cloud</option><option value="laya">Laya · local worker</option></select></label>{draft.decisionEngine === 'jev' && <><label>Jev model<input value={draft.decisionModel} onChange={(event) => setDraft({ ...draft, decisionModel: event.target.value })} placeholder="jev-latest"/></label><p>Reads TYPESAFE_API_KEY from Windows. Project text is sent only after you grant that project's cloud consent.</p>{projectPath && !settings.decisionCloudProjects.includes(projectPath) && <button className="secondary-button" onClick={() => void api.decisionConsent().then(async () => { setDecisionStatus(await api.decisionStatus()); setDraft(await api.getSettings()) })}>Allow TypeSafe for this project</button>}</>}{draft.decisionEngine === 'laya' && <button className="secondary-button" disabled={installing} onClick={() => void install('laya')}>{installing ? 'Installing…' : 'Install local Laya worker'}</button>}{decisionStatus && <p className={decisionStatus.available ? 'success-text' : 'muted-copy'}>{decisionStatus.message}</p>}<label className="check-row"><input type="checkbox" checked={draft.glinerEnabled} onChange={(event) => setDraft({ ...draft, glinerEnabled: event.target.checked })}/><span>Enable GLiNER entity extraction separately</span></label>{draft.glinerEnabled && <button className="secondary-button" disabled={installing} onClick={() => void install('gliner')}>{installing ? 'Installing…' : decisionStatus?.glinerAvailable ? 'Reinstall GLiNER' : 'Install GLiNER'}</button>}{projectPath && draft.decisionEngine !== 'off' && <div className="decision-sample"><label>Try a bounded decision<input value={sample} onChange={(event) => setSample(event.target.value)} placeholder="Short sample text"/></label><button className="secondary-button" disabled={!sample.trim()} onClick={() => void evaluate()}>Evaluate</button>{sampleResult && <pre>{sampleResult}</pre>}</div>}</section>
       <section className="settings-section wide-section"><h2>{projectPath ? 'Project instructions' : 'Default agent instructions'}</h2><p>Applied as the system prompt when a new session starts.</p><textarea value={instructions} onChange={(event) => setDraft(projectPath ? { ...draft, projectInstructions: { ...draft.projectInstructions, [projectPath]: event.target.value } } : { ...draft, systemPrompt: event.target.value })} placeholder="Optional instructions for this workspace" rows={6}/></section>
       <section className="settings-section"><h2>Tools</h2>{['Bash','ViewImage','SkillUse','DecisionBatch','EntityExtract'].map((tool) => <label className="check-row" key={tool}><input type="checkbox" checked={!draft.disallowedTools.includes(tool)} onChange={(event) => setDraft({ ...draft, disallowedTools: event.target.checked ? draft.disallowedTools.filter((value) => value !== tool) : [...draft.disallowedTools, tool] })}/><span>{tool}</span></label>)}</section>
-      <section className="settings-section"><h2>Appearance</h2><label>Theme<select value={draft.theme} onChange={(event) => setDraft({ ...draft, theme: event.target.value as Settings['theme'] })}><option value="system">Follow Windows</option><option value="dark">Dark</option><option value="light">Light</option></select></label><p>Animations follow your system’s reduced-motion preference.</p></section>
+      <section className="settings-section"><h2>Appearance</h2><label className="check-row"><input type="checkbox" checked={draft.notifications} onChange={(event) => setDraft({ ...draft, notifications: event.target.checked })}/> Windows notifications for completion, failures, and required input</label><label>Theme<select value={draft.theme} onChange={(event) => setDraft({ ...draft, theme: event.target.value as Settings['theme'] })}><option value="system">Follow Windows</option><option value="dark">Dark</option><option value="light">Light</option></select></label><p>Animations follow your system’s reduced-motion preference.</p></section>
     </div>{saved && <p className="success-text notice"><Check size={16}/> Settings saved</p>}{error && <p className="error-inline notice">{error}</p>}</div>
 }
 
@@ -379,6 +389,8 @@ export default function App(): ReactNode {
   const [error, setError] = useState('')
   const [showSettingsBeforeProject, setShowSettingsBeforeProject] = useState(false)
   const [sessionSearch, setSessionSearch] = useState('')
+  const [highlight, setHighlight] = useState<number | null>(null)
+  const highlightedEvent = useRef<string>('')
   const [sessionStates, setSessionStates] = useState<Record<string, string>>({})
   const [palette, setPalette] = useState(false)
   const layoutTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -395,6 +407,7 @@ export default function App(): ReactNode {
         setSessionStates((current) => ({ ...current, [event.sessionId]: string(field(event.payload, 'state')) }))
         return
       }
+      if (event.event === 'session.needs_input') setSessionStates((current) => ({ ...current, [event.sessionId]: 'waiting for input' }))
       if (event.event === 'session.activity') setSessionStates((current) => ({ ...current, [event.sessionId]: field(event.payload, 'busy') ? 'running' : 'idle' }))
       if (event.event === 'session.status' && ['stopped', 'error'].includes(string(field(event.payload, 'status')))) setSessionStates((current) => ({ ...current, [event.sessionId]: field(event.payload, 'status') === 'error' ? 'failed' : 'stopped' }))
       if (event.sessionId !== activeRef.current) return
@@ -424,10 +437,11 @@ export default function App(): ReactNode {
     } catch (reason) { setError(String(reason)) }
     finally { setBusy(false) }
   }
-  const selectSession = async (id: string): Promise<void> => {
+  const selectSession = async (id: string, sequence?: number, resume = true): Promise<void> => {
+    setHighlight(sequence || null)
     activeRef.current = id; pending.current = []; pendingMessage.current = null; if (frame.current !== null) cancelAnimationFrame(frame.current); frame.current = null
     setActiveId(id); setEvents([]); setError(''); setView('chat')
-    try { const history = await loadEvents(id); if (activeRef.current === id) setEvents((current) => mergeEvents(current, history)); await api.openSession(id); await refreshSessions() } catch (reason) { setError(String(reason)) }
+    try { const history = sequence ? await api.getEventWindow(id, sequence) : await loadEvents(id); if (activeRef.current === id) setEvents((current) => mergeEvents(current, history)); if (resume && !sequence) await api.openSession(id); await refreshSessions() } catch (reason) { setError(String(reason)) }
   }
   const newSession = async (): Promise<string | null> => {
     if (!settings) return null
@@ -482,6 +496,19 @@ export default function App(): ReactNode {
     window.addEventListener('keydown', keyboard)
     return () => window.removeEventListener('keydown', keyboard)
   })
+  useEffect(() => api.onNavigate((target) => { setProjectPath(target.project); void api.dockerStatus().then(setStatus); void selectSession(target.sessionId, target.seq, false) }))
+  useEffect(() => api.onWorkflowChanged((path) => { if (path === projectPath) void refreshSessions() }), [projectPath, refreshSessions])
+  useEffect(() => {
+    const key = `${activeId}:${highlight}`
+    if (!highlight || view !== 'chat' || !events.length || highlightedEvent.current === key) return
+    const timer = setTimeout(() => {
+      const candidates = [...document.querySelectorAll<HTMLElement>('[data-event-seq]')].filter((element) => Number.isFinite(Number(element.dataset.eventSeq)))
+      candidates.sort((a, b) => Math.abs(Number(a.dataset.eventSeq) - highlight) - Math.abs(Number(b.dataset.eventSeq) - highlight))
+      candidates[0]?.scrollIntoView({ block: 'center', behavior: 'instant' })
+      if (candidates.length) highlightedEvent.current = key
+    }, 120)
+    return () => clearTimeout(timer)
+  }, [highlight, events, view, activeId])
   const active = sessions.find((item) => item.id === activeId)
   if (!settings) return <div className="boot-screen"><Brand/><span>Loading desktop…</span></div>
   if (!settings.decisionSetupSeen) return <DecisionWelcome onChoose={async (engine) => { try { await saveSettings({ decisionEngine: engine, decisionSetupSeen: true }) } catch (reason) { setError(String(reason)) } }}/>
@@ -496,15 +523,17 @@ export default function App(): ReactNode {
       { id: 'focus', label: 'Toggle focus layout', run: () => changeLayout({ focus: !settings.layout.focus }) },
       ...(['dark', 'light', 'system'] as const).map((theme) => ({ id: theme, label: `Theme: ${theme === 'system' ? 'Follow Windows' : theme}`, run: () => { void saveSettings({ theme }) } }))
     ]}/>}
-    <aside className="nav-rail"><Brand/><nav>{navigation.map(({ id, label, icon: Icon }) => <motion.button className={`nav-item ${view === id ? 'active' : ''}`} key={id} aria-label={label} onClick={() => setView(id)} animate={reduceMotion ? undefined : { borderRadius: view === id ? 13 : 9 }} transition={spatial.fast}>{view === id && !reduceMotion && <motion.span layoutId="active-nav" className="active-nav-bg" transition={spatial.default}/>}<Icon size={19}/><span>{label}</span></motion.button>)}</nav><div className="rail-bottom"><div className="agent-ready"><span className="status-dot on"/><div><strong>Agent Ready</strong><small>{status.ready ? 'Container connected' : 'Container offline'}</small></div></div><small>{projectPath}</small><small>v0.4.0</small></div></aside>
+    <aside className="nav-rail"><Brand/><nav>{navigation.map(({ id, label, icon: Icon }) => <motion.button className={`nav-item ${view === id ? 'active' : ''}`} key={id} aria-label={label} onClick={() => setView(id)} animate={reduceMotion ? undefined : { borderRadius: view === id ? 13 : 9 }} transition={spatial.fast}>{view === id && !reduceMotion && <motion.span layoutId="active-nav" className="active-nav-bg" transition={spatial.default}/>}<Icon size={19}/><span>{label}</span></motion.button>)}</nav><div className="rail-bottom"><div className="agent-ready"><span className="status-dot on"/><div><strong>Agent Ready</strong><small>{status.ready ? 'Container connected' : 'Container offline'}</small></div></div><small>{projectPath}</small><small>v0.5.0</small></div></aside>
     <AnimatePresence initial={false}>{view === 'chat' && settings.layout.sessions && !settings.layout.focus && <motion.aside className="session-pane" initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }} exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -16 }} transition={spatial.default}><div className="workspace-picker"><span>Workspace</span><button onClick={() => setView('projects')}>{projectPath.split(/[\\/]/).at(-1)}<ChevronDown size={16}/></button></div><div className="session-search"><Search size={16}/><input value={sessionSearch} onChange={(event) => setSessionSearch(event.target.value)} placeholder="Search sessions…" aria-label="Search sessions"/><button className="icon-button" title="New session" onClick={() => void newSession()}><Plus size={17}/></button></div><div className="session-list">{sessions.filter((session) => session.title.toLowerCase().includes(sessionSearch.toLowerCase())).map((session, index, filtered) => { const day = new Date(session.lastUpdatedAt).toDateString(); const previous = index ? new Date(filtered[index-1].lastUpdatedAt).toDateString() : ''; const label = day === new Date().toDateString() ? 'Today' : day === new Date(Date.now() - 86400000).toDateString() ? 'Yesterday' : new Date(session.lastUpdatedAt).toLocaleDateString(); return <div key={session.id}>{day !== previous && <div className="session-group-label">{label}</div>}<button className={`session-row ${activeId === session.id ? 'selected' : ''}`} onClick={() => void selectSession(session.id)}><strong>{session.title}</strong><small>{formatTime(session.lastUpdatedAt)} · {sessionStates[session.id] || session.state || (session.active ? 'Idle' : 'Saved')}</small></button></div> })}{sessions.length === 0 && <p className="muted-copy pad">No sessions yet. Send a message to begin.</p>}</div></motion.aside>}</AnimatePresence>
     {view === 'chat' && settings.layout.sessions && !settings.layout.focus && <ResizeHandle label="Session pane width" value={settings.layout.sessionWidth} min={190} max={420} onChange={(sessionWidth) => changeLayout({ sessionWidth })}/>}
     <main className={`main-area ${view === 'chat' ? 'with-chat' : ''}`}><header className="app-topbar"><div className="topbar-project"><strong>{projectPath.split(/[\\/]/).at(-1)}</strong><ChevronDown size={15}/>{view === 'chat' && active && <span className="topbar-session">{active.title} · {sessionStates[active.id] || active.state || 'idle'}</span>}</div><div className="topbar-controls"><button className="icon-button" title="Commands (Ctrl+K)" onClick={() => setPalette(true)}><Search size={16}/></button><button className="secondary-button" onClick={() => changeLayout({ focus: !settings.layout.focus })}>{settings.layout.focus ? 'Exit focus' : 'Focus'}</button><button className="icon-button" title="Toggle session pane" onClick={() => changeLayout({ sessions: !settings.layout.sessions })}><MessageCircle size={16}/></button><button className="icon-button" title="Toggle activity rail" onClick={() => changeLayout({ activity: !settings.layout.activity })}><Activity size={16}/></button><label><small>Provider · next session</small><select value={settings.provider} onChange={(event) => void saveSettings({ provider: event.target.value as Provider, model: '' })}><option value="openai-codex">Codex subscription</option><option value="openai">OpenAI API</option><option value="anthropic">Claude API</option><option value="ollama">Ollama</option><option value="openai-compatible">Local compatible</option><option value="openrouter">OpenRouter</option><option value="fireworks">Fireworks</option></select></label><label><small>Model · next session</small><input value={settings.model} onChange={(event) => setSettings({ ...settings, model: event.target.value })} onBlur={() => void saveSettings({ model: settings.model })} placeholder="Model ID"/></label><span className={`topbar-dot ${status.ready ? 'on' : ''}`}/></div></header>
       {error && <div className="banner-error"><CircleAlert size={17}/><span>{error}</span>{/(401|unauthorized|credential|token|api key)/i.test(error) && <button onClick={() => setView('settings')}>Reconnect in Settings</button>}<button onClick={() => setError('')}><X size={15}/></button></div>}
+      {highlight && view === 'chat' && <div className="search-location">Showing recorded context around event {highlight}. <button onClick={() => { if (activeId) void selectSession(activeId, undefined, false) }}>Open full history</button></div>}
       <AnimatePresence mode="wait" initial={false}><motion.div key={view} className="view-frame" initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -10 }} transition={spatial.fast}>
         {view === 'chat' && <div className={`chat-layout ${settings.layout.activity && !settings.layout.focus ? '' : 'without-activity'}`}><AnimatePresence mode="wait" initial={false}><motion.div key={activeId || 'new'} className="chat-motion" initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }} transition={spatial.fast}><ChatPanel events={events} session={active} prompt={prompt} setPrompt={setPrompt} onSend={() => void send()} onStop={() => void stop()} sending={busy} settings={settings} onSave={saveSettings}/></motion.div></AnimatePresence><div className="activity-wrapper"><ResizeHandle label="Activity rail width" value={settings.layout.activityWidth} min={260} max={520} reverse onChange={(activityWidth) => changeLayout({ activityWidth })}/><ContextPanel changes={changes} events={events} projectPath={projectPath} status={status} decisionEngine={settings.decisionEngine} sessionId={activeId || undefined}/></div></div>}
         {view === 'projects' && <div className="page-content projects-page"><div className="page-heading"><div><h1>Projects</h1><p>Switch between trusted local workspaces.</p></div><button className="primary-button" onClick={() => void openProject()}><Plus size={16}/> Open folder</button></div><div className="project-list">{settings.recentProjects.map((path) => <button key={path} className="project-row" onClick={() => void openProject(path)}><FolderOpen size={21}/><span><strong>{path.split(/[\\/]/).at(-1)}</strong><small>{path}</small></span><ArrowRight size={17}/></button>)}</div></div>}
         {view === 'sessions' && <div className="page-content sessions-page"><div className="page-heading"><div><h1>Sessions</h1><p>Resume your work or fork a completed turn.</p></div><button className="primary-button" onClick={() => void newSession()}><Plus size={16}/> New session</button></div><div className="session-table">{sessions.map((session) => <div className="session-table-row" key={session.id}><div><strong>{session.title}</strong><small>{new Date(session.lastUpdatedAt).toLocaleString()}</small></div><span className="session-id">{session.id.slice(0, 8)}</span><button className="secondary-button" onClick={() => void selectSession(session.id)}>Open</button><button className="icon-button" title="Fork session" onClick={() => void fork(session.id)}><GitBranch size={17}/></button></div>)}{sessions.length === 0 && <p className="muted-copy pad">No saved sessions yet.</p>}</div></div>}
+        {view === 'workflow' && <WorkflowPage project={projectPath} sessionId={activeId} sessions={sessions} onOpen={async (root, id, seq) => { if (root !== projectPath) await openProject(root); await selectSession(id, seq, false) }}/>}
         {view === 'review' && <ReviewWorkspace onSteer={async (sessionId, feedback) => { await api.sendMessage(sessionId, feedback, crypto.randomUUID()); await selectSession(sessionId) }}/> }
         {view === 'files' && <FileBrowser/>}
         {view === 'skills' && <SkillsPage/>}

@@ -72,6 +72,17 @@ func (a *app) dispatch(req request) (any, error) {
 		return nil, fmt.Errorf("unsupported protocol version %d", req.Version)
 	}
 	switch req.Method {
+	case "context.configure":
+		p, err := decodeParams[struct {
+			Excluded []string `json:"excluded"`
+		}](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		if err := a.preferences.configure(p.Excluded); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"configured": true}, nil
 	case "project.idle":
 		a.mu.Lock()
 		defer a.mu.Unlock()
@@ -156,7 +167,8 @@ func (a *app) dispatch(req request) (any, error) {
 				}
 			}
 			a.mu.Unlock()
-			result = append(result, map[string]any{"id": string(info.ID), "lastUpdatedAt": info.LastUpdatedAt, "title": a.title(info.ID), "active": active, "state": state})
+			config, _ := a.loadConfig(info.ID)
+			result = append(result, map[string]any{"id": string(info.ID), "lastUpdatedAt": info.LastUpdatedAt, "title": a.title(info.ID), "active": active, "state": state, "parentSessionId": config.ParentSessionID})
 		}
 		sort.Slice(result, func(i, j int) bool {
 			return result[i]["lastUpdatedAt"].(time.Time).After(result[j]["lastUpdatedAt"].(time.Time))
@@ -351,7 +363,7 @@ func (a *app) title(id session.ID) string {
 			}
 			prompt = value.Prompt
 		}
-		prompt = strings.Join(strings.Fields(prompt), " ")
+		prompt = strings.Join(strings.Fields(strings.SplitN(prompt, "<unrealcode_context>", 2)[0]), " ")
 		if len(prompt) > 48 {
 			prompt = prompt[:48] + "…"
 		}
