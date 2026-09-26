@@ -18,6 +18,7 @@ export type Settings = {
   notifications: boolean
   executionMode: ExecutionMode
   taskIsolation: boolean
+  autoCompaction: boolean
   disallowedTools: string[]
   baseUrl: string
   decisionEngine: DecisionEngine
@@ -51,6 +52,25 @@ export type DecisionResult = { engine: 'jev' | 'laya'; model: string; answers: R
 export type DecisionStatus = { engine: DecisionEngine; available: boolean; message: string; glinerAvailable: boolean }
 
 export interface DesktopAPI {
+  repositorySearch(query:string,filesOnly?:boolean):Promise<import('./repository-context').RepositorySearch>
+  repositoryStatus():Promise<import('./repository-context').RepositoryStatus>
+  contextSummaries(sessionId:string):Promise<import('./repository-context').ContextSummary[]>
+  contextCompact(sessionId:string):Promise<import('./repository-context').ContextSummary>
+  contextSummarySelect(sessionId:string,id:string):Promise<void>
+  connections(): Promise<import('./connections').ConnectionView[]>
+  connectionSave(config: import('./connections').ConnectionConfig): Promise<void>
+  connectionRemove(id: string): Promise<void>
+  connectionRevoke(id: string): Promise<void>
+  connectionCredential(id: string,bearer: string,env: Record<string,string>): Promise<void>
+  connectionGrant(grant: Omit<import('./connections').ConnectionGrant,'project'|'revision'>): Promise<void>
+  connectionConnect(id: string,signIn: boolean): Promise<void>
+  connectionDisconnect(id: string): Promise<void>
+  connectionResources(id: string): Promise<import('./connections').ConnectionResource[]>
+  connectionResource(id: string,uri: string): Promise<string>
+  connectionPrompts(id: string): Promise<import('./connections').ConnectionPrompt[]>
+  connectionPrompt(id: string,name: string,args: Record<string,string>): Promise<string>
+  hostApprovals(sessionId: string): Promise<import('./connections').HostApproval[]>
+  hostRespond(sessionId: string,id: string,digest: string,allow: boolean): Promise<void>
   appVersion(): Promise<string>
   taskWorkspaces(): Promise<import('./task-workspaces').TaskWorkspace[]>
   activeWorkspace(): Promise<{ path: string; isolated: boolean }>
@@ -104,6 +124,11 @@ export interface DesktopAPI {
   codexStatus(): Promise<{ available: boolean; message: string }>
   discoverModels(provider: Provider, baseUrl: string): Promise<string[]>
   githubStatus(): Promise<GitHubStatus>
+  githubIssues():Promise<import('./github-workflow').GitHubIssue[]>
+  githubReviewComments(number:number):Promise<import('./github-workflow').GitHubReviewComment[]>
+  githubChecks(number:number):Promise<import('./github-workflow').GitHubCheck[]>
+  githubFailureLogs(number:number,url:string):Promise<string>
+  githubIntake(kind:'issue'|'review-comment',number:number,commentId?:number):Promise<import('./workflow').QueueSnapshot>
   githubRepositories(): Promise<GitHubRepository[]>
   githubClone(repository: string): Promise<string>
   githubWorktrees(): Promise<GitHubWorktree[]>

@@ -11,7 +11,7 @@ measured usage, existing history, and the global decision-engine setting.
 - [x] 0.7: execution modes and correlated approvals; native file tools; isolated
   task workspaces with dirty-file snapshots and conflict-aware integration;
   locally bundled Monaco editor; Windows desktop CI.
-- [ ] 0.8: main-process MCP broker for remote HTTP, Windows stdio and Docker
+- [x] 0.8: main-process MCP broker for remote HTTP, Windows stdio and Docker
   stdio; explicit server/project grants; focused repository retrieval; versioned
   reversible context summaries; GitHub issue/review intake; context/connections UI.
 - [ ] 0.9: explicitly enabled bounded specialist workers in isolated worktrees;

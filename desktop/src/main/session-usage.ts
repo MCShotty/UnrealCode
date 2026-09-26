@@ -60,11 +60,11 @@ export function executionFromEvents(sessionId: string, events: AgentEvent[], now
   for (const event of events) {
     const at = milliseconds(event.recordedAt)
     if (event.event === 'operation.dispatched' && event.recordedAt) dispatches.set(text(field(event.payload, 'ID', 'id')), event.recordedAt)
-    if (event.event === 'permission.requested' && at !== undefined) {
+    if ((event.event === 'permission.requested' || event.event === 'host.request') && at !== undefined) {
       approvalOperations.add(text(field(event.payload, 'operationId')))
-      approvalWaits.set(text(field(event.payload, 'id')), { start: at })
+      approvalWaits.set(text(field(event.payload, 'id', 'requestId')), { start: at })
     }
-    if (event.event === 'permission.resolved' && at !== undefined) { const wait = approvalWaits.get(text(field(event.payload, 'id'))); if (wait) wait.end = at }
+    if ((event.event === 'permission.resolved' || event.event === 'host.resolved') && at !== undefined) { const wait = approvalWaits.get(text(field(event.payload, 'id','requestId'))); if (wait && wait.end === undefined) wait.end = at }
     if (event.event === 'session.status' && ['stopped', 'error'].includes(text(field(event.payload, 'status'))) && at !== undefined) for (const wait of approvalWaits.values()) if (wait.end === undefined) wait.end = at
     if (event.event === 'model.request.started') {
       const id = text(field(event.payload, 'id'))
@@ -140,7 +140,7 @@ export class SessionUsageService {
           const headers = field(field(field(event.payload, 'Data', 'data'), 'Response', 'response'), 'RateLimits', 'rateLimits')
           if (Object.keys(record(headers)).length) current.rateLimits = record(headers) as Record<string, string>
         }
-        if (event.event.startsWith('model.request.') || event.event.startsWith('operation.') || event.event.startsWith('permission.') || event.event === 'session.status') current.events.push(event)
+        if (event.event.startsWith('model.request.') || event.event.startsWith('operation.') || event.event.startsWith('permission.') || event.event.startsWith('host.') || event.event === 'session.status') current.events.push(event)
         current.seq = event.seq
       }
       if (page.length < 1000) break

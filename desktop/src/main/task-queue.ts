@@ -48,10 +48,10 @@ export class TaskQueue {
     if (!task) throw new Error('Task not found in this project')
     return task
   }
-  add(prompt: string, config: BridgeSessionConfig): QueueSnapshot {
+  add(prompt: string, config: BridgeSessionConfig,source?: import('../shared/github-workflow').GitHubTaskSource): QueueSnapshot {
     if (typeof prompt !== 'string' || !prompt.trim() || Buffer.byteLength(prompt) > 256 * 1024) throw new Error('Task must contain text below 256 KB')
     if (this.value.tasks.length >= 200) throw new Error('Remove finished tasks before adding more; the queue holds 200 tasks')
-    this.value.tasks.push({ id: randomUUID(), prompt: prompt.trim(), config: structuredClone(config), createdAt: new Date().toISOString(), state: 'pending' })
+    this.value.tasks.push({ id: randomUUID(), prompt: prompt.trim(), config: structuredClone(config), createdAt: new Date().toISOString(), state: 'pending',...(source?{source:structuredClone(source)}:{}) })
     this.save(); this.schedule(); return this.snapshot()
   }
   edit(id: string, prompt: string): QueueSnapshot {

@@ -361,3 +361,25 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .workspace-change label { display: inline-flex; gap: 8px; }
 .workspace-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .workspace-diff pre { padding: 8px; background: var(--panel-2); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; }
+.connections-grid { display: grid; grid-template-columns: minmax(250px, 0.8fr) minmax(300px, 1.4fr); gap: 20px; }
+.connections-page label { display: grid; gap: 6px; margin: 12px 0; }
+.connections-page input, .connections-page select, .connections-page textarea { min-width: 0; width: 100%; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 8px; }
+.connection-card { border-bottom: 1px solid var(--line); padding: 14px 0; }
+.connection-card h3 small { display: block; color: var(--sub); font-weight: normal; margin-top: 5px; }
+.connection-card details { margin-top: 14px; }
+.connection-card .connection-tool { display: flex; align-items: flex-start; gap: 10px; }
+.connection-tool input { width: auto; margin-top: 4px; }
+.connection-tool small, .connection-tool code { display: block; color: var(--sub); font-size: 11px; overflow-wrap: anywhere; }
+.connection-preview { max-height: 380px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 1100px) { .connections-grid { grid-template-columns: 1fr; } }
+.composer-context { margin: 4px 16px; position: relative; flex-shrink: 0; font-size: 12px; }
+.composer-context-menu { position: absolute; bottom: 100%; left: 0; right: 0; z-index: 15; max-height: 300px; overflow: auto; display: grid; gap: 8px; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px #0004; }
+.composer-context-menu input, .composer-context-menu select, .context-inspector input { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); padding: 8px; border-radius: 6px; min-width: 0; }
+.context-chips { display: flex; flex-wrap: wrap; max-height: 52px; overflow: auto; gap: 4px; }
+.context-chips button { font-size: 11px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 8px; }
+.context-source { display: flex; align-items: center; gap: 12px; }
+.context-source span, .context-result small { color: var(--sub); font-size: 12px; }
+.context-inspector pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; }
+.context-result { border-top: 1px solid var(--line); margin: 12px 0; padding-top: 12px; }
+.github-intake pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; }
+.github-intake select { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 8px; max-width: 100%; }

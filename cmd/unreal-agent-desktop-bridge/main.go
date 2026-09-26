@@ -72,6 +72,55 @@ func (a *app) dispatch(req request) (any, error) {
 		return nil, fmt.Errorf("unsupported protocol version %d", req.Version)
 	}
 	switch req.Method {
+	case "context.summaries", "context.compact", "context.summary.select":
+		p, err := decodeParams[struct {
+			SessionID  string     `json:"sessionId"`
+			ID         string     `json:"id"`
+			Credential credential `json:"credential"`
+		}](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		id, err := requiredID(p.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		if req.Method == "context.summaries" {
+			return a.readSummaries(id)
+		}
+		if req.Method == "context.summary.select" {
+			return nil, a.activateSummary(id, p.ID)
+		}
+		return a.createSummary(id, p.Credential)
+	case "mcp.configure":
+		p, err := decodeParams[struct {
+			Tools []catalogEntry `json:"tools"`
+		}](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		return nil, a.mcp.configure(p.Tools)
+	case "host.respond", "host.dispatched":
+		p, err := decodeParams[hostReply](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		if req.Method == "host.dispatched" {
+			a.host.mu.Lock()
+			pending, ok := a.host.pending[p.RequestID]
+			a.host.mu.Unlock()
+			if !ok || string(pending.session) != p.SessionID || string(pending.operation) != p.OperationID {
+				return nil, errors.New("host dispatch does not match a live operation")
+			}
+			a.events.enqueue(pending.session, "operation.dispatched", map[string]string{"ID": p.OperationID})
+			a.events.enqueue(pending.session, "host.resolved", map[string]string{"requestId": p.RequestID})
+			return nil, nil
+		}
+		if err := a.host.resolve(p); err != nil {
+			return nil, err
+		}
+		a.events.enqueue(session.ID(p.SessionID), "host.resolved", map[string]string{"requestId": p.RequestID})
+		return nil, nil
 	case "permission.list", "permission.respond":
 		p, err := decodeParams[struct {
 			SessionID string `json:"sessionId"`
@@ -154,7 +203,7 @@ func (a *app) dispatch(req request) (any, error) {
 	case "decision.idle":
 		return a.decisionPending.Load() == 0, nil
 	case "health":
-		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion, "capabilities": []string{"permissions.v1", "files.v1", "sessions.v1"}}, nil
+		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion, "capabilities": []string{"permissions.v1", "files.v1", "sessions.v1", "mcp.v1", "context.v1"}}, nil
 	case "decision.configure":
 		config, err := decodeParams[decisionConfig](req.Params)
 		if err != nil {
@@ -181,6 +230,29 @@ func (a *app) dispatch(req request) (any, error) {
 			return nil, err
 		}
 		return a.decision.evaluate(a.ctx, batch)
+	case "decision.retrieval":
+		p, err := decodeParams[struct {
+			SessionID string        `json:"sessionId"`
+			Batch     decisionBatch `json:"batch"`
+		}](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		id, err := requiredID(p.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		if _, err = a.loadConfig(id); err != nil {
+			return nil, err
+		}
+		a.decisionPending.Add(1)
+		defer a.decisionPending.Add(-1)
+		result, err := a.decision.evaluate(a.ctx, p.Batch)
+		if err != nil {
+			return nil, err
+		}
+		a.events.enqueue(id, "decision.result", traceDecision(result, p.Batch, uuid.New().String(), "Repository retrieval relevance"))
+		return result, nil
 	case "decision.extract":
 		params, err := decodeParams[extractParams](req.Params)
 		if err != nil {

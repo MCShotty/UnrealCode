@@ -13,6 +13,7 @@ import { readFile } from './files'
 import { decisionTraces } from './decision-trace'
 import type { AgentEvent, BridgeSessionConfig } from '../shared/api'
 import type { EvaluationRequest, EvaluationReport, EvaluationArm } from '../shared/diagnostics'
+import { atomicMetadata } from './atomic-metadata'
 
 const exec = promisify(execFile)
 const command = async (file: string, args: string[], cwd: string, timeout = 60000, signal?: AbortSignal): Promise<string> => (await exec(file, args, { cwd, timeout, signal, windowsHide: true, maxBuffer: 4 * 1024 * 1024, env: backendEnvironment() })).stdout.trim()
@@ -29,8 +30,7 @@ export class Evaluations {
   constructor(private directory: string) {}
   private path(id: string): string { if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error('Invalid evaluation ID'); return join(this.directory, `${id}.json`) }
   private async save(report: EvaluationReport): Promise<void> {
-    await fs.mkdir(this.directory, { recursive: true })
-    const temporary = `${this.path(report.id)}.tmp`; await fs.writeFile(temporary, JSON.stringify(report), { mode: 0o600 }); await fs.rename(temporary, this.path(report.id))
+    await atomicMetadata(this.path(report.id),JSON.stringify(report))
   }
   async list(project: string): Promise<EvaluationReport[]> {
     project = await fs.realpath(project)
@@ -62,7 +62,7 @@ export class Evaluations {
       const id = randomUUID(), report: EvaluationReport = { id, project, createdAt: new Date().toISOString(), revision, config: savedConfig, engine: decision.engine, model: decision.model, request: savedRequest, state: 'running', arms: request.tasks.flatMap((_, task) => [{ task, decisions: false, state: 'pending' }, { task, decisions: true, state: 'pending' }]) }
       await this.save(report)
       const running = { cancel: new AbortController(), bridge: undefined as DockerBridge | undefined }; this.active.set(id, running)
-      void this.run(report, running, decision, exclusions).catch(async () => { report.state = 'failed'; report.error = 'Evaluation could not finish; inspect retained worktrees and report.'; await this.save(report).catch(() => {}) }).finally(() => this.active.delete(id))
+      void this.run(report, running, decision, exclusions).catch(async (error: {code?:string;syscall?:string}) => { report.state = 'failed'; report.error = `Evaluation could not finish (${error.code || 'unknown'}${error.syscall ? ` during ${error.syscall}` : ''}); inspect retained worktrees and report.`; await this.save(report).catch(() => {}) }).finally(() => this.active.delete(id))
       return id
     } finally { this.starting = false }
   }

@@ -18,19 +18,24 @@ import { UsageDashboard } from './UsageDashboard'
 import { ExecutionInspector } from './ExecutionInspector'
 import { ExecutionControls } from './ExecutionControls'
 import { EditorWorkspace } from './EditorWorkspace'
-import { hasDirtyEditors } from './editor-buffers'
+import { hasDirtyEditors,changeEditor } from './editor-buffers'
 import { TaskWorkspaceReview } from './TaskWorkspaceReview'
+import { ConnectionsPage } from './ConnectionsPage'
+import { ComposerContext } from './ComposerContext'
+import { ContextInspector } from './ContextInspector'
 import { CommandPalette, ResizeHandle, useTheme } from './DesktopControls'
 
 declare global { interface Window { unreal: import('../shared/api').DesktopAPI } }
 const api = window.unreal
-type View = 'diagnostics' | 'workflow' | 'review' | 'projects' | 'chat' | 'sessions' | 'files' | 'skills' | 'usage' | 'github' | 'settings' | 'terminal'
+type View = 'context' | 'connections' | 'diagnostics' | 'workflow' | 'review' | 'projects' | 'chat' | 'sessions' | 'files' | 'skills' | 'usage' | 'github' | 'settings' | 'terminal'
 const spatial = { fast: { type: 'spring' as const, stiffness: 600, damping: 42 }, default: { type: 'spring' as const, stiffness: 390, damping: 36 }, slow: { type: 'spring' as const, stiffness: 250, damping: 32 } }
 const navigation: { id: View; label: string; icon: typeof Folder }[] = [
   { id: 'projects', label: 'Projects', icon: Folder }, { id: 'chat', label: 'Chat', icon: MessageCircle },
   { id: 'workflow', label: 'Workflow', icon: Activity }, { id: 'review', label: 'Review', icon: GitBranch }, { id: 'sessions', label: 'Sessions', icon: Clock3 }, { id: 'files', label: 'Files', icon: File },
   { id: 'skills', label: 'Skills', icon: Zap }, { id: 'usage', label: 'Usage', icon: BarChart3 },
   { id: 'diagnostics', label: 'Diagnostics', icon: Radio },
+  { id: 'connections', label: 'Connections', icon: Zap },
+  { id: 'context', label: 'Context', icon: FileText },
   { id: 'github', label: 'GitHub', icon: GitPullRequest },
   { id: 'settings', label: 'Settings', icon: Settings2 }, { id: 'terminal', label: 'Terminal', icon: TerminalSquare }
 ]
@@ -76,6 +81,7 @@ async function loadEvents(sessionId: string, maxEvents = 3000): Promise<AgentEve
 type ParsedEntry = { id: string; kind: 'user' | 'assistant' | 'tool' | 'decision' | 'status' | 'question'; seq?: number; text: string; title: string; timestamp: string; status?: string; raw?: unknown }
 function parseEvents(events: AgentEvent[]): ParsedEntry[] {
   const result: ParsedEntry[] = []
+  const compactionTurns=new Set<string>()
   const tools = new Map<string, ParsedEntry>()
   const operationCalls = new Map<string, string>()
   let sequence = 0
@@ -116,17 +122,20 @@ function parseEvents(events: AgentEvent[]): ParsedEntry[] {
       toolEntry(key, { title: tools.get(key)?.title || string(field(operation, 'Type', 'type')) || 'Operation', text: tools.get(key)?.text || operationID, status: string(field(operation, 'Status', 'status')), raw: event.payload })
       continue
     }
+    if(event.event==='context.compaction.completed'){result.push({id:`${event.seq}:compaction`,kind:'status',title:'Context summary created',text:'Earlier history is summarized for future requests. Original events remain available in Context.',timestamp:formatTime(event.recordedAt)});continue}
     if (event.event !== 'session.item') continue
     const item = record(event.payload)
     const kind = string(field(item, 'Kind', 'kind'))
     const data = field(item, 'Data', 'data')
     const timestamp = formatTime(field(item, 'RecordedAt', 'recordedAt'))
+    if(kind==='turn'&&field(data,'Type','type')==='compaction'){compactionTurns.add(string(field(data,'ID','id')));continue}
     if (kind === 'input') {
       if (string(field(data, 'Kind', 'kind')) !== 'external') continue
       const payload = field(data, 'Payload', 'payload')
       const text = (typeof payload === 'string' ? payload : asMessage(payload)).split('<unrealcode_context>')[0].trimEnd()
       result.push({ id: `${event.seq}:input`, kind: 'user', title: 'You', text, timestamp })
     } else if (kind === 'model_response') {
+      if(compactionTurns.has(string(field(data,'TurnID','turnId'))))continue
       const response = field(data, 'Response', 'response')
       const outputs = field(response, 'Output', 'output')
       if (!Array.isArray(outputs)) continue
@@ -200,11 +209,7 @@ function Welcome({ settings, busy, status, onOpen, onSettings }: { settings: Set
 
 function ChatPanel({ events, session, prompt, setPrompt, onSend, onStop, sending, settings, onSave }: { events: AgentEvent[]; session: SessionInfo | undefined; prompt: string; setPrompt: (value: string) => void; onSend: () => void; onStop: () => void; sending: boolean; settings: Settings; onSave: (patch: Partial<Settings>) => Promise<void> }): ReactNode {
   const parsed = useMemo(() => parseEvents(events), [events])
-  const [mentionOpen, setMentionOpen] = useState(false)
-  const [attachmentError, setAttachmentError] = useState('')
   const [toolsOpen, setToolsOpen] = useState(false)
-  const [projectFiles, setProjectFiles] = useState<FileEntry[]>([])
-  useEffect(() => { if (mentionOpen) void api.listFiles('').then(setProjectFiles).catch(() => setProjectFiles([])) }, [mentionOpen])
   const bottom = useRef<HTMLDivElement>(null)
   const following = useRef(true)
   const [unread, setUnread] = useState(false)
@@ -221,10 +226,10 @@ function ChatPanel({ events, session, prompt, setPrompt, onSend, onStop, sending
     <div ref={bottom}/></div>
     {unread && <button className="jump-latest" onClick={() => { following.current = true; setUnread(false); bottom.current?.scrollIntoView({ block: 'end', behavior: 'instant' }) }}>Jump to latest</button>}
     <ExecutionControls sessionId={session?.id} settings={settings} onSave={onSave}/>
+    <ComposerContext sessionId={session?.id} prompt={prompt} onPrompt={setPrompt}/>
     <div className="composer"><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); onSend() } }} placeholder="Message UnrealCode…" rows={3} aria-label="Message UnrealCode"/>
-      <div className="composer-bottom"><div className="composer-actions"><button className="secondary-button" onClick={() => { setMentionOpen(!mentionOpen); setToolsOpen(false) }} aria-expanded={mentionOpen}>@ Files</button><button className="secondary-button" onClick={() => { setToolsOpen(!toolsOpen); setMentionOpen(false) }} aria-expanded={toolsOpen}>Tools <ChevronDown size={14}/></button><span>Enter to send · Shift+Enter for a new line</span></div><div><button className="secondary-button" onClick={onStop} disabled={!session || sending}><Square size={13}/> Stop</button><button className="primary-button" onClick={onSend} disabled={sending || !prompt.trim()}><Send size={15}/> {sending ? 'Sending' : 'Send'}</button></div></div>
-      {attachmentError && <p role="alert" className="error-text">{attachmentError}</p>}{mentionOpen && <div className="composer-popover"><strong>Reference a project file</strong>{projectFiles.filter((file) => !file.directory).slice(0, 20).map((file) => <button key={file.path} onClick={() => { void api.contextView(session?.id || 'draft').then((view) => api.updateContext(session?.id || 'draft', { attached: [...new Set([...view.selection.attached, file.path])] })).then(() => setAttachmentError('')).catch((error) => setAttachmentError(String(error))); setPrompt(`${prompt}${prompt && !prompt.endsWith(' ') ? ' ' : ''}@${file.path} `); setMentionOpen(false) }}><FileText size={14}/>{file.path}</button>)}</div>}
-      {toolsOpen && <div className="composer-popover"><strong>Tools for new sessions</strong>{['Bash','ViewImage','DecisionBatch','EntityExtract','SkillUse'].map((tool) => <label className="check-row" key={tool}><input type="checkbox" checked={!settings.disallowedTools.includes(tool)} onChange={(event) => void onSave({ disallowedTools: event.target.checked ? settings.disallowedTools.filter((value) => value !== tool) : [...settings.disallowedTools, tool] })}/>{tool}</label>)}</div>}
+      <div className="composer-bottom"><div className="composer-actions"><button className="secondary-button" onClick={() => { setToolsOpen(!toolsOpen) }} aria-expanded={toolsOpen}>Tools <ChevronDown size={14}/></button><span>Enter to send · Shift+Enter for a new line</span></div><div><button className="secondary-button" onClick={onStop} disabled={!session || sending}><Square size={13}/> Stop</button><button className="primary-button" onClick={onSend} disabled={sending || !prompt.trim()}><Send size={15}/> {sending ? 'Sending' : 'Send'}</button></div></div>
+      {toolsOpen && <div className="composer-popover"><strong>Tools for new sessions</strong>{['ListFiles','ReadFile','ApplyPatch','Bash','ViewImage','RepositorySearch','ProjectSearch','FindTools','DecisionBatch','EntityExtract','SkillUse'].map((tool) => <label className="check-row" key={tool}><input type="checkbox" checked={!settings.disallowedTools.includes(tool)} onChange={(event) => void onSave({ disallowedTools: event.target.checked ? settings.disallowedTools.filter((value) => value !== tool) : [...settings.disallowedTools, tool] })}/>{tool}</label>)}</div>}
     </div>
   </div>
 }
@@ -561,6 +566,8 @@ export default function App(): ReactNode {
         {view === 'diagnostics' && <DiagnosticsPage settings={settings} sessions={sessions} sessionId={activeId}/>}
         {view === 'review' && <div className="review-page-stack"><TaskWorkspaceReview onSource={() => { void openProject(projectPath).then(() => setView('review')) }}/><ReviewWorkspace key={editingWorkspace} onSteer={async (sessionId, feedback) => { await api.sendMessage(sessionId, feedback, crypto.randomUUID()); await selectSession(sessionId) }}/></div>}
         {view === 'files' && <EditorWorkspace key={editingWorkspace || projectPath} project={editingWorkspace || projectPath} onAttach={text => { setPrompt(value => value ? `${value}\n\n${text}` : text); setView('chat') }}/>}
+        {view === 'connections' && <ConnectionsPage onAttach={text => { setPrompt(value=>value?`${value}\n\n${text}`:text);setView('chat') }}/>}
+        {view === 'context' && <ContextInspector onPreferences={saveSettings} sessionId={activeId||undefined} onFile={path => { void Promise.all([api.editorRead(path),api.editorBase(path)]).then(([file,base])=>{changeEditor(file.workspace,value=>({tabs:value.tabs.some(tab=>tab.path===path)?value.tabs:[...value.tabs,{...file,saved:file.content,base}],active:path}));setEditingWorkspace(file.workspace);setView('files')}).catch(reason=>setError(String(reason))) }}/> }
         {view === 'skills' && <SkillsPage/>}
         {view === 'usage' && <UsageDashboard onSettings={() => setView('settings')}/>}
         {view === 'github' && <GitHubPage onOpenProject={async (path) => openProject(path)}/>}

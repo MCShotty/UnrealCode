@@ -3,6 +3,7 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/unreallabsai/unreal-agent/harness/contextbuilder"
@@ -42,4 +43,18 @@ func New(dependencies Dependencies) Coordinator {
 		dependencies: dependencies,
 		state:        newLoopState(),
 	}
+}
+
+// RebuildContext replays persisted items through the same context translation
+// used by Run, without starting tools, a model request, or an inbox. The caller
+// must hold its session idle/stopped boundary while reading the history.
+func RebuildContext(ctx context.Context, id session.ID, store sessionstore.Store, builder contextbuilder.Builder, registry tool.Registry) error {
+	current := &coordinator{dependencies: Dependencies{SessionID: id, Sessions: store, ContextBuilder: builder, Tools: registry}, state: newLoopState()}
+	if err := current.loadHistory(ctx); err != nil {
+		return err
+	}
+	if len(current.state.toolCalls) > 0 || current.state.availableInputs > current.state.deliveredInputs {
+		return errors.New("history has unfinished work; resume or settle it before compaction")
+	}
+	return nil
 }

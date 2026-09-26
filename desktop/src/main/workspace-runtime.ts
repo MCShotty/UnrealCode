@@ -14,6 +14,7 @@ import { credentialFor, getSettings } from './settings'
 import { gitChanges } from './files'
 import { TaskWorkspaces } from './task-workspaces'
 import type { TaskWorkspace } from '../shared/task-workspaces'
+import { RepositoryIndex } from './repository-index'
 
 export const projectData = (data: string, project: string): string => join(data, 'workspaces', createHash('sha256').update(project.toLowerCase()).digest('hex'))
 type Hooks = { event(event: AgentEvent): void; changed(): void; notify(sessionId: string, state: string): void; configure(bridge: DockerBridge): Promise<unknown>; hasTerminal(): boolean; reviewWorkspace?(workspace: TaskWorkspace): Promise<'isolated' | 'project' | 'cancel'> }
@@ -28,6 +29,7 @@ export class WorkspaceRuntime {
   readonly context: ProjectContext
   readonly queue: TaskQueue
   readonly index: ConversationIndex
+  readonly repository: RepositoryIndex
   private directory: string
   private sequences = new Map<string, number>()
   private failures = new Set<string>()
@@ -39,6 +41,7 @@ export class WorkspaceRuntime {
     this.tasks = new TaskWorkspaces(project, join(this.directory, 'tasks'), this.checkpoints.store)
     this.context = new ProjectContext(project, join(this.directory, 'context.json'))
     this.index = new ConversationIndex(project, join(this.directory, 'search'))
+    this.repository = new RepositoryIndex(project,join(this.directory,'repository-index.json'),()=>this.context.get().excluded)
     this.queue = new TaskQueue(join(this.directory, 'queue.json'), {
       canStart: async () => !this.pending && ![...this.children.values()].some(child => child.pending || child.checkpoints.busy) && !hooks.hasTerminal() && !this.checkpoints.busy && await this.bridge.request<boolean>('project.idle', {}),
       create: (task) => this.create(task.config, false),
@@ -65,7 +68,7 @@ export class WorkspaceRuntime {
       void this.index.ingest(event).catch(() => hooks.changed())
       const payload = event.payload as Record<string, unknown>
       if (event.event === 'session.needs_input') { this.queue.needsInput(event.sessionId, String(payload.question || 'Input required')); hooks.notify(event.sessionId, 'waiting_input') }
-      if (event.event === 'permission.requested') { this.queue.needsInput(event.sessionId, `${String(payload.tool || 'Operation')} needs approval`); hooks.notify(event.sessionId, 'waiting_input') }
+      if (event.event === 'permission.requested' || event.event === 'host.request') { this.queue.needsInput(event.sessionId, `${String(payload.tool || 'Operation')} needs approval`); hooks.notify(event.sessionId, 'waiting_input') }
       if (event.event === 'operation.update' && (payload.Status || payload.status) === 'failed') this.failures.add(event.sessionId)
       if (event.event === 'model.request.completed' && payload.success === false) this.failures.add(event.sessionId)
       void this.checkpoints.event(event).catch((error) => hooks.event({ ...event, event: 'desktop.state', payload: { state: 'failed', message: String(error) } }))
@@ -78,6 +81,7 @@ export class WorkspaceRuntime {
     await this.checkpoints.store.recover()
     await this.bridge.request('context.configure', { excluded: this.context.get().excluded })
     await this.hooks.configure(this.bridge)
+    this.repository.start()
     void this.syncIndex().catch(() => this.hooks.changed())
   }
   config(): BridgeSessionConfig {
@@ -90,7 +94,7 @@ export class WorkspaceRuntime {
       child = new WorkspaceRuntime(task.path, this.data, { ...this.hooks,
         event: event => { this.hooks.event(event); void this.index.ingest(event).catch(() => {})
           if (event.event === 'session.needs_input') this.queue.needsInput(event.sessionId, 'Task needs your input')
-          if (event.event === 'permission.requested') this.queue.needsInput(event.sessionId, 'Task needs operation approval')
+          if (event.event === 'permission.requested' || event.event === 'host.request') this.queue.needsInput(event.sessionId, 'Task needs operation approval')
           if (event.event === 'desktop.state') {
             const state = (event.payload as { state: string }).state
             if (['idle', 'failed', 'stopped'].includes(state)) void (async () => {
@@ -129,8 +133,9 @@ export class WorkspaceRuntime {
     for (const task of await this.tasks.list()) { const child = this.children.get(task.id); if (child?.bridge.status().ready) all.push(...await child.usage.summaries()); else all.push(...task.usageRecords || (task.usage ? [task.usage] : [])) }
     return all
   }
-  async stopAll(): Promise<void> { await Promise.all([this.bridge.stop(), ...[...this.children.values()].map(child => child.stopAll())]) }
+  async stopAll(): Promise<void> { this.repository.close();await Promise.all([this.bridge.stop(), ...[...this.children.values()].map(child => child.stopAll())]) }
   async configureAll(): Promise<void> { await this.hooks.configure(this.bridge); await Promise.all([...this.children.values()].filter(child => child.bridge.status().ready).map(child => child.configureAll())) }
+  async visitBridges(work: (bridge: DockerBridge) => Promise<void>): Promise<void> { if (this.bridge.status().ready) await work(this.bridge); await Promise.all([...this.children.values()].map(child => child.visitBridges(work))) }
   async create(config = this.config(), consumeDraft = true): Promise<string> {
     if (!this.isolated && config.workspace === 'isolated' && await this.tasks.available()) {
       return this.checkpoints.exclusive(async () => {
@@ -169,6 +174,10 @@ export class WorkspaceRuntime {
     if (typeof prompt !== 'string' || !prompt.trim() || Buffer.byteLength(prompt) > 768 * 1024) throw new Error('Message must contain text below 768 KB')
     this.pending++
     try {
+      if(getSettings().autoCompaction&&!this.checkpoints.busy&&this.pending===1) {
+        const usage=(await this.usage.summaries()).find(item=>item.sessionId===sessionId)
+        if(usage?.contextLimit&&usage.totals.latestInput>=usage.contextLimit*0.8&&await this.bridge.request<boolean>('project.idle',{})&&this.pending===1&&!this.checkpoints.busy)await this.compactContext(sessionId)
+      }
       const [credential, context] = await Promise.all([this.credential(sessionId), this.context.prepare(sessionId)])
       const missing = context.files.find((file) => !file.included && file.reason !== 'Excluded from automatic context')
       if (missing) throw new Error(`Review context file ${missing.path}: ${missing.reason}`)
@@ -213,6 +222,24 @@ export class WorkspaceRuntime {
     const prepared = await this.context.prepare(sessionId)
     const usage = sessionId === 'draft' ? undefined : (await this.usage.summaries()).find((item) => item.sessionId === sessionId)
     return { ...prepared, instructions: this.config().systemPrompt, latestInput: usage?.totals.latestInput, contextLimit: usage?.contextLimit }
+  }
+  async contextSummaries(sessionId:string):Promise<import('../shared/repository-context').ContextSummary[]> {
+    const owner=await this.owner(sessionId);if(owner!==this)return owner.contextSummaries(sessionId)
+    const summaries=await this.bridge.request<import('../shared/repository-context').ContextSummary[]>('context.summaries',{sessionId})
+    const directory=join(this.directory,'context-summaries');await fs.mkdir(directory,{recursive:true});const target=join(directory,`${sessionId}.json`),temporary=`${target}.${randomUUID()}.tmp`;await fs.writeFile(temporary,JSON.stringify(summaries),{mode:0o600});await fs.rename(temporary,target)
+    return summaries
+  }
+  async compactContext(sessionId:string):Promise<import('../shared/repository-context').ContextSummary> {
+    const owner=await this.owner(sessionId);if(owner!==this)return owner.compactContext(sessionId)
+    return this.checkpoints.exclusive(async()=>{
+      if(this.checkpoints.busy||!await this.bridge.request<boolean>('project.idle',{}))throw new Error('Finish or stop active work before compacting context')
+      const summary=await this.bridge.request<import('../shared/repository-context').ContextSummary>('context.compact',{sessionId,credential:await this.credential(sessionId)},150000)
+      await this.contextSummaries(sessionId);this.hooks.changed();return summary
+    })
+  }
+  async selectSummary(sessionId:string,id:string):Promise<void>{
+    const owner=await this.owner(sessionId);if(owner!==this)return owner.selectSummary(sessionId,id)
+    await this.checkpoints.exclusive(async()=>{if(this.checkpoints.busy||!await this.bridge.request<boolean>('project.idle',{}))throw new Error('Finish or stop active work before changing context');await this.bridge.request('context.summary.select',{sessionId,id});await this.contextSummaries(sessionId);this.hooks.changed()})
   }
   async updateContext(sessionId: string, patch: Partial<ContextSelection>): Promise<ContextSelection> {
     if (sessionId !== 'draft') { const owner = await this.owner(sessionId); if (owner !== this) return owner.updateContext(sessionId, patch) }

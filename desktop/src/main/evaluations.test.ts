@@ -45,7 +45,7 @@ it('runs paired immutable inputs, preserves usage, cleans worktrees, and never p
   const service = new Evaluations(join(root, 'reports'))
   const extendedConfig = { ...config, apiKey: 'unrecognized-provider-credential' }
   const id = await service.start(project, extendedConfig, request, { engine: 'jev', model: 'jev-latest', apiKey: 'private-evaluation-fixture', glinerEnabled: false }, ['excluded'])
-  await vi.waitFor(async () => expect((await service.list(project))[0].state).toBe('completed'), { timeout: 10000 })
+  await vi.waitFor(async () => { const report=(await service.list(project))[0]; expect(report.state,JSON.stringify(report)).toBe('completed') }, { timeout: 10000 })
   const report = (await service.list(project))[0]
   expect(report.arms.map(arm => arm.decisions)).toEqual([false, true])
   expect(report.arms.every(arm => !arm.worktree && arm.usage?.input === 20)).toBe(true)
@@ -94,7 +94,7 @@ it('retains modified tracked binary files that textual diff cannot recover', asy
   state.binary = true
   const service = new Evaluations(join(root, 'reports'))
   await service.start(project, config, request, { engine: 'jev', model: 'jev-latest', apiKey: 'fixture', glinerEnabled: false }, [])
-  await vi.waitFor(async () => expect((await service.list(project))[0].state).toBe('completed'), { timeout: 10000 })
+  await vi.waitFor(async () => { const report=(await service.list(project))[0]; expect(report.state,JSON.stringify(report)).toBe('completed') }, { timeout: 10000 })
   for (const arm of (await service.list(project))[0].arms) {
     expect(arm.worktree).toBeTruthy()
     expect(await readFile(join(arm.worktree!, 'asset.bin'))).toEqual(Buffer.from([0, 9, 2]))

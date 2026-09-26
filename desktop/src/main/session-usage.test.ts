@@ -54,4 +54,15 @@ describe('session usage and execution', () => {
     expect(summary.operations[0].durationMs).toBeUndefined()
     expect(summary.toolWallMs).toBe(0)
   })
+  it('excludes external approval waits and closes them only once', () => {
+    const summary=executionFromEvents('s1',[
+      event(1,'operation.started',{ID:'external',Status:'ready'},at(0)),
+      event(2,'host.request',{requestId:'approval',operationId:'external'},at(0)),
+      event(3,'operation.dispatched',{ID:'external'},at(300)),
+      event(4,'host.resolved',{requestId:'approval'},at(300)),
+      event(5,'host.resolved',{requestId:'approval'},at(500)),
+      event(6,'operation.update',{ID:'external',Status:'completed'},at(500))
+    ])
+    expect(summary).toMatchObject({toolWallMs:200,approvalWaitMs:300})
+  })
 })

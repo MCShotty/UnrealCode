@@ -4,7 +4,7 @@ import path from 'node:path'
 
 const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const lock = JSON.parse(readFileSync(path.join(desktop, 'package-lock.json'), 'utf8'))
-const allowedLicenses = new Set(['MIT', 'ISC', '0BSD'])
+const allowedLicenses = new Set(['MIT', 'ISC', '0BSD', 'BSD-2-Clause', 'BSD-3-Clause'])
 const packages = Object.entries(lock.packages)
   .filter(([location, metadata]) => location.startsWith('node_modules/') && !metadata.dev)
   .sort(([a], [b]) => a.localeCompare(b))

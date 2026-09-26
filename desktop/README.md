@@ -28,7 +28,7 @@ node scripts/qa.mjs --workspace --flows --motion
 node scripts/qa.mjs --workspace --flows --packaged
 ```
 
-The installer is `dist/UnrealCode Setup 0.7.0.exe`. It bundles backend source and builds a Docker image tagged with the app version and source fingerprint, so a rebuilt installer does not reuse an older backend image. No host Go installation is required. For a live Codex tool call, use `node scripts/qa.mjs --workspace --temp-workspace --live --tool`. A synthetic Jev integration check is `node scripts/qa.mjs --workspace --temp-workspace --decision` when `TYPESAFE_API_KEY` is available.
+The installer is `dist/UnrealCode Setup 0.8.0.exe`. It bundles backend source and builds a Docker image tagged with the app version and source fingerprint, so a rebuilt installer does not reuse an older backend image. No host Go installation is required. For a live Codex tool call, use `node scripts/qa-live.mjs --codex`. A synthetic Jev integration check is `node scripts/qa.mjs --workspace --temp-workspace --decision` when `TYPESAFE_API_KEY` is available.
 
 The installer includes third-party license texts in `resources/licenses`, plus Electron and Chromium notices at the application root. `npm run build:win` regenerates the npm notices and stops if a new dependency's license needs review.
 
@@ -43,7 +43,39 @@ On Windows systems with HTTPS inspection, use `$env:NODE_OPTIONS='--use-system-c
 - With the host Codex CLI and existing ChatGPT login, Usage reads actual subscription percentages and reset times through Codex app-server. It refreshes no more than once per minute. Without the CLI or login, the account card shows an unavailable state; session tokens remain visible.
 - Provider response headers show short-window rate-limit headroom separately from account totals. The Usage page reports measured input, output, cached, cache-write, reasoning, and decision tokens without estimated dollar costs. Context percentage appears only when a verified model limit is available.
 - The chat activity rail shows overlapping model and tool timings and can cancel one active operation without stopping the session. Telemetry is queued off the coordinator's critical path. The interface honors reduced motion and keeps terminal text stationary.
-- Hooks, MCP servers, plugins, subagents, and a Claude subscription session engine remain outside this release.
+- Hooks, plugins, specialist agents, and a Claude subscription session engine remain outside this release.
+
+## Connections and context (0.8)
+
+Connections supports remote Streamable HTTP, Windows stdio and project-container
+stdio servers through the official MCP SDK. Each project grants selected tools,
+resources and prompts. Windows servers have host-account access and require an
+explicit host trust action. Every external tool call has a separate operation
+approval, including Agent mode. Server annotations cannot grant permissions;
+server-initiated sampling is disabled. Bearer tokens, server-specific environment
+values and OAuth/PKCE credentials stay in the encrypted main-process vault.
+OAuth discovery requires server support for dynamic client registration.
+
+FindTools searches the enabled catalog and loads relevant schemas between model
+requests. Active definitions retain their identities; revoking a tool cancels its
+active calls. Restart requires reconnecting and new approvals. Calls with an
+unknown outcome are never automatically repeated.
+
+Context shows selected sources, inclusion reasons, exclusions and measured input
+size. RepositorySearch uses an incremental local index and checks excerpt
+freshness. The selected decision engine may rank focused excerpts when available
+and permitted. Composer file attachments and explicit skill selection are local.
+Context summaries preserve original events, record source fingerprints and
+measured usage, and can be reversed. Automatic compaction is off by default and
+only runs at idle boundaries at 80% of a verified context limit.
+
+GitHub issues and selected PR review comments can become linked queue tasks.
+Review displays checks and selected failure logs. Pushes and PR operations show
+native previews tied to the exact commit and repository.
+
+For automated offscreen checks, set `UNREAL_DESKTOP_BACKGROUND_CHECK=1`; the
+test scripts supply an isolated `UNREAL_DESKTOP_USER_DATA` directory. This mode
+uses software rendering and cannot establish native window-chrome behavior.
 
 ## Review and recovery (0.4)
 

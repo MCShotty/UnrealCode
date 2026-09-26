@@ -9,7 +9,7 @@ const defaults: Settings = {
   recentProjects: [], trustedProjects: [], provider: 'openai-codex', model: 'gpt-6-astra',
   thinkingLevel: 'high', systemPrompt: '', projectInstructions: {}, theme: 'system', disallowedTools: [], baseUrl: '',
   layout: { sessionWidth: 246, activityWidth: 340, sessions: true, activity: true, focus: false },
-  notifications: false, executionMode: 'ask', taskIsolation: true,
+  notifications: false, executionMode: 'ask', taskIsolation: true, autoCompaction: false,
   decisionEngine: 'off', decisionSetupSeen: false, decisionModel: 'jev-latest', decisionCloudProjects: [], decisionCloudDeclinedProjects: [], glinerEnabled: false
 }
 
@@ -54,6 +54,7 @@ export function getSettings(): Settings {
 export function updateSettings(patch: Partial<Settings>): Settings {
   const allowed: (keyof Settings)[] = ['provider', 'model', 'thinkingLevel', 'systemPrompt', 'projectInstructions', 'theme', 'disallowedTools', 'baseUrl', 'decisionEngine', 'decisionSetupSeen', 'decisionModel', 'glinerEnabled']
   const next = getSettings()
+  if(patch.autoCompaction!==undefined){if(typeof patch.autoCompaction!=='boolean')throw new Error('Invalid compaction preference');next.autoCompaction=patch.autoCompaction}
   if (patch.taskIsolation !== undefined) { if (typeof patch.taskIsolation !== 'boolean') throw new Error('Invalid isolation preference'); next.taskIsolation = patch.taskIsolation }
   if (patch.executionMode !== undefined) { if (!['plan', 'ask', 'agent'].includes(patch.executionMode)) throw new Error('Invalid execution mode'); next.executionMode = patch.executionMode }
   if (patch.notifications !== undefined) { if (typeof patch.notifications !== 'boolean') throw new Error('Invalid notification preference'); next.notifications = patch.notifications }

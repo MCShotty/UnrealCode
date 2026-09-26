@@ -26,6 +26,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test -- --testTimeout=15000
+      - run: node --test scripts/check-secret-patterns.mjs
       - run: npm run build:win
       - run: node scripts/audit-release.mjs
       - run: node scripts/qa.mjs --no-docker --credentials --packaged

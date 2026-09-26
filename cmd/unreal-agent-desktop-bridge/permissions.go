@@ -91,8 +91,10 @@ func operationPermission(value operation.Operation) (tool string, args any, read
 			if json.Unmarshal(state.Plan.Data, &input) == nil {
 				return map[string]string{"read": "ReadFile", "list": "ListFiles", "patch": "ApplyPatch"}[input.Action], input, input.Action == "read" || input.Action == "list"
 			}
-		case workflowPlan, decisionPlanType, entityPlanType:
+		case workflowPlan, decisionPlanType, entityPlanType, catalogPlan, repositoryPlan:
 			return string(state.Plan.Type), state.Plan.Data, true
+		case mcpPlan:
+			return "MCP", state.Plan.Data, false
 		}
 	}
 	return string(value.Type), value.State, false
@@ -132,8 +134,12 @@ func (m *permissionManager) Add(value operation.Operation) error {
 		m.queueLocked(terminatedOperation(value, "Plan mode only permits dedicated reading and search tools"))
 		return nil
 	}
-	if readOnly || m.mode == "agent" || m.mode == "" {
-		m.emit("operation.dispatched", value)
+	// MCP actions are approved by the main-process broker. Plan was rejected
+	// above; Ask must not create a second, independent approval in the container.
+	if readOnly || tool == "MCP" || m.mode == "agent" || m.mode == "" {
+		if tool != "MCP" {
+			m.emit("operation.dispatched", value)
+		}
 		if err := m.inner.Add(value); err != nil {
 			return err
 		}

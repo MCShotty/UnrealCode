@@ -2,6 +2,48 @@
 
 Active checkout: `I:\UnrealCode`; private origin: `MCShotty/UnrealCode`.
 
+## 0.8 connections and context acceptance
+
+Implemented the official-SDK MCP broker for all three execution locations,
+project grants, scoped credentials, OAuth/PKCE, operation approval/replay guards,
+selective schemas, local repository indexing, context attachments/inspection,
+reversible compaction and GitHub task intake with commit-bound remote previews.
+Server sampling is refused. In-flight calls retain definitions; tool revocation
+cancels affected calls. No connection is silently reactivated after restart.
+
+Verified: 72 desktop tests, private-key scanner regression, TypeScript, the full
+Go race suite and vet, three Python worker tests and backend capability checks.
+Packaged Electron/Docker checks passed for host/container/HTTP connections,
+encrypted server credentials and redacted results, retrieval exclusions,
+compaction/continuation/full-history restoration, native coding approvals,
+worktree integration, Monaco editing/conflicts/search, per-project queues,
+handoff, context, local search, required input, notification routing and diagnostics.
+Dark/light and reduced-motion captures were inspected using software offscreen
+rendering. Native window placement/chrome was not revalidated; Windows continued
+reporting desktop 1 after the user's desktop-2 switch, so no visible test window
+was opened. No external GitHub comments or reviews were submitted by these tests.
+The live Codex subscription check passed using the existing external login and
+native ReadFile in Plan mode. Other main-model providers were not live-tested.
+
+Synthetic bridge comparison, 12 runs each against 0.6.1: median task 419.6 ms
+versus 406.7 ms, steering acknowledgement 1.21 ms versus 1.19 ms, and independent
+tool overlap 272 ms versus 269 ms. Both tools sleep for 250 ms. These observations
+exclude desktop rendering, indexing and snapshots and do not establish real-task
+speed gains or token savings. Candidate backend: `0.8.0-c1762b852680`.
+
+Credential/package gate: 612 files/artifacts at final-package audit,
+zero matches, five local credential values compared without printing them, and
+198 production npm notices checked. Dependency test fixtures are excluded.
+The PEM rule now requires key material; generated-key and escaped-key regressions
+pass. Jev 1.13.0's focused semantic review supported the parser/header finding
+(confidence 0.99) and scanner-test coverage (0.97); it is supplementary evidence.
+Official MCP SDK and Ajv are MIT; added BSD-2/BSD-3 dependencies include notices.
+
+Installer SHA-256:
+`37119CF34DF53930663B7076F8C241CD9165F8484F0DD9809BE57A015668B28A`.
+The 0.x installer remains unsigned. Hosted Actions remain unverified after
+account billing/spending limits blocked runner startup.
+
 ## 0.6.1 stabilization
 
 Bug-hunt fixes cover queue/message races, provider tool histories, GitHub origin

@@ -113,7 +113,7 @@ export class DockerBridge {
     child.on('exit', (code) => this.fail(new Error(stderr.trim() || `Docker backend exited (${code})`)))
     try {
       const health = await this.request<{ version: number; capabilities?: string[] }>('health', {}, 30000)
-      if (health.version !== 1 || !['permissions.v1', 'files.v1', 'sessions.v1'].every(value => health.capabilities?.includes(value))) {
+      if (health.version !== 1 || !['permissions.v1', 'files.v1', 'sessions.v1', 'mcp.v1', 'context.v1'].every(value => health.capabilities?.includes(value))) {
         throw new Error('The Docker backend is incompatible with this desktop version. Rebuild the backend image and reopen the project.')
       }
       if (evaluationGit) await this.docker(['exec', this.container, 'sh', '-c', 'if test ! -f /state/evaluation-git/HEAD; then env -u GIT_DIR -u GIT_WORK_TREE git init --bare /state/evaluation-git && git add --all && git -c user.name=UnrealCode -c user.email=evaluation@localhost commit --allow-empty -m "Task input snapshot"; fi'], 60000)
