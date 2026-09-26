@@ -7,9 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/unreallabsai/unreal-agent/harness/llm"
 	"github.com/unreallabsai/unreal-agent/harness/session"
-	"github.com/unreallabsai/unreal-agent/harness/sessionstore"
 )
 
 type postflightCandidate struct {
@@ -96,24 +94,7 @@ func (a *app) forgetPostflight(id session.ID, messageID string) {
 	a.postMu.Unlock()
 }
 
-func (a *app) maybePostflight(id session.ID, item sessionstore.Item) {
-	if item.Kind != sessionstore.ItemModelResponse {
-		return
-	}
-	response, ok := item.Data.(sessionstore.ModelResponse)
-	if !ok {
-		return
-	}
-	final := false
-	for _, output := range response.Response.Output {
-		if message, ok := output.Data.(llm.Message); ok && message.Phase == "final_answer" {
-			final = true
-			break
-		}
-	}
-	if !final {
-		return
-	}
+func (a *app) finishPostflight(id session.ID) {
 	a.postMu.Lock()
 	candidate, found := a.postflight[id]
 	delete(a.postflight, id)
@@ -122,7 +103,8 @@ func (a *app) maybePostflight(id session.ID, item sessionstore.Item) {
 		return
 	}
 	a.runs.Add(1)
-	go func() { defer a.runs.Done(); a.verifyPostflight(id, candidate) }()
+	a.decisionPending.Add(1)
+	go func() { defer a.runs.Done(); defer a.decisionPending.Add(-1); a.verifyPostflight(id, candidate) }()
 }
 
 func (a *app) verifyPostflight(id session.ID, candidate postflightCandidate) {
@@ -151,5 +133,5 @@ func (a *app) verifyPostflight(id session.ID, candidate postflightCandidate) {
 		_ = a.events.append(id, "decision.error", map[string]string{"message": err.Error()}, 0)
 		return
 	}
-	_ = a.events.append(id, "decision.result", result, 0)
+	_ = a.events.append(id, "decision.result", traceDecision(result, batch, candidate.messageID, "Post-change semantic verification"), 0)
 }

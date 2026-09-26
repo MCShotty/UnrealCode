@@ -59,19 +59,20 @@ type runningSession struct {
 }
 
 type app struct {
-	ctx         context.Context
-	store       *lockedStore
-	events      *eventLog
-	root        string
-	workspace   string
-	mu          sync.Mutex
-	running     map[session.ID]*runningSession
-	makeClient  func(sessionConfig, credential) (agentrunner.Client, string, error)
-	decision    *decisionRuntime
-	postMu      sync.Mutex
-	postflight  map[session.ID]postflightCandidate
-	runs        sync.WaitGroup
-	preferences contextPreferences
+	decisionPending atomic.Int64
+	ctx             context.Context
+	store           *lockedStore
+	events          *eventLog
+	root            string
+	workspace       string
+	mu              sync.Mutex
+	running         map[session.ID]*runningSession
+	makeClient      func(sessionConfig, credential) (agentrunner.Client, string, error)
+	decision        *decisionRuntime
+	postMu          sync.Mutex
+	postflight      map[session.ID]postflightCandidate
+	runs            sync.WaitGroup
+	preferences     contextPreferences
 }
 
 func newApp(ctx context.Context, stateDirectory string, out *output) (*app, error) {
@@ -88,7 +89,6 @@ func newApp(ctx context.Context, stateDirectory string, out *output) (*app, erro
 		if err := a.events.append(id, "session.item", projectItem(item), uint64(item.Sequence)); err != nil {
 			fmt.Fprintln(os.Stderr, "activity event:", err)
 		}
-		a.maybePostflight(id, item)
 	})
 	return a, nil
 }
@@ -267,7 +267,10 @@ func (a *app) start(id session.ID, secret credential) (*runningSession, error) {
 			run.busy.Store(busy)
 			a.events.enqueue(id, "session.activity", map[string]bool{"busy": busy})
 		},
-		OnIdle:                func(ids []inbox.ID) { a.events.enqueue(id, "session.idle", map[string]any{"messageIds": ids}) },
+		OnIdle: func(ids []inbox.ID) {
+			a.finishPostflight(id)
+			a.events.enqueue(id, "session.idle", map[string]any{"messageIds": ids})
+		},
 		ToolHeartbeatInterval: 10 * time.Minute, SessionID: id, Inbox: inputs,
 		Restored: restored, Sessions: a.store, ContextBuilder: builder,
 		LLM: &observedClient{inner: client, events: a.events, id: id}, Tools: registry, Operations: manager,
@@ -344,11 +347,22 @@ func (m *observedManager) forward() {
 	defer close(m.updates)
 	for value := range m.inner.Updates() {
 		m.mu.Lock()
+		previous := m.known[value.ID]
 		m.known[value.ID] = value.Status
 		m.mu.Unlock()
 		select {
 		case m.updates <- value:
 			m.events.enqueue(m.id, "operation.update", value)
+			if value.Status == operation.StatusCompleted && previous != operation.StatusCompleted && value.Type == operation.TypeRemoteJob {
+				state, err := operation.DecodeRemoteJobState(value)
+				if err == nil && state.Plan.Type == decisionPlanType {
+					var batch decisionBatch
+					var result decisionResult
+					if json.Unmarshal(state.Plan.Data, &batch) == nil && json.Unmarshal([]byte(state.TerminalResult), &result) == nil {
+						m.events.enqueue(m.id, "decision.result", traceDecision(result, batch, string(value.ID), "Explicit bounded decision"))
+					}
+				}
+			}
 		case <-m.ctx.Done():
 			return
 		}

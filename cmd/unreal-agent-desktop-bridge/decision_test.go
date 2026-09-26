@@ -192,4 +192,15 @@ func TestPostChangeCheckRecordsFocusedDecision(t *testing.T) {
 	if err != nil || len(entries) != 1 || entries[0].Event != "decision.result" {
 		t.Fatalf("postflight event: %#v %v", entries, err)
 	}
+	encoded, err := json.Marshal(entries[0].Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var trace map[string]any
+	if err := json.Unmarshal(encoded, &trace); err != nil {
+		t.Fatal(err)
+	}
+	if trace["purpose"] != "Post-change semantic verification" || trace["evidence"] == nil || trace["questions"] == nil || trace["answers"] == nil {
+		t.Fatalf("missing decision trace fields: %s", encoded)
+	}
 }

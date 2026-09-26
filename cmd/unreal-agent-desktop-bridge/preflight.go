@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"regexp"
 	"strings"
+	"uuid"
 
 	"github.com/unreallabsai/unreal-agent/harness/session"
 )
@@ -40,7 +41,7 @@ func (a *app) preflight(id session.ID, prompt string) string {
 		_ = a.events.append(id, "decision.error", map[string]string{"message": err.Error()}, 0)
 		return ""
 	}
-	_ = a.events.append(id, "decision.result", result, 0)
+	_ = a.events.append(id, "decision.result", traceDecision(result, batch, uuid.New().String(), "Request routing and risk signals"), 0)
 	encoded, err := json.Marshal(result)
 	if err != nil {
 		return ""

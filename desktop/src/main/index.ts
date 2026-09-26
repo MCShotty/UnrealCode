@@ -18,6 +18,10 @@ import { backendEnvironment } from './child-environment'
 import { WorkspaceRuntime, projectData } from './workspace-runtime'
 import { ConversationIndex } from './conversation-index'
 import type { ContextSelection } from '../shared/workflow'
+import { modelHealth } from './model-health'
+import { Evaluations } from './evaluations'
+import { DecisionOverrides, decisionTraces } from './decision-trace'
+import type { EvaluationRequest } from '../shared/diagnostics'
 
 if (process.env.UNREAL_DESKTOP_USER_DATA) {
   mkdirSync(process.env.UNREAL_DESKTOP_USER_DATA, { recursive: true })
@@ -30,6 +34,7 @@ let bridge = new DockerBridge()
 const workspaces = new Map<string, WorkspaceRuntime>()
 let selected: WorkspaceRuntime | null = null
 const accountUsage = new AccountUsageService()
+const evaluations = new Evaluations(join(app.getPath('userData'), 'evaluations'))
 let sessionUsage = new SessionUsageService(bridge)
 const execFileAsync = promisify(execFile)
 let window: BrowserWindow | null = null
@@ -142,6 +147,23 @@ async function openWorkspace(requested: string): Promise<ReturnType<DockerBridge
 }
 
 function registerIPC(): void {
+  ipcMain.handle('models:health', (_event, provider: Provider, baseUrl: string, model: string, test: boolean) => modelHealth(provider, baseUrl, model, test))
+  ipcMain.handle('decision:traces', async (_event, sessionId: string) => {
+    const owner = runtime(), notes = new DecisionOverrides(join(projectData(app.getPath('userData'), owner.project), 'decision-overrides'))
+    return notes.apply(sessionId, decisionTraces(await owner.events(sessionId)))
+  })
+  ipcMain.handle('decision:override', async (_event, sessionId: string, id: string, note: string) => {
+    const owner = runtime(), notes = new DecisionOverrides(join(projectData(app.getPath('userData'), owner.project), 'decision-overrides'))
+    return notes.save(sessionId, id, note, decisionTraces(await owner.events(sessionId)))
+  })
+  ipcMain.handle('evaluation:list', () => evaluations.list(project()))
+  ipcMain.handle('evaluation:start', async (_event, request: EvaluationRequest) => {
+    const owner = runtime(), settings = getSettings()
+    const key = settings.decisionEngine === 'jev' && settings.decisionCloudProjects.includes(owner.project) ? await typeSafeKey() : ''
+    return evaluations.start(owner.project, owner.config(), request, { engine: settings.decisionEngine, model: settings.decisionModel, apiKey: key, glinerEnabled: settings.glinerEnabled }, owner.context.get().excluded)
+  })
+  ipcMain.handle('evaluation:cancel', async (_event, id: string) => { if (!(await evaluations.list(project())).some(item => item.id === id)) throw new Error('Evaluation not in this project'); return evaluations.cancel(id) })
+  ipcMain.handle('evaluation:cleanup', (_event, id: string) => evaluations.cleanup(project(), id))
   const checkpointService = (): CheckpointService => { if (!checkpoints) throw new Error('Open a project first'); return checkpoints }
   const idleMutation = <T>(work: (root: string) => Promise<T>): Promise<T> => {
     const owner = runtime()
@@ -330,5 +352,5 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
 
-app.on('before-quit', () => { closeTerminals(); for (const owner of workspaces.values()) void owner.bridge.stop() })
+app.on('before-quit', () => { closeTerminals(); evaluations.stopAll(); for (const owner of workspaces.values()) void owner.bridge.stop() })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

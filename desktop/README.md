@@ -28,7 +28,7 @@ node scripts/qa.mjs --workspace --flows --motion
 node scripts/qa.mjs --workspace --flows --packaged
 ```
 
-The installer is `dist/UnrealCode Setup 0.5.0.exe`. It bundles backend source and builds a Docker image tagged with the app version and source fingerprint, so a rebuilt installer does not reuse an older backend image. No host Go installation is required. For a live Codex tool call, use `node scripts/qa.mjs --workspace --temp-workspace --live --tool`. A synthetic Jev integration check is `node scripts/qa.mjs --workspace --temp-workspace --decision` when `TYPESAFE_API_KEY` is available.
+The installer is `dist/UnrealCode Setup 0.6.0.exe`. It bundles backend source and builds a Docker image tagged with the app version and source fingerprint, so a rebuilt installer does not reuse an older backend image. No host Go installation is required. For a live Codex tool call, use `node scripts/qa.mjs --workspace --temp-workspace --live --tool`. A synthetic Jev integration check is `node scripts/qa.mjs --workspace --temp-workspace --decision` when `TYPESAFE_API_KEY` is available.
 
 The installer includes third-party license texts in `resources/licenses`, plus Electron and Chromium notices at the application root. `npm run build:win` regenerates the npm notices and stops if a new dependency's license needs review.
 
@@ -93,3 +93,39 @@ Windows notifications are opt-in under Appearance, for completion, failure, and
 required input. Clicking one opens its project and session. Queue, context, links,
 and indexes live in app data. `node scripts/qa-workflow.mjs --packaged` runs the
 fake-provider Docker/Electron workflow verification without live provider keys.
+
+## Diagnostics and evaluation (0.6)
+
+Diagnostics checks local model discovery and connectivity. Ollama capabilities and
+model context metadata are shown only when reported; metadata is not presented as
+the active session's context allocation. The optional response test sends only a
+small fixed prompt and reports observed latency and returned token counts.
+
+Decision traces preserve purpose, focused evidence, source references, questions,
+probability distributions, model version, latency, and returned usage. Explicit
+user override notes are stored locally. Legacy events label missing fields.
+Post-change checks run once the coordinator becomes idle, including providers
+that do not supply a final-answer phase. Explicit DecisionBatch calls now also
+contribute to measured decision usage.
+
+Evaluations require selected tasks, completion criteria, a run limit (at most 20),
+and a clean committed repository. Each task has a main-model-only and a selected-
+decision-engine run in separate disposable worktrees. Credentials stay in memory;
+existing project consent applies. Each container builds an independent Git index
+in its private state volume, without exposing the source repository's Git metadata.
+Instructions, provider/model, revision, and inputs are fixed for the comparison.
+The selected Laya worker can be installed on demand in an isolated runtime.
+
+Reports retain criteria, command test results, elapsed wall time including setup,
+measured tokens, decision traces, explanations, and diffs. Results are observations,
+not automatic claims of quality or savings. Uncaptured/binary/oversized generated
+files keep their worktree for inspection. Successful capture removes the disposable
+worktree and, after usage is recorded, its evaluation-only Docker state volume.
+Failed cleanup exposes retained paths and a cleanup control. Cancellation stops
+the active runtime; restart marks unfinished evaluations interrupted and never
+automatically resumes them. Ordinary session totals exclude evaluation sessions;
+provider account reports still include their real usage.
+
+`node scripts/qa-diagnostics.mjs --packaged` checks local fixture health and UI.
+Add `--live-decisions` to explicitly run a two-arm synthetic worktree comparison
+using the configured TypeSafe key; its main model remains a local test fixture.

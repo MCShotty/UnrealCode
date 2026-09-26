@@ -1,0 +1,7 @@
+import type { BridgeSessionConfig, UsageTotals } from './api'
+export type ModelHealth = { checkedAt: string; connected: boolean; models: string[]; model: string; capabilities: string[]; contextLimit?: number; contextSource?: string; latencyMs: number; message: string; response?: string; inputTokens?: number; outputTokens?: number }
+export type EvaluationTask = { prompt: string; criteria: string; testCommand: string }
+export type EvaluationRequest = { tasks: EvaluationTask[]; runLimit: number; timeoutMinutes: number }
+export type EvaluationArm = { task: number; decisions: boolean; state: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; sessionId?: string; elapsedMs?: number; usage?: UsageTotals; tests?: { exitCode: number; output: string }; diff?: string; createdFiles?: Array<{ path: string; content?: string; reason?: string }>; explanation?: string; decisionTrace?: DecisionTrace[]; error?: string; worktree?: string; retainedVolume?: string }
+export type EvaluationReport = { id: string; project: string; createdAt: string; revision: string; config: BridgeSessionConfig; engine: string; model: string; request: EvaluationRequest; state: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'; arms: EvaluationArm[]; error?: string }
+export type DecisionTrace = { id: string; purpose: string; engine: string; model: string; sourceRefs: string[]; questions: unknown; evidence: unknown; answers: unknown; usage?: unknown; durationMs: number; recordedAt?: string; override?: string }

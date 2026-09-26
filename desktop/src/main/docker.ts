@@ -82,7 +82,7 @@ export class DockerBridge {
     await this.docker(args, 10 * 60 * 1000)
   }
 
-  async start(projectPath: string): Promise<DockerStatus> {
+  async start(projectPath: string, evaluationGit = false): Promise<DockerStatus> {
     await this.stop()
     this.message = 'Checking Docker Desktop…'
     this.onStatus(this.status())
@@ -90,7 +90,7 @@ export class DockerBridge {
     catch { throw new Error('Docker Desktop Linux engine is not running. Start Docker Desktop and try again.') }
     await this.ensureImage()
     const digest = createHash('sha256').update(projectPath.toLocaleLowerCase()).digest('hex').slice(0, 20)
-    const volume = `unrealcode-${digest}`
+    const volume = `unrealcode-${evaluationGit ? 'eval-' : ''}${digest}`
     await this.migrateStateVolume(projectPath, volume)
     this.container = `unrealcode-${digest.slice(0, 8)}-${randomUUID().slice(0, 8)}`
     this.project = projectPath
@@ -100,7 +100,8 @@ export class DockerBridge {
       '--cap-drop=ALL', '--security-opt=no-new-privileges',
       '--mount', `type=bind,source=${projectPath},target=/workspace`,
       '--mount', `type=volume,source=${volume},target=/state`,
-      '--tmpfs', '/tmp:rw,nosuid,nodev,size=256m', tag
+      '--tmpfs', '/tmp:rw,nosuid,nodev,size=256m',
+      ...(evaluationGit ? ['-e', 'GIT_DIR=/state/evaluation-git', '-e', 'GIT_WORK_TREE=/workspace'] : []), tag
     ]
     const child = spawn('docker', args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: backendEnvironment() })
     this.process = child
@@ -112,6 +113,7 @@ export class DockerBridge {
     child.on('exit', (code) => this.fail(new Error(stderr.trim() || `Docker backend exited (${code})`)))
     try {
       await this.request('health', {}, 30000)
+      if (evaluationGit) await this.docker(['exec', this.container, 'sh', '-c', 'env -u GIT_DIR -u GIT_WORK_TREE git init --bare /state/evaluation-git && git add --all && git -c user.name=UnrealCode -c user.email=evaluation@localhost commit --allow-empty -m "Evaluation input snapshot"'], 60000)
       this.message = 'Container running'
       this.onStatus(this.status())
       return this.status()

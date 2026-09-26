@@ -1,10 +1,11 @@
 import type { Provider } from '../shared/api'
 import { getKey } from './settings'
 
-function localURL(value: string, provider: Provider): URL {
+export function localURL(value: string, provider: Provider): URL {
   const fallback = provider === 'ollama' ? 'http://localhost:11434/v1' : ''
   if (!value.trim() && !fallback) throw new Error('Enter a local model server URL')
   const url = new URL(value.trim() || fallback)
+  if (url.username || url.password || url.search || url.hash) throw new Error('Use a model server URL without embedded credentials or query parameters')
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Model server must use HTTP or HTTPS')
   const host = url.hostname.toLowerCase()
   const octets = host.split('.').map(Number)
@@ -22,7 +23,7 @@ export async function discoverModels(provider: Provider, baseUrl: string): Promi
   const base = url.pathname.replace(/\/$/, '') || '/v1'
   url.pathname = provider === 'ollama' ? '/api/tags' : `${base === '/' ? '' : base}/models`
   const key = provider === 'openai-compatible' ? getKey(provider) : ''
-  const response = await fetch(url, { headers: key ? { Authorization: `Bearer ${key}` } : {}, signal: AbortSignal.timeout(8000) })
+  const response = await fetch(url, { headers: key ? { Authorization: `Bearer ${key}` } : {}, redirect: 'error', signal: AbortSignal.timeout(8000) })
   if (!response.ok) throw new Error(`Model server returned HTTP ${response.status}`)
   const body = await response.text()
   if (body.length > 1024 * 1024) throw new Error('Model list is too large')

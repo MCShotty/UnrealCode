@@ -28,8 +28,9 @@ try {
  page.on('pageerror', error => report.errors.push(error.message))
  await page.getByRole('button', { name: 'Set up later' }).click()
  await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false }) })
+ await app.evaluate(({ Notification }) => { globalThis.__qaNotifications = []; Notification.prototype.show = function () { globalThis.__qaNotifications.push(this) } })
  const endpoint = `http://localhost:${server.address().port}/v1`
- await page.evaluate(baseUrl => window.unreal.updateSettings({ provider: 'openai-compatible', baseUrl, model: 'fake-workflow', theme: 'dark' }), endpoint)
+ await page.evaluate(baseUrl => window.unreal.updateSettings({ provider: 'openai-compatible', baseUrl, model: 'fake-workflow', theme: 'dark', notifications: true }), endpoint)
  const wait = async fn => { const end = Date.now() + 120000; while (Date.now() < end) { if (await page.evaluate(fn)) return; await new Promise(resolve => setTimeout(resolve, 100)) } throw Error('Workflow state timed out') }
  await page.evaluate(path => window.unreal.openProject(path, true), projects[0])
  await page.evaluate(async () => { await window.unreal.updateContext('draft', { pinned: ['reference.txt', 'excluded.txt'], excluded: ['excluded.txt'] }); await window.unreal.queueAdd('SLOW_TASK first'); await window.unreal.queueAdd('second queue task'); await window.unreal.queuePause(false) })
@@ -62,6 +63,11 @@ try {
  assert((await page.evaluate(() => window.unreal.queueSnapshot())).paused)
  await page.evaluate(() => window.unreal.queuePause(false))
  await wait(async () => (await window.unreal.queueSnapshot()).tasks.every(task => task.state === 'completed'))
+ await page.evaluate(path => window.unreal.openProject(path, true), projects[1])
+ const notifications = await app.evaluate(() => { const values = globalThis.__qaNotifications; const notification = values.find(value => value.body === 'a'); if (notification) notification.emit('click'); return values.length })
+ assert(notifications > 0)
+ await wait(async () => (await window.unreal.projectPath()).endsWith('\\a'))
+ report.notificationRouting = true
  await page.reload()
  await page.getByRole('button', { name: 'Workflow', exact: true }).click()
  await page.getByRole('heading', { name: 'Workflow', exact: true }).waitFor()

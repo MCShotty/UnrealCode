@@ -74,13 +74,13 @@ export class ConversationIndex {
   addFiles(sessionId: string, seq: number, paths: string[]): Promise<void> {
     // File names augment an existing canonical event rather than inventing sequence numbers.
     const write = this.writes.then(async () => {
-    await this.load()
-    const row = this.rows.get(sessionId)?.get(seq)
-    if (!row || !paths.length) return
-    const text = `${row.text}\nChanged files:\n${paths.join('\n')}`
-    const updated = { ...row, text }
-    await fs.appendFile(this.file(sessionId), `\n${JSON.stringify(updated)}\n`, { mode: 0o600 })
-    this.rows.get(sessionId)!.set(seq, updated)
+      await this.load()
+      const row = this.rows.get(sessionId)?.get(seq)
+      if (!row || !paths.length) return
+      const text = `${row.text}\nChanged files:\n${paths.join('\n')}`
+      const updated = { ...row, text }
+      await fs.appendFile(this.file(sessionId), `\n${JSON.stringify(updated)}\n`, { mode: 0o600 })
+      this.rows.get(sessionId)!.set(seq, updated)
     })
     this.writes = write.catch(() => {})
     return write

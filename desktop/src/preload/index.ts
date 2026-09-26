@@ -3,6 +3,13 @@ import type { DesktopAPI } from '../shared/api'
 
 const invoke = (name: string, ...args: unknown[]): Promise<any> => ipcRenderer.invoke(name, ...args)
 const api: DesktopAPI = {
+  modelHealth: (provider, baseUrl, model, test) => invoke('models:health', provider, baseUrl, model, test),
+  decisionTraces: (sessionId) => invoke('decision:traces', sessionId),
+  decisionOverride: (sessionId, id, note) => invoke('decision:override', sessionId, id, note),
+  evaluations: () => invoke('evaluation:list'),
+  evaluationStart: (request) => invoke('evaluation:start', request),
+  evaluationCancel: (id) => invoke('evaluation:cancel', id),
+  evaluationCleanup: (id) => invoke('evaluation:cleanup', id),
   queueSnapshot: () => invoke('queue:get'),
   queueAdd: (prompt) => invoke('queue:add', prompt),
   queueEdit: (id, prompt) => invoke('queue:edit', id, prompt),

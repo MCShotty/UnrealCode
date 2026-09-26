@@ -92,6 +92,8 @@ func (a *app) dispatch(req request) (any, error) {
 			}
 		}
 		return true, nil
+	case "decision.idle":
+		return a.decisionPending.Load() == 0, nil
 	case "health":
 		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion}, nil
 	case "decision.configure":

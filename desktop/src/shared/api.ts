@@ -46,6 +46,13 @@ export type DecisionResult = { engine: 'jev' | 'laya'; model: string; answers: R
 export type DecisionStatus = { engine: DecisionEngine; available: boolean; message: string; glinerAvailable: boolean }
 
 export interface DesktopAPI {
+  modelHealth(provider: Provider, baseUrl: string, model: string, test: boolean): Promise<import('./diagnostics').ModelHealth>
+  decisionTraces(sessionId: string): Promise<import('./diagnostics').DecisionTrace[]>
+  decisionOverride(sessionId: string, id: string, note: string): Promise<void>
+  evaluations(): Promise<import('./diagnostics').EvaluationReport[]>
+  evaluationStart(request: import('./diagnostics').EvaluationRequest): Promise<string>
+  evaluationCancel(id: string): Promise<void>
+  evaluationCleanup(id: string): Promise<void>
   queueSnapshot(): Promise<import('./workflow').QueueSnapshot>
   queueAdd(prompt: string): Promise<import('./workflow').QueueSnapshot>
   queueEdit(id: string, prompt: string): Promise<import('./workflow').QueueSnapshot>
