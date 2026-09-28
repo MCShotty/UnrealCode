@@ -10,7 +10,7 @@ Product source is frozen in local commit `1fd1a0b`. The untracked
 that commit. The new package's `app.asar` hash exactly matches the prior
 acceptance package. The new installer also passed its own composer/activity,
 recovery, signature-state and payload-audit checks.
-This is a private preview checkpoint, not a stable 1.0 acceptance or publication.
+This is a local preview checkpoint, not a stable 1.0 acceptance or publication.
 The existing prohibition on pushing or publishing 1.0 remains in force.
 
 The full desktop suite initially exposed a 5-second timeout in a browser
@@ -56,6 +56,17 @@ temporary image tag was removed afterward. No valid code-signing certificate
 was found in the current-user or machine certificate stores, and no publisher
 signing configuration is present. Windows Sandbox and Hyper-V management are
 not available here; a fresh-machine acceptance run remains external.
+The clean `npm ci` install, TypeScript check, and full desktop suite passed again
+after the source commit. The real-Docker recovery integration passed both its
+volume-transfer and retained-volume tests. The exact committed package passed
+its credential-context test; reachable Git history now scans 1,574 blobs with
+zero secret matches.
+
+GitHub currently reports `MCShotty/UnrealCode` as public. Historical Desktop
+acceptance run `36269843333` actually started: its bridge job passed and the
+Windows job failed at the old missing-Docker smoke assertion, now corrected and
+passed locally. Hosted CI has not run on this 1.0 checkpoint. A push would expose
+the new source publicly; the explicit 1.0 push hold remains active.
 
 Still open for stable 1.0: publisher signing and a signed-update exercise;
 fresh-machine installation and upgrades from supported 0.x profiles; hosted

@@ -2,7 +2,7 @@
 
 > Current patch verification and local candidate digest: [WORK_IN_PROGRESS.md](WORK_IN_PROGRESS.md). Feature implementation: [PARITY_IMPLEMENTATION.md](PARITY_IMPLEMENTATION.md). Counts, hashes and release notes below are historical snapshots.
 
-Active checkout: `I:\UnrealCode`; private origin: `MCShotty/UnrealCode`.
+Active checkout: `I:\UnrealCode`; origin: `MCShotty/UnrealCode` (public at the 2026-09-28 check).
 
 ## 1.0 preview — local only
 
