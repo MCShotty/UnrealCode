@@ -3,16 +3,38 @@ import {mkdtemp,rm,writeFile} from 'node:fs/promises'
 import {createHash} from 'node:crypto'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-vi.mock('./hindsight-runtime',()=>({HindsightRuntime:class{state='ready';message='Fixture';request=vi.fn(async()=>({results:[]}));start=vi.fn(async()=>{this.state='ready'});stop=vi.fn(async()=>{});snapshot=vi.fn(async()=>{})}}))
+vi.mock('./hindsight-runtime',()=>({HindsightRuntime:class{state='ready';message='Fixture';request=vi.fn(async()=>({results:[]}));start=vi.fn(async()=>{this.state='ready'});stop=vi.fn(async()=>{this.state='disabled'});snapshot=vi.fn(async()=>{})}}))
 vi.mock('./memory-inference',()=>({MemoryInference:class{token='fixture-token';start=vi.fn(async()=> 'http://127.0.0.1:1234/v1');close=vi.fn(()=>{})}}))
 vi.mock('./docker',()=>({DockerBridge:class{}}))
 vi.mock('./settings',()=>({credentialFor:()=>({})}))
 import {HindsightMemory} from './hindsight-memory'
 const roots:string[]=[]
-afterEach(async()=>{for(const root of roots.splice(0))await rm(root,{recursive:true,force:true})})
-async function setup(){const root=await mkdtemp(join(tmpdir(),'unrealcode-memory-unit-'));roots.push(root);const memory=new HindsightMemory(root);await memory.status('project');(memory as any).value.settings={version:1,enabled:true,projects:['project']};return memory}
+const memories:HindsightMemory[]=[]
+afterEach(async()=>{for(const memory of memories.splice(0))await memory.stop();for(const root of roots.splice(0))await rm(root,{recursive:true,force:true})})
+async function setup(){const root=await mkdtemp(join(tmpdir(),'unrealcode-memory-unit-'));roots.push(root);const memory=new HindsightMemory(root);memories.push(memory);await memory.status('project');(memory as any).value.settings={version:1,enabled:true,projects:['project']};return memory}
 const record={sessionId:'session',turnId:'turn',workspace:'project',content:'Verified test report',sourceRefs:['event:4'],createdAt:new Date().toISOString()}
 const profile={provider:'ollama' as const,model:'fixture',baseUrl:'',thinkingLevel:'low',requestLimit:20,tokenLimit:10000}
+it('discards queued timeline inference before dispatch when memory is disabled',async()=>{
+ const memory=await setup(),value=(memory as any).value
+ value.settings={version:2,enabled:true,globalConsent:true,projects:[],profile,verifiedProfile:(memory as any).fingerprint(profile)}
+ let release!:(value:any)=>void;const request=vi.fn(async()=>({Output:[],Usage:{}}))
+ vi.spyOn(memory as any,'inferenceBridge').mockImplementation(()=>new Promise(resolve=>release=resolve))
+ const result=memory.analyse('synthetic evidence');const rejected=expect(result).rejects.toThrow('configuration changed')
+ await vi.waitFor(()=>expect(release).toBeTypeOf('function'));await memory.enable('',false);release({request});await rejected
+ expect(request).not.toHaveBeenCalled()
+})
+it('reingests promoted worker knowledge when its private-bank save finishes late',async()=>{
+ const memory=await setup(),value=(memory as any).value;value.settings={version:2,enabled:true,globalConsent:true,projects:[]}
+ let release!:()=>void
+ vi.mocked(memory.runtime.request).mockImplementationOnce(async()=>{await new Promise<void>(resolve=>release=resolve);return {}})
+ await memory.record('project',{...record,workspace:'worker-workspace',scope:'task'})
+ await vi.waitFor(()=>expect(release).toBeTypeOf('function'))
+ await memory.promoteWorkspace('worker-workspace');release()
+ await vi.waitFor(async()=>expect((await memory.status('')).records[0]).toMatchObject({state:'retained',scope:'shared'}))
+ const saves=vi.mocked(memory.runtime.request).mock.calls.filter(call=>call[0]==='POST')
+ expect(saves).toHaveLength(2);expect(saves[1][1]).not.toBe(saves[0][1])
+ expect((saves[1][3] as any).items[0].metadata.scope).toBe('shared')
+})
 it('rejects corrections to forgotten sources even while remote deletion is pending',async()=>{
  const memory=await setup(),value=(memory as any).value
  value.records.project=[{...record,id:'forgotten',content:'',state:'forgotten',attempts:3,deletionPending:true,revision:2}]
@@ -106,14 +128,14 @@ it('does not let a failed deletion block retention of a later turn',async()=>{
  await memory.record('project',record)
  await vi.waitFor(async()=>expect((await memory.status('project')).records[0].state).toBe('retained'))
  const id=(await memory.status('project')).records[0].id
- vi.mocked(memory.runtime.request).mockImplementation(async(method)=>{if(method==='DELETE')throw Error('Hindsight HTTP 404');return {}})
+ vi.mocked(memory.runtime.request).mockImplementation(async(method)=>{if(method==='DELETE')throw Error('Hindsight HTTP 503');return {}})
  await memory.forget('project',id)
  await vi.waitFor(async()=>expect((await memory.status('project')).records[0].attempts).toBeGreaterThan(0))
  await memory.record('project',{...record,turnId:'later-turn'})
  await vi.waitFor(async()=>expect((await memory.status('project')).records.find(row=>row.turnId==='later-turn')?.state).toBe('retained'))
  const forgotten=(await memory.status('project')).records.find(row=>row.id===id)!
  expect(forgotten).toMatchObject({state:'forgotten',deletionPending:true})
- expect(forgotten.error).toContain('HTTP 404')
+ expect(forgotten.error).toContain('HTTP 503')
  expect(forgotten.attempts).toBeLessThanOrEqual(3)
 })
 it('leaves an exhausted tombstone visible while processing new records',async()=>{
@@ -168,4 +190,49 @@ it('bounds status payloads while paging every older project record by stable ID'
  await expect(memory.readRecord('other-project','turn-0')).rejects.toThrow('unavailable in this project')
  await expect(memory.recordsPage('project','missing')).rejects.toThrow('cursor is stale')
  await expect(memory.status('project',101)).rejects.toThrow('0 to 100')
+})
+
+async function globalSetup(){
+ const root=await mkdtemp(join(tmpdir(),'unrealcode-global-memory-'));roots.push(root);const memory=new HindsightMemory(root);await memory.status('')
+ const state=(memory as any).value;state.settings={version:2,enabled:true,globalConsent:true,projects:[],profile,verifiedProfile:(memory as any).fingerprint(profile)}
+ return memory
+}
+it('shares project knowledge with provenance while isolating unintegrated workers',async()=>{
+ const memory=await globalSetup()
+ await memory.record('one',{...record,workspace:'one'});await memory.record('two',{...record,workspace:'two',turnId:'second'});await memory.record('one',{...record,workspace:'worker',turnId:'worker'})
+ await vi.waitFor(async()=>expect((await memory.status('')).records.every(row=>row.state==='retained')).toBe(true))
+ const rows=(await memory.status('')).records
+ vi.mocked(memory.runtime.request).mockResolvedValue({results:rows.map(row=>({document_id:row.id,text:row.content}))})
+ const result=await memory.recall('two','What worked?','two') as any
+ expect(result.results.map((row:any)=>row.source.sourceProject).sort()).toEqual(['one','two'])
+ expect(result.results.find((row:any)=>row.source.sourceProject==='one').freshness).toBe('unknown')
+ await memory.promoteWorkspace('worker');await vi.waitFor(async()=>expect((await memory.status('')).records.find(row=>row.workspace==='worker')?.state).toBe('retained'))
+ expect((await memory.recall('two','What worked?','two') as any).results).toHaveLength(3)
+})
+it('backs up and journals legacy migration, preserving corrections and tombstones',async()=>{
+ const {mkdir,readFile}=await import('node:fs/promises'),root=await mkdtemp(join(tmpdir(),'unrealcode-memory-migrate-'));roots.push(root)
+ const memory=new HindsightMemory(root);await mkdir(memory.directory,{recursive:true})
+ const old={version:1,settings:{version:1,enabled:true,projects:['one'],profile,verifiedProfile:(memory as any).fingerprint(profile)},banks:{one:'old-bank'},records:{one:[{...record,workspace:'one',id:'old',state:'retained',attempts:0,correction:true,revision:3},{...record,workspace:'one',id:'forgot',state:'forgotten',content:'',attempts:0,deletionPending:true}]},usage:{inputTokens:0,outputTokens:0,requests:0}}
+ await writeFile(join(memory.directory,'memory.json'),JSON.stringify(old))
+ const migrated=await memory.status('')
+ expect(migrated.settings).toMatchObject({version:2,enabled:false,globalConsent:false});expect(JSON.parse(await readFile(migrated.migration!.backup,'utf8'))).toEqual(old)
+ vi.spyOn(memory,'start').mockResolvedValue();await memory.enable('',true)
+ await vi.waitFor(async()=>expect((await memory.status('')).migration?.state).toBe('complete'))
+ expect((await memory.readRecord('','old'))).toMatchObject({id:'old',correction:true,revision:3,sourceProject:'one',state:'retained'})
+ expect((await memory.readRecord('','forgot'))).toMatchObject({state:'forgotten',content:'',deletionPending:false})
+ const reopened=new HindsightMemory(root);expect((await reopened.status('')).records).toHaveLength(2)
+ expect(vi.mocked(memory.runtime.request).mock.calls.some(call=>call[0]==='DELETE'&&call[1]==='old-bank')).toBe(true)
+})
+it('discards recall when app-wide memory is revoked in flight',async()=>{
+ const memory=await globalSetup();await memory.record('one',{...record,workspace:'one'});await vi.waitFor(async()=>expect((await memory.status('')).records[0].state).toBe('retained'))
+ let release!:(value:any)=>void;vi.mocked(memory.runtime.request).mockImplementation(()=>new Promise(resolve=>release=resolve))
+ const pending=memory.recall('two','Recall','two');await vi.waitFor(()=>expect(release).toBeTypeOf('function'));vi.spyOn(memory,'stop').mockImplementation(async()=>{(memory as any).epoch++});await memory.enable('',false);release({results:[]})
+ expect((await pending as any).unavailable).toBe(true)
+})
+it('preserves global enablement intent and knowledge when changing model destination',async()=>{
+ const memory=await globalSetup();vi.spyOn(memory,'stop').mockResolvedValue()
+ await memory.record('one',{...record,workspace:'one'});await vi.waitFor(async()=>expect((await memory.status('')).records[0].state).toBe('retained'))
+ await memory.configure({...profile,model:'replacement'})
+ expect((await memory.status('')).settings).toMatchObject({enabled:true,globalConsent:false,verifiedProfile:undefined})
+ expect((await memory.status('')).records).toHaveLength(1)
 })

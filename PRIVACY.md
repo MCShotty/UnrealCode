@@ -15,9 +15,13 @@ volumes. A trusted project folder can be mounted into its local container.
   endpoint itself does not forward requests.
 - **Optional decision model:** TypeSafe receives focused project text only after
   the project's cloud-decision consent. Laya and GLiNER run locally when enabled.
-- **Optional long-term memory:** Hindsight and its database run in local Docker
-  containers. If you enable project memory, its separately selected inference
-  provider can receive bounded retained facts and recall/reflect requests.
+- **Optional app-wide memory:** Hindsight and its database run in local Docker
+  containers. After you accept the scope and separately selected model destination,
+  that provider can receive bounded task outcomes, corrections, recall/reflect
+  requests, and redacted chat/tool/activity excerpts for timeline summaries.
+  Relevant retained knowledge can be recalled across trusted projects with source
+  attribution. Unintegrated specialist findings remain task-scoped. Existing
+  project memories migrate after consent; historical chats are not all ingested.
 - **Connections and browser:** Enabled MCP servers receive the arguments and
   resources passed to their tools. Browser navigation and interactions contact
   the visited origins. Windows-hosted MCP servers run with the Windows account's
@@ -26,8 +30,13 @@ volumes. A trusted project folder can be mounted into its local container.
   select or authorize. Optional provider-organization reports contact that
   provider using the separate admin credential you configure.
 - **Setup and updates:** Explicit backend/browser/model preparation can download
-  images or model files from their upstream hosts. Update checks contact the
-  configured GitHub release feed when requested.
+  images or model files from their upstream hosts. Release notifications contact
+  GitHub's public API without authentication when due after startup and at most
+  once daily, or when you request a manual check. These checks are enabled by
+  default in 1.0.1 and can be disabled in Settings → Recovery. They send no project
+  content, provider credentials, or conversation history. GitHub receives the
+  ordinary network request. Viewing a release opens GitHub in your system browser;
+  downloading and installation are manual for unsigned builds.
 
 The app does not control how a selected model provider, MCP server, website, or
 repository host retains or uses data after receiving it. Review the applicable

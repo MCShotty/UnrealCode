@@ -278,6 +278,8 @@ func (a *app) dispatch(req request) (any, error) {
 		ctx, cancel := context.WithTimeout(a.ctx, 120*time.Second)
 		defer cancel()
 		response, err := client.Respond(ctx, p.Request, llm.RequestOptions{})
+		response, err = llm.NormalizeFailure(response, err)
+		llm.RedactFailure(&response, p.Credential.APIKey, p.Credential.AccessToken)
 		if err != nil {
 			return nil, err
 		}
@@ -377,7 +379,7 @@ func (a *app) dispatch(req request) (any, error) {
 	case "decision.idle":
 		return a.decisionPending.Load() == 0, nil
 	case "health":
-		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion, "capabilities": []string{"permissions.v1", "files.v1", "sessions.v1", "mcp.v1", "context.v1", "teams.v1", "verification.v1", "history.latest.v1", "lifecycle.v1", "controls.v1", "inference.v1", "hooks.v1", "goal.usage.v1", "questions.v2"}}, nil
+		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion, "capabilities": []string{"permissions.v1", "files.v1", "sessions.v1", "mcp.v1", "context.v1", "teams.v1", "verification.v1", "history.latest.v1", "lifecycle.v1", "controls.v1", "inference.v1", "hooks.v1", "goal.usage.v1", "questions.v2", "provider.issue.v1", "plan.progress.v1"}}, nil
 	case "decision.configure":
 		config, err := decodeParams[decisionConfig](req.Params)
 		if err != nil {

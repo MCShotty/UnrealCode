@@ -1,6 +1,13 @@
 import {expect,it,vi} from 'vitest'
 vi.mock('./settings',()=>({credentialFor:()=>({apiKey:'fixture-only-secret'})}))
 import {MemoryInference} from './memory-inference'
+it('does not dispatch a provider request after the broker closes during bridge startup',async()=>{
+ let release!:(value:any)=>void;const request=vi.fn(async()=>({Output:[],Usage:{}})),bridge=vi.fn(()=>new Promise<any>(resolve=>release=resolve))
+ const broker=new MemoryInference(()=>({provider:'openai',model:'fixture',baseUrl:'',thinkingLevel:'low',requestLimit:5,tokenLimit:100}),bridge,()=>{})
+ const base=(await broker.start()).replace('host.docker.internal','127.0.0.1')
+ const pending=fetch(base+'/chat/completions',{method:'POST',headers:{authorization:'Bearer '+broker.token,'content-type':'application/json'},body:JSON.stringify({messages:[{role:'user',content:'synthetic'}]})}).catch(()=>undefined)
+ try{await vi.waitFor(()=>expect(release).toBeTypeOf('function'));broker.close();release({request});await pending;await new Promise(resolve=>setTimeout(resolve,10));expect(request).not.toHaveBeenCalled()}finally{broker.close()}
+})
 it('restricts memory inference and reuses identical requests at the budget boundary without leaking credentials',async()=>{
  const request=vi.fn(async()=>({ID:'fixture',Output:[{Type:'message',Data:{Text:'{"ok":true}'}}],Usage:{InputTokens:3,OutputTokens:2}}))
  const broker=new MemoryInference(()=>({provider:'openai',model:'fixture',baseUrl:'',thinkingLevel:'low',requestLimit:1,tokenLimit:100}),async()=>({request}) as any,()=>{})
@@ -22,4 +29,11 @@ it('retries an identical memory request after a transient provider failure',asyn
   expect(request).toHaveBeenCalledTimes(2)
   expect(broker.requests).toBe(2)
  }finally{broker.close()}
+})
+
+it('returns a nonretryable error for a refusal while retaining measured usage',async()=>{
+ const request=vi.fn(async()=>({Stop:'refused',Failure:{Code:'model_refusal',Message:'Declined'},Output:[{Type:'message',Data:{Text:'No'}}],Usage:{InputTokens:5,OutputTokens:1}}))
+ const broker=new MemoryInference(()=>({provider:'openai',model:'fixture',baseUrl:'',thinkingLevel:'low',requestLimit:5,tokenLimit:100}),async()=>({request}) as any,()=>{})
+ const base=(await broker.start()).replace('host.docker.internal','127.0.0.1')
+ try{const result=await fetch(base+'/chat/completions',{method:'POST',headers:{authorization:'Bearer '+broker.token,'content-type':'application/json'},body:JSON.stringify({messages:[{role:'user',content:'synthetic'}]})});expect(result.status).toBe(422);expect(broker.inputTokens).toBe(5);expect(await result.text()).not.toContain('fixture-only-secret')}finally{broker.close()}
 })

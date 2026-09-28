@@ -332,7 +332,7 @@ func (a *app) start(id session.ID, secret credential, seed ...inbox.Input) (*run
 		},
 		ToolHeartbeatInterval: 10 * time.Minute, SessionID: id, Inbox: inputs,
 		Restored: restored, Sessions: a.store, ContextBuilder: builder,
-		LLM: &observedClient{inner: client, events: a.events, id: id, app: a, config: config}, Tools: registry, Operations: manager,
+		LLM: &observedClient{inner: client, events: a.events, id: id, app: a, config: config, sensitive: []string{secret.APIKey, secret.AccessToken}}, Tools: registry, Operations: manager,
 	})
 	a.running[id] = run
 	a.runs.Add(1)
@@ -437,11 +437,12 @@ func (m *observedManager) forward() {
 }
 
 type observedClient struct {
-	app    *app
-	config sessionConfig
-	inner  agentrunner.Client
-	events *eventLog
-	id     session.ID
+	sensitive []string
+	app       *app
+	config    sessionConfig
+	inner     agentrunner.Client
+	events    *eventLog
+	id        session.ID
 }
 
 func (c *observedClient) Respond(ctx context.Context, request llm.Request, options llm.RequestOptions) (llm.Response, error) {
@@ -462,6 +463,8 @@ func (c *observedClient) Respond(ctx context.Context, request llm.Request, optio
 	}
 	c.events.enqueue(c.id, "model.request.started", map[string]string{"id": id})
 	response, err := c.inner.Respond(ctx, request, options)
+	response, err = llm.NormalizeFailure(response, err)
+	llm.RedactFailure(&response, c.sensitive...)
 	if err == nil && response.Failure == nil {
 		usable := false
 		for _, item := range response.Output {
@@ -478,7 +481,7 @@ func (c *observedClient) Respond(ctx context.Context, request llm.Request, optio
 			response.Failure = &llm.Failure{Code: "incomplete_response", Message: "The provider reached its output limit. Review the partial response before retrying."}
 		}
 	}
-	c.events.enqueue(c.id, "model.request.completed", map[string]any{"id": id, "success": err == nil && response.Failure == nil, "requestedTier": request.Model.ServiceTier, "actualTier": response.ServiceTier, "usage": response.Usage})
+	c.events.enqueue(c.id, "model.request.completed", map[string]any{"id": id, "success": err == nil && response.Failure == nil, "requestedTier": request.Model.ServiceTier, "actualTier": response.ServiceTier, "usage": response.Usage, "provider": effective.Provider, "model": request.Model.ID, "failure": response.Failure})
 	return response, err
 }
 func (c *observedClient) Close() error { return c.inner.Close() }

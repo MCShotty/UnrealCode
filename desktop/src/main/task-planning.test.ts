@@ -46,3 +46,14 @@ it('prevents budget reset during a goal and charges independent worker event seq
  await store.consumeWorker(id,'worker-a',10,60);await store.consumeWorker(id,'worker-a',10,60);await store.consumeWorker(id,'worker-b',1,45)
  expect((await store.read(id)).goal).toMatchObject({tokens:105,requests:1,state:'limited'})
 })
+
+it('keeps approved milestone identity and progress for unchanged agent plans',async()=>{
+ const {id,store}=await setup(),input={objective:'Build',body:'Implement then test',acceptance:['tests'],milestones:['Implement','Test']}
+ const first=await store.saveAgentPlan(id,input);await store.approve(id,first.revision)
+ await store.progress(id,first.revision,first.milestones[0].id,'completed',['event:10 tests passed'])
+ const next=await store.saveAgentPlan(id,input)
+ expect(next.revision).toBe(first.revision);expect(next.approvedRevision).toBe(first.revision);expect(next.milestones[0]).toMatchObject({id:first.milestones[0].id,state:'completed'})
+ await store.saveAgentPlan(id,{...input,body:'Changed scope'})
+ await expect(store.progress(id,first.revision,first.milestones[1].id,'running',[])).rejects.toThrow('revision changed')
+ await expect(store.progress(id,first.revision+1,first.milestones[1].id,'completed',[])).rejects.toThrow('evidence')
+})

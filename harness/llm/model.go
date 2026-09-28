@@ -139,6 +139,10 @@ type Usage struct {
 }
 
 type Failure struct {
-	Code    string
-	Message string
+	Code       string
+	Message    string
+	StatusCode int    `json:",omitempty"`
+	Type       string `json:",omitempty"`
+	RequestID  string `json:",omitempty"`
+	RetryAfter string `json:",omitempty"`
 }

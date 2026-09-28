@@ -1,19 +1,23 @@
 import { classifyFailure, ActionableError, withEventFailure } from './failures'
 import { commands,validateCommand,type CommandResult } from '../shared/commands'
+import {TimelineService} from './timeline'
+import {modelCatalog,recordModelRejection} from './model-catalog'
 import { modelCapabilities } from './model-capabilities'
 import { HindsightMemory } from './hindsight-memory'
 import { settledMemoryReply } from './memory-retention'
 import { historyCache, closeHistoryCaches, resetHistoryCaches } from './history-cache'
-import { timestampPath, timestampName } from './storage-locations'
+import { timestampPath, timestampName, storageLocation } from './storage-locations'
 import type { RecoveryAction } from '../shared/failure'
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, shell, Menu, nativeImage } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, shell, Menu, nativeImage, powerMonitor } from 'electron'
 import { randomUUID,createHash } from 'node:crypto'
 const imageInputs=new Map<string,{project:string;data:string;createdAt:number}>()
 let memoryService:HindsightMemory|undefined
+let timelineService:TimelineService|undefined
+function timeline(){return timelineService||=(new TimelineService(memory,()=>window?.webContents.send('workflow:changed',selected?.project||'')))}
 const hookControllers=new Map<string,AbortController>()
 const browserControllers=new Map<string,AbortController>()
 import {closeProjectFiles} from './project-fs'
-function memory():HindsightMemory {return memoryService||=(new HindsightMemory(app.getPath('userData')))}
+function memory():HindsightMemory {if(!memoryService){memoryService=new HindsightMemory(app.getPath('userData'));memoryService.onChanged=()=>window?.webContents.send('workflow:changed',selected?.project||'')}return memoryService}
 import { execFile } from 'node:child_process'
 import { mkdirSync, realpathSync } from 'node:fs'
 import { promises as fs } from 'node:fs'
@@ -51,6 +55,7 @@ import { Recovery } from './recovery'
 import { DockerRecoveryVolumes } from './recovery-volumes'
 import { Storage } from './storage'
 import { Updates } from './updates'
+import {ReleaseNotifications} from './release-notifications'
 import { recordFailure,supportDocument } from './support'
 import { drainMetadata } from './atomic-metadata'
 import type { RecoveryStatus } from '../shared/recovery'
@@ -101,12 +106,23 @@ const recoveryVolumes=new DockerRecoveryVolumes()
 const recovery = new Recovery(app.getPath('userData'),app.getVersion(),recoveryVolumes)
 const storage = new Storage(app.getPath('userData'))
 const updates = new Updates()
+let releaseNotifications:ReleaseNotifications|undefined
+function notificationPreferences(){if(recoveryState.migrationError)return {automaticChecks:false,channel:'stable' as const};const s=getSettings();return {automaticChecks:s.automaticUpdateChecks!==false,channel:s.updateChannel||'stable' as const}}
+function releaseNotices(){
+ if(!releaseNotifications){releaseNotifications=new ReleaseNotifications(storageLocation(app.getPath('userData'),'update-notifications','releases',undefined,'.json'),app.getVersion(),(...args)=>fetch(...args),()=>window?.webContents.send('updates:changed',updateState()));void releaseNotifications.initialize(notificationPreferences(),app.isPackaged&&!process.env.UNREAL_DESKTOP_BACKGROUND_CHECK).catch(()=>{})}
+ return releaseNotifications
+}
+function updateState():import('../shared/recovery').UpdateState{return updates.supportsInstallation()?{...updates.view(),delivery:'signed',automaticChecks:notificationPreferences().automaticChecks}:releaseNotices().view()}
+function changeUpdatePreferences(patch:{automaticChecks?:boolean;channel?:'stable'|'preview'}){
+ if(!patch||typeof patch!=='object'||Array.isArray(patch)||Object.keys(patch).some(key=>!['automaticChecks','channel'].includes(key)))throw Error('Invalid release preferences')
+ updateSettings({...(patch.automaticChecks!==undefined?{automaticUpdateChecks:patch.automaticChecks}:{}),...(patch.channel!==undefined?{updateChannel:patch.channel}:{})});releaseNotices().configure(notificationPreferences());return updateState()
+}
 let recoveryState:RecoveryStatus={busy:false,message:'Ready'}
 let restoreSelection:{id:string;path:string}|undefined
 let supportSelection=''
 let activeIPC=0
 let workspaceSelection=0
-const recoveryChannels=new Set(['recovery:action','history:rebuild','settings:get','app:version','project:path','docker:status','settings:codex-status','recovery:status','recovery:retry','recovery:export','recovery:preview','recovery:restore','recovery:retained','recovery:retained-export','recovery:retained-attach','storage:list','storage:remove','support:preview','support:export','updates:status','updates:check','updates:download','updates:cancel','updates:install'])
+const recoveryChannels=new Set(['recovery:action','history:rebuild','settings:get','app:version','project:path','docker:status','settings:codex-status','recovery:status','recovery:retry','recovery:export','recovery:preview','recovery:restore','recovery:retained','recovery:retained-export','recovery:retained-attach','storage:list','storage:remove','support:preview','support:export','updates:status','updates:check','updates:preferences','updates:dismiss','updates:open-release','updates:download','updates:cancel','updates:install'])
 const dependencyReadChannels=new Set(['project:pick','project:open','session:list','session:select','session:latest','session:events','session:event-window','history:page','history:search','workspace:active','settings:update','settings:has-key','settings:save-key','models:health','models:discover','files:changes'])
 function handle(channel:string,callback:(event:Electron.IpcMainInvokeEvent,...args:any[])=>unknown):void {
  ipcMain.handle(channel,async(event,...args)=>{
@@ -134,8 +150,17 @@ async function maintenance<T>(work:()=>Promise<T>):Promise<T>{
  if(recoveryState.busy||activeIPC||terminals.size||evaluations.busy)throw new Error('Finish active actions, evaluations and terminals before maintenance')
  recoveryState.busy=true;recoveryState.message='Saving and checking app data…'
  let quiesced=false
- try{for(const owner of workspaces.values())await owner.maintenanceReady();quiesced=true;await connections?.disconnectAll();clearTimeout(connectionRefresh);for(const owner of workspaces.values())await owner.stopAll();await memoryService?.prepareBackup();await drainMetadata();await closeHistoryCaches();return await work()}
- finally{recoveryState.busy=false;if(quiesced){workspaces.clear();selected=null;bridge=new DockerBridge();sessionUsage=new SessionUsageService(bridge);checkpoints=null;recoveryState.message=recoveryState.waitingForDependency?'Waiting for Docker to complete the recovery backup':recoveryState.migrationError?'Inspect the recovery issue before continuing':'Reopen a project to continue';window?.webContents.send('app:maintenance-finished')}else recoveryState.message='Settle active work before maintenance'}
+ try{for(const owner of workspaces.values())await owner.maintenanceReady();quiesced=true;timelineService?.close();await connections?.disconnectAll();clearTimeout(connectionRefresh);for(const owner of workspaces.values())await owner.stopAll();await memoryService?.prepareBackup();await timelineService?.settled();timelineService=undefined;await drainMetadata();await closeHistoryCaches();return await work()}
+ finally{
+  try{
+   if(quiesced){
+    await timelineService?.settled();timelineService=undefined;workspaces.clear();selected=null
+    bridge=new DockerBridge();sessionUsage=new SessionUsageService(bridge);checkpoints=null
+    recoveryState.message=recoveryState.waitingForDependency?'Waiting for Docker to complete the recovery backup':recoveryState.migrationError?'Inspect the recovery issue before continuing':'Reopen a project to continue'
+   }else recoveryState.message='Settle active work before maintenance'
+  }finally{recoveryState.busy=false}
+  if(quiesced)window?.webContents.send('app:maintenance-finished')
+ }
 }
 function supportText():string{return supportDocument(app.getVersion(),{backendReady:bridge.status().ready,openProjects:workspaces.size,migrationBlocked:!!recoveryState.migrationError,updateState:updates.view().state})}
 async function storageItems(){const local=await storage.list();try{return [...local,...await recoveryVolumes.modelStorage((await recovery.knownVolumes()).map(item=>item.volume))]}catch(error){window?.webContents.send('app:failure',classifyFailure(error,'docker-storage'));return local}}
@@ -194,11 +219,14 @@ function registerRecoveryIPC():void {
  handle('storage:remove',async(_event,ids:string[])=>{if(!Array.isArray(ids)||!ids.length||ids.length>100)throw new Error('Select storage entries');const all=await storageItems(),rows=all.filter(item=>ids.includes(item.id));if(rows.length!==ids.length||rows.some(item=>!item.removable))throw new Error('Refresh and select removable storage');const answer=await dialog.showMessageBox(window!,{type:'warning',buttons:['Remove selected storage','Cancel'],defaultId:1,cancelId:1,message:'Delete the selected storage entries?' ,detail:rows.map(item=>item.path+' ('+item.bytes+' bytes)').join('\n')});if(answer.response===0)await maintenance(async()=>{const indexes=rows.filter(item=>item.category!=='models');if(indexes.length){const closed=await storage.list();await storage.remove(indexes.map(item=>item.path===join(app.getPath('userData'),'history-cache')?closed.find(row=>row.path===item.path)?.id||item.id:item.id))}const fresh=rows.some(item=>item.category==='models')?await recoveryVolumes.modelStorage((await recovery.knownVolumes()).map(item=>item.volume)):[];for(const item of rows.filter(item=>item.category==='models')){if(!fresh.some(value=>value.id===item.id))throw new Error('Model cache changed. Refresh the preview.');await recoveryVolumes.removeModelCache(item.path.split(':')[0])}})})
  handle('support:preview',()=>{supportSelection=supportText();return supportSelection})
  handle('support:export',async()=>{if(!supportSelection)throw new Error('Preview the support bundle first');const answer=await dialog.showSaveDialog(window!,{title:'Export the previewed support bundle',defaultPath:`${timestampName()}.support.json`,filters:[{name:'JSON',extensions:['json']}]});if(!answer.filePath)return null;await fs.writeFile(answer.filePath,supportSelection,{mode:0o600});return answer.filePath})
- handle('updates:status',()=>updates.view())
- handle('updates:check',(_event,channel:'stable'|'preview')=>updates.check(channel))
+ handle('updates:status',()=>updateState())
+ handle('updates:check',async(_event,channel:'stable'|'preview')=>{changeUpdatePreferences({channel});return updates.supportsInstallation()?{...await updates.check(channel),delivery:'signed' as const}:releaseNotices().check(true)})
+  handle('updates:preferences',(_event,patch)=>changeUpdatePreferences(patch))
+  handle('updates:dismiss',(_event,version:string)=>releaseNotices().dismiss(version))
+  handle('updates:open-release',()=>shell.openExternal(releaseNotices().releaseToOpen()))
  handle('updates:download',()=>updates.download())
  handle('updates:cancel',()=>updates.cancel())
- handle('updates:install',async()=>{const answer=await dialog.showMessageBox(window!,{type:'question',buttons:['Restart and install','Later'],defaultId:1,cancelId:1,message:'Install the verified update now?',detail:'Save open editor buffers first. Active tasks, specialist workers, verification runs and terminals must be settled. A recovery backup is saved before the restart.'});if(answer.response!==0)return;await maintenance(async()=>{const path=timestampPath(join(app.getPath('userData'),'recovery'));await recovery.export(path,undefined,true);recoveryState.lastBackup=path;await updates.install()})})
+ handle('updates:install',async()=>{if(!updates.supportsInstallation())throw Error('Automatic installation requires a verified signed build');const answer=await dialog.showMessageBox(window!,{type:'question',buttons:['Restart and install','Later'],defaultId:1,cancelId:1,message:'Install the verified update now?',detail:'Save open editor buffers first. Active tasks, specialist workers, verification runs and terminals must be settled. A recovery backup is saved before the restart.'});if(answer.response!==0)return;await maintenance(async()=>{const path=timestampPath(join(app.getPath('userData'),'recovery'));await recovery.export(path,undefined,true);recoveryState.lastBackup=path;await updates.install()})})
 }
 
 function project(): string {
@@ -306,7 +334,8 @@ async function handleHostEvent(owner: WorkspaceRuntime, event: AgentEvent): Prom
     if(event.event==='host.control'){
       if(config.disallowedTools.includes(operation.tool))throw Error('Control tool disabled')
       const args=operation.arguments;let value:unknown
-      if(operation.tool==='PlanUpdate'){if(!Array.isArray(args.milestones))throw Error('Plan milestones must be a list');value=await target.planning.savePlan(event.sessionId,{objective:args.objective as string,body:args.body as string,acceptance:args.acceptance as string[],milestones:args.milestones.map((text,index)=>({id:`milestone-${index+1}`,text,state:'pending',evidence:[]}))})}
+      if(operation.tool==='PlanProgress')value=await target.planning.progress(event.sessionId,args.revision as number,args.milestoneId as string,args.state as 'pending'|'running'|'completed',args.evidence as string[])
+      else if(operation.tool==='PlanUpdate'){if(!Array.isArray(args.milestones))throw Error('Plan milestones must be a list');value=await target.planning.saveAgentPlan(event.sessionId,{objective:args.objective as string,body:args.body as string,acceptance:args.acceptance as string[],milestones:args.milestones as string[]})}
       else if(operation.tool==='Browser'){
         if(config.specialist&&config.parentSessionId){const parent=await owner.owner(config.parentSessionId);target.browser.inherit(parent.browser);target.browser.setPreviewOrigins(Object.values(await parent.bridge.previewAddresses()))}
         const action=args as unknown as import('../shared/browser').BrowserAction;if(action.type==='screenshot'&&!(await modelCapabilities(config.provider,config.model,config.baseUrl)).vision)throw Error('Image input support is not verified for this model. Use a browser snapshot or select a verified vision model.');const readOnly=['snapshot','screenshot'].includes(action.type)
@@ -378,14 +407,15 @@ async function handleHostEvent(owner: WorkspaceRuntime, event: AgentEvent): Prom
 
 async function retainMemory(owner:WorkspaceRuntime,event:AgentEvent):Promise<void>{
   if(!memoryService)return
-  const status=await memoryService.status(owner.project);if(!status.settings.projects.includes(owner.project))return
+  const status=await memoryService.status(owner.project);if(!status.settings.enabled||!status.settings.globalConsent)return
   const target=await owner.owner(event.sessionId);await target.index.flush()
   const page=await target.index.cache.page(target.project,event.sessionId,{limit:250})
   const reply=settledMemoryReply(event,page.events)
   if(!reply)return
   const outcome=(event.payload as any).outcome,selection=target.context.get(event.sessionId),sourceFiles:Array<{path:string;sha256:string}>=[]
   for(const path of [...new Set([...selection.attached,...selection.pinned])].filter(path=>!target.context.isExcluded(path)).slice(0,10)){try{const content=await readFile(target.project,path);sourceFiles.push({path,sha256:createHash('sha256').update(content).digest('hex')})}catch{/* Unavailable sources are not claimed current. */}}
-  await memoryService.record(owner.project,{sessionId:event.sessionId,turnId:outcome?.messageIds?.[0]||String(event.seq),workspace:target.project,sourceFiles,content:`Recorded task outcome: ${outcome?.state||'completed'}. The following is the agent's reported result, not an independent assertion that all claims were verified.\n${reply.text}`,sourceRefs:[`session:${event.sessionId}:event:${reply.seq}`],createdAt:event.recordedAt||new Date().toISOString()})
+  const specialist=owner.teams.worker(event.sessionId)
+  await memoryService.record(owner.project,{scope:specialist&&specialist.state!=='integrated'?'task':'shared',sessionId:event.sessionId,turnId:outcome?.messageIds?.[0]||String(event.seq),workspace:target.project,sourceFiles,content:`Recorded task outcome: ${outcome?.state||'completed'}. The following is the agent's reported result, not an independent assertion that all claims were verified.\n${reply.text}`,sourceRefs:[`session:${event.sessionId}:event:${reply.seq}`],createdAt:event.recordedAt||new Date().toISOString()})
 }
 
 async function openWorkspace(requested: string): Promise<ReturnType<DockerBridge['status']>> {
@@ -400,7 +430,7 @@ async function openWorkspace(requested: string): Promise<ReturnType<DockerBridge
   let current = workspaces.get(canonical)
   if (!current) {
     current = new WorkspaceRuntime(canonical, app.getPath('userData'), {
-      event: (event) => { const display=withEventFailure(event);window?.webContents.send('agent:event', display);if(display.failure){recordFailure(event.event,{code:display.failure.code,reference:display.failure.reference});window?.webContents.send('app:failure',display.failure);} if (current) {void handleHostEvent(current,event).catch(()=>{});if(event.event==='session.idle'&&memoryService)void retainMemory(current,event).catch(()=>{})} },
+      event: (event) => { if(event.event==='model.request.completed'){const p=event.payload as any;if(p.failure&&typeof p.model==='string')recordModelRejection(p.provider,p.model,p.failure)} const display=withEventFailure(event);window?.webContents.send('agent:event', display);if(display.failure){recordFailure(event.event,{code:display.failure.code,reference:display.failure.reference});window?.webContents.send('app:failure',display.failure);} if (current) {if(!recoveryState.busy&&['session.item','session.idle','verification.result','session.needs_input'].includes(event.event))timeline().changed(current,event.sessionId);void handleHostEvent(current,event).catch(()=>{});if(event.event==='session.idle'&&memoryService)void retainMemory(current,event).catch(()=>{})} },
       recall:async(prompt,workspace)=>{if(!memoryService)return '';try{const result=await memoryService.recall(canonical,prompt.slice(0,8000),workspace);return JSON.stringify(result)}catch{return 'Project memory is unavailable. Verify against current files and recorded sessions.'}},
       changed: () => window?.webContents.send('workflow:changed', canonical),
       hasTerminal: () => selected?.project === canonical && terminals.size > 0,
@@ -431,7 +461,7 @@ async function openWorkspace(requested: string): Promise<ReturnType<DockerBridge
   }
   let offline:ReturnType<typeof classifyFailure>|undefined
   try{if(recoveryState.waitingForDependency)offline=recoveryState.failure;else await current.ensureStarted()}catch(error){offline=classifyFailure(error,'docker-start')}
-  try{void memory().status(canonical).then(status=>{if(status.settings.enabled&&status.settings.projects.includes(canonical))void memory().start().catch(()=>{})}).catch(()=>{})}catch{/* Optional memory cannot block opening a coding workspace. */}
+  try{void memory().status(canonical).then(status=>{if(status.settings.enabled&&status.settings.globalConsent)void memory().start().catch(()=>{})}).catch(()=>{})}catch{/* Optional memory cannot block opening a coding workspace. */}
   selected = current; bridge = current.bridge; sessionUsage = current.usage; checkpoints = current.checkpoints
   current.active = current
   rememberProject(canonical)
@@ -560,8 +590,9 @@ function registerIPC(): void {
   handle('settings:get', () => recoveryState.migrationError ? defaultSettings() : getSettings())
   handle('settings:update', async (_event, patch) => {
     const next = updateSettings(patch)
+    releaseNotifications?.configure(notificationPreferences())
     nativeTheme.themeSource = next.theme
-    window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0e1420' : '#f4f6fc')
+    window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#10161b' : '#f0f3f5')
     if (bridge.status().ready) {
       if (next.decisionEngine === 'jev' && !next.decisionCloudProjects.includes(bridge.projectPath) && !next.decisionCloudDeclinedProjects.includes(bridge.projectPath)) await requestDecisionConsent(bridge.projectPath)
       await Promise.all([...workspaces.values()].map((owner) => owner.configureAll()))
@@ -661,18 +692,18 @@ function registerIPC(): void {
   handle('memory:storage',()=>memory().runtime.storage())
   handle('memory:clear-cache',async()=>{await remotePreview('Remove local memory model cache','Stops the optional memory service and removes only its downloaded embedding/reranking weights. Coding sessions and retained memories remain available. The weights download again when memory starts.');await memory().stop();await memory().runtime.clearModelCache()})
   handle('memory:status',(_event,limit?:number)=>memory().status(selected?.project||'',limit))
-  handle('memory:records',(_event,before?:string,limit?:number)=>memory().recordsPage(runtime().project,before,limit))
-  handle('memory:record',(_event,id:string)=>memory().readRecord(runtime().project,id))
+  handle('memory:records',(_event,before?:string,limit?:number)=>memory().recordsPage('',before,limit))
+  handle('memory:record',(_event,id:string)=>memory().readRecord('',id))
   handle('memory:configure',(_event,profile:import('../shared/memory').MemoryProfile)=>memory().configure(profile))
   handle('memory:verify',()=>memory().verify())
-  handle('memory:enable',async(_event,enabled:boolean)=>{if(typeof enabled!=='boolean')throw Error('Choose whether to enable memory');if(enabled){const status=await memory().status(runtime().project);await remotePreview('Enable automatic project memory',`Project: ${runtime().project}\nMemory processing: ${status.settings.profile?.provider}/${status.settings.profile?.model}\nBounded task outcomes and source references will be processed by this model and retained locally. Existing session logs and current files remain authoritative.`)}return memory().enable(runtime().project,enabled)})
-  handle('memory:retry',()=>memory().retry(runtime().project))
-  handle('memory:recall',(_event,query:string)=>memory().recall(runtime().project,query,project()))
-  handle('memory:reflect',(_event,query:string)=>memory().reflect(runtime().project,query,runtime().active.project))
-  handle('memory:forget',(_event,id:string)=>memory().forget(runtime().project,id))
-  handle('memory:correct',(_event,id:string,content:string)=>memory().correct(runtime().project,id,content))
-  handle('memory:rebuild',()=>memory().rebuild(runtime().project))
-  handle('memory:export',async()=>{const result=await dialog.showSaveDialog(window!,{title:'Export private project memory',defaultPath:`UnrealCode-memory-${timestampName()}.json`,filters:[{name:'JSON',extensions:['json']}]});if(result.canceled||!result.filePath)return null;await fs.writeFile(result.filePath,await memory().export(runtime().project),{mode:0o600});return result.filePath})
+  handle('memory:enable',async(_event,enabled:boolean)=>{if(typeof enabled!=='boolean')throw Error('Choose whether to enable memory');if(enabled){const status=await memory().status('');if(!status.settings.globalConsent)await remotePreview('Enable app-wide memory',`Memory processing: ${status.settings.profile?.provider}/${status.settings.profile?.model}\nUseful outcomes and bounded live activity from trusted projects will be processed by this model. Relevant memories can be recalled across chats and projects with source labels. Existing records will be migrated; chat logs remain authoritative.`)}return memory().enable('',enabled)})
+  handle('memory:retry',()=>memory().retry(''))
+  handle('memory:recall',(_event,query:string)=>memory().recall(selected?.project||'',query,selected?.active.project||''))
+  handle('memory:reflect',(_event,query:string)=>memory().reflect(selected?.project||'',query,selected?.active.project||''))
+  handle('memory:forget',(_event,id:string)=>memory().forget('',id))
+  handle('memory:correct',(_event,id:string,content:string)=>memory().correct('',id,content))
+  handle('memory:rebuild',()=>memory().rebuild(''))
+  handle('memory:export',async()=>{const result=await dialog.showSaveDialog(window!,{title:'Export private app-wide memory',defaultPath:`UnrealCode-memory-${timestampName()}.json`,filters:[{name:'JSON',extensions:['json']}]});if(result.canceled||!result.filePath)return null;await fs.writeFile(result.filePath,await memory().export(''),{mode:0o600});return result.filePath})
   const planningOwner=async(id:string)=>{const owner=await runtime().owner(id);await owner.bridge.request('session.config',{sessionId:id});return owner}
   handle('browser:state',async(_event,id:string)=>(await planningOwner(id)).browser.state(id))
   handle('browser:install',async(_event,id:string)=>(await planningOwner(id)).browser.install())
@@ -709,6 +740,8 @@ function registerIPC(): void {
     if(action==='resume')try{await owner.send(id,`Continue the explicitly requested objective: ${goal.objective}. Inspect retained work first. Use PlanUpdate to track milestones. When its acceptance criteria are verified, use GoalComplete with the evidence.`,randomUUID())}catch(error){await owner.planning.goalAction(id,'pause');throw error}
     return goal
   })
+  handle('timeline:view',(_event,id:string,before?:number)=>timeline().view(runtime(),id,before))
+  handle('models:catalog',(_event,provider:Provider,baseUrl='',refresh=false)=>{if(!['openai-codex','openai','anthropic','openrouter','fireworks','ollama','openai-compatible'].includes(provider)||typeof baseUrl!=='string'||baseUrl.length>2000||typeof refresh!=='boolean')throw Error('Invalid model catalog request');return modelCatalog(provider,baseUrl,refresh)})
   handle('model:capabilities',async(_event,id?:string)=>{const config=id?await sessionRequest('session.config',id) as BridgeSessionConfig:runtime().config();return modelCapabilities(config.provider,config.model,config.baseUrl)})
   handle('command:execute',async(_event,input:unknown):Promise<CommandResult>=>{
     const {name,args,sessionId:id}=validateCommand(input),owner=runtime()
@@ -753,7 +786,7 @@ function registerIPC(): void {
   handle('team:stop',(_event,parent:string)=>runtime().teams.stopAll(parent))
   handle('team:worker-action',(_event,parent:string,id:string,action:string,prompt?:string)=>{const owner=runtime();if(action==='cancel')return owner.teams.cancel(parent,id);if(action==='resume')return owner.teams.resumeWorker(parent,id,prompt);if(action==='followup')return owner.teams.followUp(parent,id,String(prompt||''));if(action==='steer')return owner.teams.steer(parent,id,String(prompt||''));if(action==='retain')return owner.specialistRetain(parent,id);throw new Error('Unknown specialist action')})
   handle('team:preview',(_event,parent:string,id:string)=>runtime().specialistPreview(parent,id))
-  handle('team:integrate',(_event,parent:string,id:string,paths:string[])=>runtime().specialistIntegrate(parent,id,paths))
+  handle('team:integrate',async(_event,parent:string,id:string,paths:string[])=>{const owner=runtime(),result=await owner.specialistIntegrate(parent,id,paths),worker=owner.teams.view(parent)?.workers.find(row=>row.id===id);if(worker?.state==='integrated'&&worker.sessionId)await memory().promoteWorkspace((await owner.owner(worker.sessionId)).project);return result})
   handle('workflow:settings',()=>runtime().workflows.settings())
   handle('workflow:save',(_event,value:import('../shared/verification').WorkflowPresets)=>runtime().workflows.update(value))
   handle('workflow:runs',()=>runtime().workflows.summaries())
@@ -833,7 +866,7 @@ function createWindow(): void {
     width: 1500, height: 940, minWidth: 1000, minHeight: 650,
     // Explicit automation option for CI and non-disruptive local smoke checks.
     show: !backgroundCheck,
-    title: 'UnrealCode', backgroundColor: nativeTheme.shouldUseDarkColors ? '#0e1420' : '#f4f6fc',
+    title: 'UnrealCode', backgroundColor: nativeTheme.shouldUseDarkColors ? '#10161b' : '#f0f3f5',
     icon: join(app.isPackaged ? process.resourcesPath : join(__dirname, '../..'), 'assets', 'unrealcode-icon.png'),
     webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: !backgroundCheck, offscreen: backgroundCheck }
   })
@@ -857,16 +890,16 @@ function createWindow(): void {
 app.whenReady().then(async () => {
   try { await recoverStartup() } catch { /* Show recovery controls without overwriting prior data. */ }
   nativeTheme.themeSource = recoveryState.migrationError ? 'system' : getSettings().theme
-  nativeTheme.on('updated', () => window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0e1420' : '#f4f6fc'))
+  nativeTheme.on('updated', () => window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#10161b' : '#f0f3f5'))
   app.setAppUserModelId('ai.mcshotty.unrealcode')
   registerIPC()
   registerRecoveryIPC()
   createWindow()
   Menu.setApplicationMenu(Menu.buildFromTemplate([{role:'fileMenu'},{role:'editMenu'},{role:'viewMenu'},{label:'UnrealCode',submenu:commands.map(command=>({label:`/${command.name} — ${command.description}`,click:()=>window?.webContents.send('app:command',command.name)}))},{role:'windowMenu'}]))
-  void updates.initialize()
+  void updates.initialize();releaseNotices();powerMonitor.on('resume',()=>releaseNotifications?.wake())
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
 
 let shutdownReady=false,shutdownPending=false
-app.on('before-quit', event => {if(shutdownReady)return;event.preventDefault();if(shutdownPending)return;shutdownPending=true;closeTerminals();hostOperations?.cancelAll();for(const map of [hookControllers,browserControllers])for(const controller of map.values())controller.abort();evaluations.stopAll();void (async()=>{await Promise.allSettled([memoryService?.stop(),connections?.close(),...[...workspaces.values()].map(owner=>owner.stopAll())]);await drainMetadata();await closeHistoryCaches()})().finally(()=>{closeProjectFiles();shutdownReady=true;app.quit()})})
+app.on('before-quit', event => {if(shutdownReady)return;event.preventDefault();if(shutdownPending)return;shutdownPending=true;releaseNotifications?.close();timelineService?.close();closeTerminals();hostOperations?.cancelAll();for(const map of [hookControllers,browserControllers])for(const controller of map.values())controller.abort();evaluations.stopAll();void (async()=>{await Promise.allSettled([memoryService?.stop(),connections?.close(),...[...workspaces.values()].map(owner=>owner.stopAll())]);await timelineService?.settled();await releaseNotifications?.settled();await drainMetadata();await closeHistoryCaches()})().finally(()=>{closeProjectFiles();shutdownReady=true;app.quit()})})
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

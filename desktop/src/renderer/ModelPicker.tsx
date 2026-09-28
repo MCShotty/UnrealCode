@@ -1,3 +1,4 @@
+import {ModelSelector} from './ModelSelector'
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, Cpu } from 'lucide-react'
 import { motion } from 'motion/react'
@@ -19,7 +20,7 @@ export function ModelPicker({ settings, onSave, onModel }: { settings: Settings;
     <summary aria-label="Model for next session"><Cpu size={17}/><span>{settings.model || providers.find(([id]) => id === settings.provider)?.[1]}</span><motion.span className="disclosure-chevron" animate={{ rotate: open ? 180 : 0 }} transition={reduced ? instant : spatial.fast}><ChevronDown size={14}/></motion.span></summary>
     <motion.div className="model-picker-panel" initial={false} animate={open ? { opacity: 1, y: 0, scale: 1 } : { opacity: 0, y: reduced ? 0 : -8, scale: reduced ? 1 : .97 }} transition={reduced ? instant : expressive.panel}><h2>Next session</h2><p>Existing sessions keep their current provider and model.</p>
       <label>Provider<select value={settings.provider} onChange={event => void onSave({ provider: event.target.value as Provider, model: '' })}>{providers.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-      <label>Model<input value={settings.model} onChange={event => onModel(event.target.value)} onBlur={() => void onSave({ model: settings.model })} placeholder="Model ID"/></label>
+      <ModelSelector provider={settings.provider} model={settings.model} baseUrl={settings.baseUrl} onChange={model=>{onModel(model);void onSave({model})}}/>
     </motion.div>
   </details>
 }

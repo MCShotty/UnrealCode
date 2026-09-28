@@ -42,6 +42,7 @@ export default function CodeEditor({ path, content, base, diff, onChange, onSave
         'editor.lineHighlightBackground': colors.hover, 'editor.selectionBackground': colors.selection,
         'editorCursor.foreground': colors.accent, 'editorWidget.background': colors.hover,
         'editorWidget.border': colors.line, 'focusBorder': colors.accent,
+        'diffEditor.insertedTextBackground': colors.added, 'diffEditor.removedTextBackground': colors.removed,
         'scrollbarSlider.background': colors.scrollbar, 'scrollbarSlider.hoverBackground': colors.accent, 'scrollbarSlider.activeBackground': colors.accent
       } })
       monaco.editor.setTheme('unrealcode')

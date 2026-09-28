@@ -42,7 +42,7 @@ function service(db){
   if(w&&type==='model.request.started'){w.model=true;w.state='running'}
   if(w&&type==='model.request.completed')w.model=false
   if(type==='session.item'&&kind==='model_response'){
-   const response=get(data,'Response');if(w){w.model=false;if(get(response,'Failure')){w.state='failed';w.failureSequence=e.seq;w.fatal=true}}
+   const response=get(data,'Response');if(w){w.model=false;if(get(response,'Failure')||get(response,'Stop')==='refused'){w.state='failed';w.failureSequence=e.seq;w.fatal=true}}
    for(const [i,out] of (get(response,'Output')||[]).entries()){
     const d=get(out,'Data');if(get(out,'Type')==='message'&&get(d,'Text')&&w){w.lastMessageId=`${e.seq}:message:${i}`;if(get(d,'Phase'))w.phases=true;if(get(d,'Phase')==='final_answer')w.finalMessageId=w.lastMessageId}
     if(get(out,'Type')!=='tool_call')continue

@@ -16,6 +16,8 @@ export type Settings = {
   theme: 'dark' | 'light' | 'system'
   layout: { sessionWidth: number; activityWidth: number; sessions: boolean; activity: boolean; focus: boolean }
   notifications: boolean
+  automaticUpdateChecks?: boolean
+  updateChannel?: 'stable'|'preview'
   executionMode: ExecutionMode
   taskIsolation: boolean
   autoCompaction: boolean
@@ -30,7 +32,7 @@ export type Settings = {
 }
 export const settingsFields = [
   'recentProjects','trustedProjects','provider','model','thinkingLevel','systemPrompt','projectInstructions','theme',
-  'layout','notifications','executionMode','taskIsolation','autoCompaction','disallowedTools','baseUrl',
+  'layout','notifications','automaticUpdateChecks','updateChannel','executionMode','taskIsolation','autoCompaction','disallowedTools','baseUrl',
   'decisionEngine','decisionSetupSeen','decisionModel','decisionCloudProjects','decisionCloudDeclinedProjects','glinerEnabled'
 ] as const satisfies readonly (keyof Settings)[]
 export const settingsLayoutFields = ['sessionWidth','activityWidth','sessions','activity','focus'] as const satisfies readonly (keyof Settings['layout'])[]
@@ -106,6 +108,8 @@ export interface DesktopAPI {
   teamPreferencesSave(value:import('./teams').TeamPreferences):Promise<import('./teams').TeamPreferences>
   command(request:{name:import('./commands').CommandName;args:string;sessionId?:string}):Promise<import('./commands').CommandResult>
   onCommand(callback:(name:import('./commands').CommandName)=>void):()=>void
+  timeline(sessionId:string,before?:number):Promise<import('./timeline').TimelineView>
+  modelCatalog(provider:Provider,baseUrl?:string,refresh?:boolean):Promise<import('./model-catalog').ModelCatalog>
   modelCapabilities(sessionId?:string):Promise<import('./model-capabilities').ModelCapabilities>
   planning(sessionId:string):Promise<import('./planning').PlanningState>
   planSave(sessionId:string,plan:Pick<import('./planning').TaskPlan,'objective'|'body'|'acceptance'|'milestones'>):Promise<import('./planning').TaskPlan>
@@ -140,6 +144,10 @@ export interface DesktopAPI {
   supportExport():Promise<string|null>
   updateStatus():Promise<import('./recovery').UpdateState>
   updateCheck(channel:'stable'|'preview'):Promise<import('./recovery').UpdateState>
+  updatePreferences(patch:{automaticChecks?:boolean;channel?:'stable'|'preview'}):Promise<import('./recovery').UpdateState>
+  updateDismiss(version:string):Promise<import('./recovery').UpdateState>
+  updateOpenRelease():Promise<void>
+  onUpdateStatus(callback:(status:import('./recovery').UpdateState)=>void):()=>void
   updateDownload():Promise<import('./recovery').UpdateState>
   updateCancel():Promise<void>
   updateInstall():Promise<void>

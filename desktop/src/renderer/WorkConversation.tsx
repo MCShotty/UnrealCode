@@ -1,3 +1,4 @@
+import {ProviderRecovery} from './ProviderRecovery'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ChevronDown, CircleHelp, RotateCcw } from 'lucide-react'
 import { motion } from 'motion/react'
@@ -58,5 +59,5 @@ export function WorkConversation({entries,controller,session,online,renderEntry,
  const failed=[...works].reverse().find(w=>w.state==='failed'&&w.failureSequence),latest=works.at(-1)
  if(latest?.open&&!indicated.has(latest.id))parts.push(<div className="work-pending" role="status" key={`pending:${latest.id}`}><ProgressIndicator state={latest.state==='waiting_input'?'waiting':'running'}/><span>{label(latest)}</span></div>)
  const retry=async()=>{if(!session||!failed?.failureSequence||retryBusy)return;const seq=failed.failureSequence;let id=retryIds.current.get(seq);if(!id){id=crypto.randomUUID();retryIds.current.set(seq,id)}setRetryBusy(true);setRetryError('');try{await api.retryResponse(session.id,seq,id);controller.refresh()}catch(e){setRetryError(String(e))}finally{setRetryBusy(false)}}
- return <><span hidden data-work-ready={controller.ready}/>{controller.error&&<p className="error-inline">{controller.error}</p>}{parts}{failed&&failed===latest&&<div className="response-recovery"><p>The response failed. Accepted answers and completed tool results remain in this conversation.</p><button className="secondary-button" disabled={!online||retryBusy} onClick={()=>void retry()}><RotateCcw size={15}/>{retryBusy?'Retrying…':'Retry response'}</button>{retryError&&<p className="error-inline" role="alert">{retryError}</p>}</div>}</>
+ return <><span hidden data-work-ready={controller.ready}/>{controller.error&&<p className="error-inline">{controller.error}</p>}{parts}{failed&&failed===latest&&session&&<ProviderRecovery sessionId={session.id} failure={entries.find(row=>row.seq===failed.failureSequence&&row.kind==='status')?.raw} online={online} busy={retryBusy} onRetry={()=>void retry()}/>} {retryError&&<p className="error-inline" role="alert">{retryError}</p>}</>
 }

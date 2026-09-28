@@ -13,7 +13,17 @@ Bring your own provider, open a project, and work with an agent that can inspect
 
 UnrealCode is a general-purpose coding application. It does not require Unreal Engine. Its execution engine is the [Unreal Agent Go harness](https://github.com/unreallabsai/unreal-agent) from Unreal Labs; the desktop application adds the interface, project controls, provider setup, integrations, and recovery workflows.
 
-> **Windows distribution:** UnrealCode 1.0 uses an unsigned installer with a published SHA-256 manifest, a Git tag, and a GitHub Actions build-provenance attestation. [Verify the release](desktop/VERIFY_RELEASE.md) before installing. Windows will still report an unknown publisher; in-app updates stay disabled until trusted code signing is available. See [release status](desktop/ROADMAP_STATUS.md), [implementation evidence](desktop/PARITY_IMPLEMENTATION.md), and the [Releases page](https://github.com/MCShotty/UnrealCode/releases).
+> **Windows distribution:** Releases use an unsigned installer, a SHA-256 manifest, a Git tag, and a GitHub Actions build-provenance attestation. [Verify the release](desktop/VERIFY_RELEASE.md) before installing. Windows will still report an unknown publisher. From 1.0.1, the app can notify you about newer GitHub releases; downloading and installation remain manual. See the [changelog](CHANGELOG.md) and [Releases page](https://github.com/MCShotty/UnrealCode/releases).
+
+## New in 1.0.1
+
+- **App-wide memory:** enable it once, select its separate model, and recall relevant knowledge across chats and trusted projects with source attribution. Existing project memories migrate only after expanded-scope consent.
+- **Useful activity timelines:** recorded events remain available offline; optional memory-model summaries cite evidence and describe inferred stages without changing approved plans.
+- **Provider recovery:** searchable Codex model discovery and explicit refusal, account-access, quota, rate-limit and context-limit explanations. A declined response is recorded as a failure.
+- **A clearer workspace:** contained Files & skills picker, cobalt/red/steel light and dark themes, accessible contrast, and Material 3 Expressive feedback that respects reduced motion.
+- **Release notifications:** optional startup/daily checks, a dismissible notice, and a link to the release changelog. See [upgrade instructions](#installing-and-upgrading).
+
+The [1.0.1 changelog](CHANGELOG.md#101--2026-09-29) also covers the memory, shutdown, timeline and Docker reliability fixes.
 
 ## What you can do
 
@@ -28,12 +38,13 @@ UnrealCode is a general-purpose coding application. It does not require Unreal E
 | **Continuity** | A persistent queue per project, manual provider handoff into a linked session, local conversation search, and optional Windows notifications. Projects can run concurrently; each project's queued tasks run sequentially. |
 | **Specialist teams** | Off / Manual / Automatic project defaults with per-task controls. Explorer, implementer, reviewer and browser tester profiles can select their own model, endpoint, effort and limits. Isolated worktrees, queued dispatch, follow-up, cancellation, reviewed integration and separate/combined usage. No nested delegation. |
 | **Plans and commands** | Shared slash/menu/palette commands, editable versioned plans, explicit implementation, bounded persistent goals, safe-boundary mode changes, and capability-aware speed/effort controls. `/fast` requests a provider tier and reports the actual tier returned. |
-| **Project memory** | Optional local Hindsight with a separately verified memory model, bounded automatic retention, source provenance, scoped recall, corrections, forgetting, exports and recovery. Coding remains available if memory is unavailable. |
+| **App-wide memory** | Optional local Hindsight with a separately verified model, bounded retention, cross-project recall with source attribution, corrections, forgetting, exports and recovery. Unintegrated specialist knowledge remains task-scoped. Coding stays available during memory outages. |
+| **Activity timeline** | Durable factual events and approved plan stages, with optional evidence-linked summaries from the memory model. Observer usage is recorded separately within memory usage; analysis runs at most once per 20 seconds per conversation with two global slots. |
 | **Browser and jobs** | Dedicated isolated Chromium, approved origins and loopback previews, model-visible screenshots, managed background commands, and reviewed container hooks. Browser profiles are separate from personal browsers. |
 | **Verification** | Saved review/test/fix workflows, named verification commands, bounded opt-in repair loops, local model health checks, and explicitly started decision-model comparisons. |
 | **Usage and performance** | Provider-reported session tokens, cache/reasoning/decision usage where available, a parallel operation inspector, Codex subscription percentages, and optional organization reports. No estimated dollar costs. |
 | **Desktop experience** | Dark, Light, and Follow Windows themes; resizable/collapsible panels, focus layout, command palette, container terminal, restrained spring animations, and reduced-motion support. |
-| **Recovery** | Settings/session backup and restore, integrity checks, pre-migration backups, guarded export and reattachment of verified interrupted-restore volumes, storage cleanup previews, and redacted support exports. Unsigned builds keep in-app updates unavailable. |
+| **Recovery and releases** | Settings/session backup and restore, integrity checks, pre-migration backups, guarded recovery-volume reattachment, cleanup previews, and redacted support exports. Unsigned builds can discover releases but cannot automatically install them. |
 
 ## Providers and sign-in
 
@@ -49,6 +60,16 @@ All coding providers use Unreal Agent's coordinator, session history, and tools.
 | **OpenAI-compatible local servers** | A local or private-network Chat Completions endpoint, with optional API key. Capabilities depend on the runtime. |
 
 API keys stay in Electron's main process and are encrypted locally with Electron `safeStorage` when available; otherwise they remain in memory for that run. Provider credentials reach the backend through its private input stream, never Docker arguments or environment variables. The renderer receives credential status, not plaintext keys.
+
+The shared model selector reads the installed Codex CLI's paginated catalog for chat, memory and specialist profiles. Listed models are distinguished from explicit access rejections; hidden or omitted models are not assumed unavailable. Manual model IDs are labelled unverified. Changing a provider for an existing conversation uses reviewed handoff.
+
+## Installing and upgrading
+
+Download the installer and `SHA256SUMS` from the same [GitHub release](https://github.com/MCShotty/UnrealCode/releases), follow the [verification guide](desktop/VERIFY_RELEASE.md), settle active tasks, and close UnrealCode before installing. Settings and session data are preserved; normal migration/recovery checks still apply.
+
+**Upgrading from 1.0.0 requires a manual installation.** Its disabled updater cannot acquire the new notification feature. In 1.0.1, **Settings → Recovery → Application updates** offers Stable/Preview channels, manual checks, and an automatic-check switch. Automatic checks are enabled by default and run when due after startup and at most once daily, including across restarts. Checks contact GitHub without a GitHub login or project content. A notice links to the release page and changelog; dismissing it remembers that version. No installer is downloaded or run automatically.
+
+Memory remains optional. Before existing project memories become app-wide, review the broader recall scope and the configured model destination. Disabled memory stays disabled; enabling it does not ingest every historical conversation. Repository-specific knowledge keeps its original source labels and cannot grant access to another project's files.
 
 Session usage and account usage are separate. OpenAI/Anthropic organization reports require optional, separate admin credentials and can include usage from other applications. Codex percentages come from reported account limits, not a conversion from token counts. Unknown context limits and unavailable account data are labelled accordingly.
 
@@ -149,7 +170,7 @@ The build creates a local NSIS installer under `desktop/dist/`; it does not publ
 
 ## Release provenance, signing, and privacy
 
-The 1.0 Windows installer is unsigned. Its SHA-256 manifest and GitHub Artifact
+The Windows installer is unsigned. Its SHA-256 manifest and GitHub Artifact
 Attestation establish integrity and build provenance, not a trusted Windows
 publisher. Use the [verification guide](desktop/VERIFY_RELEASE.md) for each
 download. The [code signing policy](CODE_SIGNING_POLICY.md) records the deferred
@@ -159,4 +180,4 @@ and when configured providers, connections, and other services receive informati
 
 ### Current limits
 
-Windows + Docker is the supported target. Native execution, macOS/Linux desktop support, full language servers/debugging, an extension marketplace, and Claude subscription integration are outside this release. Recovery import currently requires the original Windows profile/app-data and project paths. The installer is unsigned, so trusted publisher identity and in-app signed updates remain unavailable. Full assistive-technology acceptance has not been established.
+Windows + Docker is the supported target. Native execution, macOS/Linux desktop support, full language servers/debugging, an extension marketplace, and Claude subscription integration are outside this release. Recovery import currently requires the original Windows profile/app-data and project paths. Trusted publisher identity and automatic installation remain unavailable for unsigned builds. Full assistive-technology acceptance has not been established.

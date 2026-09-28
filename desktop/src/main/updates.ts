@@ -25,6 +25,7 @@ export class Updates {
  private expectedHash=''
  private value:UpdateState={channel:'stable',state:'unavailable',message:'Updates require a signed Windows release.'}
  view():UpdateState{return {...this.value}}
+ supportsInstallation():boolean{return !!this.updater}
  async initialize():Promise<void>{
   try{if(!app.isPackaged||process.platform!=='win32')return
    const policy=JSON.parse(readFileSync(join(process.resourcesPath,'release-policy.json'),'utf8'));this.publishers=policy.publishers

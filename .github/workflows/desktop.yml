@@ -34,6 +34,7 @@ jobs:
       - run: npm run build:win
       - run: node scripts/audit-release.mjs
       - run: node scripts/qa.mjs --no-docker --credentials --packaged
+      - run: node scripts/qa-release-notifications.mjs --packaged
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: windows-candidate

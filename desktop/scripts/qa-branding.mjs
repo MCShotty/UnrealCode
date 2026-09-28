@@ -21,6 +21,7 @@ try {
     for (const scheme of schemes) {
       await page.emulateMedia({ colorScheme: scheme, reducedMotion: 'reduce' })
       await page.waitForFunction(expected => document.documentElement.dataset.theme === expected, scheme)
+      assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme), scheme, 'Native controls must follow the selected theme, including live system changes')
       const marks = await page.locator('.brand-mark').evaluateAll(elements => elements.map(element => ({ width: element.clientWidth, images: [...element.querySelectorAll('img')].filter(img => getComputedStyle(img).display !== 'none').map(img => ({ className: img.className, loaded: img.complete && img.naturalWidth > 0 })), shadow: getComputedStyle(element).boxShadow, filter: getComputedStyle(element).filter })))
       assert(marks.length >= 2)
       assert(marks.every(mark => mark.width > 0 && mark.images.length === 1 && mark.images[0].loaded && mark.images[0].className === `brand-mark-${scheme}` && mark.shadow === 'none' && mark.filter === 'none'))

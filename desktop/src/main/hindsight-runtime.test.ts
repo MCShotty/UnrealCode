@@ -131,3 +131,10 @@ it('cleans up and reports an unavailable runtime after preparation fails', async
   expect(manifest.volume).toBe(runtime.volume)
   expect(new HindsightRuntime((runtime as any).directory + sep).volume).toBe(runtime.volume)
 })
+
+it('waits for the final TCP database and safely retries first-initialization shutdown',async()=>{
+ const root=await directory(),runtime=new HindsightRuntime(root),calls:string[][]=[];let attempt=0
+ vi.spyOn(runtime as any,'docker').mockImplementation(async(raw:unknown)=>{const args=raw as string[];calls.push(args);if(args.includes('pg_isready')&&attempt++===0)throw Error('TCP server not yet started');if(args.includes('psql')&&attempt===2)throw Error('database system is shutting down');return {stdout:'ready',stderr:''}})
+ await (runtime as any).waitForDatabase(()=>{})
+ expect(calls.length).toBeGreaterThan(2);expect(calls.every(args=>args.includes('-h')&&args.includes('127.0.0.1'))).toBe(true)
+})
