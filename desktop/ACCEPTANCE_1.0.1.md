@@ -11,6 +11,7 @@ The bug-hunt candidate replaces the palette build `a14cac7d...` and the earlier 
 
 ### Release-notification candidate
 
+- Hosted Windows acceptance at `bb15f3e` exposed the asynchronous update-checkbox bounce. Recovery preferences now update immediately, roll back on failure, and invalidate stale background polls. The same UI regression passes locally (`unrealcode-release-notice-TJqJ9m`); hosted acceptance must pass on the follow-up commit before merging. The local installer checksum above identifies the earlier build, not this source correction or the eventual hosted installer.
 - Full desktop suite: **455 passed, 3 optional skips, 67 files**. TypeScript and production packaging pass. GitHub discovery tests cover versions/channels, required assets, owned URLs, pagination/ETags, malformed replies, deduplication, offline caching, retry/reset limits, scheduler cadence, preferences, and persistent dismissal.
 - Fresh Go race and vet checks pass for `cmd`, `harness`, and `internal` with Go 1.27.1 in Docker. Formatting passed for 233 LF-normalized source files, matching Linux CI's checkout; the working tree's Windows line endings were preserved.
 - Packaged notification UI (`unrealcode-release-notice-WusyU2`) passed: manual checks with automation off, nonmodal focus behavior, light/dark at 150%, reduced motion, allowed release links, unsigned download/install rejection, saving other settings without undoing opt-out, and dismissal across restart. Responses are synthetic GitHub fixtures, with no token or visible external browser.
