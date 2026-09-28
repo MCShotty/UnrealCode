@@ -10,6 +10,15 @@ writeFileSync(join(profile,'settings.json'),JSON.stringify({decisionSetupSeen:tr
 writeFileSync(join(profile,'data-version.json'),JSON.stringify({schema:1,version:'1.0.0'}))
 const packaged=process.argv.includes('--packaged'),executablePath=resolve(process.env.UNREALCODE_QA_EXECUTABLE||(packaged?'dist/win-unpacked/UnrealCode.exe':'node_modules/electron/dist/electron.exe'))
 const launch=()=>electron.launch({executablePath,args:packaged?[]:['.'],env:{...process.env,UNREAL_DESKTOP_USER_DATA:profile,UNREAL_DESKTOP_BACKGROUND_CHECK:'1'},cwd:process.cwd()})
+// Resizing an offscreen surface can briefly invalidate Chromium's copy target.
+// Wait for rendered frames and retry only that transient capture failure.
+async function captureSettled(app,page){
+ for(let attempt=0;attempt<3;attempt++){
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+  try{return await app.evaluate(async({BrowserWindow})=>{const image=await BrowserWindow.getAllWindows()[0].webContents.capturePage(undefined,{stayHidden:true});if(image.isEmpty())throw Error('Empty screenshot');return image.toPNG().toString('base64')})}
+  catch(error){if(!String(error).includes('UnknownVizError')||attempt===2)throw error;await page.waitForTimeout(100*(attempt+1))}
+ }
+}
 let app=await launch();const report={root,packaged,checks:[],errors:[]}
 try{
  let page=await app.firstWindow();page.on('pageerror',e=>report.errors.push(e.message));await page.getByRole('heading',{name:'Open a workspace'}).waitFor()
@@ -32,7 +41,7 @@ try{
   await page.getByRole('tab',{name:'Appearance',exact:true}).click();await page.getByLabel('Theme',{exact:true}).selectOption(theme);const save=page.getByRole('button',{name:'Save settings',exact:true});if(await save.isVisible())await save.click();await page.getByRole('tab',{name:'Recovery',exact:true}).click();await page.emulateMedia({reducedMotion:'reduce'});await app.evaluate(({BrowserWindow})=>{const w=BrowserWindow.getAllWindows()[0];w.setMinimumSize(400,400);w.setSize(1200,900);w.webContents.setZoomFactor(1.5)})
   await page.waitForFunction(theme=>document.documentElement.dataset.theme===theme,theme)
   assert(await notice.evaluate(el=>{const b=el.getBoundingClientRect();return b.right<=innerWidth&&b.bottom<=innerHeight&&el.scrollWidth<=el.clientWidth+1}))
-  writeFileSync(join(root,`notice-${theme}.png`),Buffer.from(await app.evaluate(async({BrowserWindow})=>(await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64')),'base64'))
+  writeFileSync(join(root,`notice-${theme}.png`),Buffer.from(await captureSettled(app,page),'base64'))
  }
  await notice.getByRole('button',{name:'Dismiss',exact:true}).focus();await page.keyboard.press('Enter');await notice.waitFor({state:'detached'})
  await page.getByRole('tab',{name:'Appearance',exact:true}).click();await page.getByLabel('Theme',{exact:true}).selectOption('dark');await page.getByRole('button',{name:'Save settings',exact:true}).click()
