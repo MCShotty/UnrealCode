@@ -59,8 +59,8 @@ not available here; a fresh-machine acceptance run remains external.
 The clean `npm ci` install, TypeScript check, and full desktop suite passed again
 after the source commit. The real-Docker recovery integration passed both its
 volume-transfer and retained-volume tests. The exact committed package passed
-its credential-context test; reachable Git history now scans 1,574 blobs with
-zero secret matches.
+its credential-context test; the reachable Git-history scan covers over 1,500
+blobs with zero secret matches.
 
 GitHub currently reports `MCShotty/UnrealCode` as public. Historical Desktop
 acceptance run `36269843333` actually started: its bridge job passed and the
