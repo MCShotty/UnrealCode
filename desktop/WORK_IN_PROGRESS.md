@@ -50,12 +50,19 @@ The exact payload/source audit scanned **1,106 entries** and reviewed **207
 production npm packages**, comparing seven local credential values privately
 with zero matches. Reachable Git history scanned 1,257 blobs with zero secret
 hits. The patch whitespace check passed. No 1.0 tag, push, release asset
-upload, installation, or visibility change was made in this sweep.
+upload, or visibility change was made in this sweep. This agent did not install
+the candidate on another machine. The user subsequently reported that an
+installer named `UnrealCode-Setup-1.0.0-preview.1.exe` installed successfully
+on a second machine. The user supplied SHA-256
+`2FA55CE240A0876C3195C55F75EECC8950B69D5994A5719C7AE6F8E8DD993550`,
+which matches this committed candidate exactly. This is user-reported installer
+acceptance, not an agent-observed launch, Docker, workflow, or upgrade check.
 The local CI-equivalent Docker build and bridge capability check passed; its
 temporary image tag was removed afterward. No valid code-signing certificate
 was found in the current-user or machine certificate stores, and no publisher
 signing configuration is present. Windows Sandbox and Hyper-V management are
-not available here; a fresh-machine acceptance run remains external.
+not available here; the exact candidate's second-machine installation is
+user-verified, while post-install behavior still requires evidence.
 The clean `npm ci` install, TypeScript check, and full desktop suite passed again
 after the source commit. The real-Docker recovery integration passed both its
 volume-transfer and retained-volume tests. The exact committed package passed
@@ -72,7 +79,7 @@ test package was rejected by automatic approval review with the sole reason
 `blocked by policy`. It remains intact; no alternate deletion method was used.
 
 Still open for stable 1.0: publisher signing and a signed-update exercise;
-fresh-machine installation and upgrades from supported 0.x profiles; hosted
+fresh-machine end-to-end verification and upgrades from supported 0.x profiles; hosted
 CI on the frozen candidate; native desktop and assistive-technology checks;
 live Claude/OpenAI API verification where valid credentials exist; and a
 reviewed signed release artifact. The recent user-reported overflow must
