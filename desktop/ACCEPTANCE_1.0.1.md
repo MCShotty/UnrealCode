@@ -1,6 +1,6 @@
 # 1.0.1 acceptance evidence
 
-Status: local unsigned release-notification candidate verified on 2026-09-29. The owner has authorized 1.0.1 publication after hosted CI and attestation gates pass. Published artifact evidence is separate from the local checksums below.
+Status: v1.0.1 published and its downloaded assets verified on 2026-09-29 (Asia/Riyadh). See [published artifact evidence](RELEASE_VERIFICATION_1.0.1.md) for the exact tag, commit, hosted runs and public checksum. The local candidate checksums below are historical and differ from the published installer.
 
 Installer: `dist-1.0.1/UnrealCode-Setup-1.0.1.exe`.
 Local SHA-256: `690a65c04b091356f9a7628987974b62eb329b3f212497a9f789d9f738554ad7`.

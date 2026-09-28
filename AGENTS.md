@@ -2,6 +2,21 @@
 
 ## Published release and release boundary
 
+The current public [v1.0.1 release](https://github.com/MCShotty/UnrealCode/releases/tag/v1.0.1)
+is an **unsigned** Windows NSIS installer from annotated tag `v1.0.1` at
+`05ad90458f201f8522b518f8c02650be0f1ab34a`. Published installer SHA-256:
+`5b0c6390527aecf93d3155c7398d1ebc21cf1884e10ace9360654cfa5a64e9e5`.
+The exact merged commit passed nonpublishing preflight `36492958580`; tagged
+workflow `36493471147` built, audited, attested and published the release.
+The downloaded assets were verified again for checksum, repository/workflow,
+tag, source commit, GitHub-hosted runner and `NotSigned` status. GitHub's Latest
+release is v1.0.1. See [published evidence](desktop/RELEASE_VERIFICATION_1.0.1.md).
+Preserve both published tags and their assets. Release discovery is available
+in 1.0.1; downloads and installation remain manual, including the first upgrade
+from 1.0.0.
+
+### Preserved 1.0.0 evidence
+
 The public [v1.0.0 release](https://github.com/MCShotty/UnrealCode/releases/tag/v1.0.0)
 is an **unsigned** Windows NSIS installer from annotated tag `v1.0.0` at
 `3f25c1bce449d3476639fc976778ced6955274d7`. Its published installer
@@ -17,7 +32,7 @@ provide Windows Authenticode publisher trust. The published installer reports
 `NotSigned` (the local 1.0 preflight app EXE did too), so in-app auto-updates
 remain disabled. Never describe this release as signed or suggest that Windows
 warnings are removed. Preserve public repository visibility; do not move
-`v1.0.0` or replace its release assets.
+`v1.0.0` or `v1.0.1`, or replace their release assets.
 The owner's authorization for this release does not automatically authorize a
 later version. Before future publication, use a new reviewed commit and tag,
 run the nonpublishing release workflow on `main`, and verify the downloaded
@@ -37,11 +52,11 @@ and daybreak mode for coding. Do not claim unsupported controls were enabled.
 Communicate plainly, with brief,
 natural humor when appropriate. Report concrete evidence and limitations.
 
-## Authorized 1.0.1 release
+## Completed 1.0.1 release
 
-The owner explicitly authorized documenting, committing, pushing, merging and publishing 1.0.1 after its acceptance gates pass. This supersedes the earlier 1.0.1 publication hold, and applies only to this version. Include the accumulated 1.0.1 implementation, theme polish, bug fixes and release notifications. Leave the unrelated untracked `docs/orbit-garden-demo.html` untouched. Keep v1.0.0's tag and assets intact.
+The owner explicitly authorized documenting, committing, pushing, merging and publishing 1.0.1 after its acceptance gates passed. This superseded the earlier 1.0.1 publication hold and applied only to this version. PR #1 included the accumulated implementation, theme polish, bug fixes and release notifications; PR #2 stabilized the offscreen acceptance capture. Both merged after hosted checks passed. The unrelated untracked `docs/orbit-garden-demo.html` remains untouched. v1.0.0's tag and asset identities/digests are unchanged.
 
-Merge the reviewed `codex/1.0.1` PR after Windows, backend and Go CI passes. Run the nonpublishing release workflow on the exact merged `main` commit, then tag `v1.0.1`. Publish only the workflow-built installer and checksum manifest after provenance verification; verify the downloaded published artifact again. Do not substitute a local candidate for the attested hosted artifact. See `CHANGELOG.md`, `desktop/ACCEPTANCE_1.0.1.md`, and `desktop/RELEASE_NOTES_1.0.1.md` for scope and evidence. Future versions require separate authorization.
+For a separately authorized future release, merge its reviewed PR after Windows, backend and Go CI passes. Run the nonpublishing release workflow on the exact merged `main` commit before creating its version tag. Publish only the workflow-built installer and checksum manifest after provenance verification; verify the downloaded published artifact again. Do not substitute a local candidate for the attested hosted artifact. See `CHANGELOG.md`, `desktop/ACCEPTANCE_1.0.1.md`, `desktop/RELEASE_NOTES_1.0.1.md`, and `desktop/RELEASE_VERIFICATION_1.0.1.md` for scope and evidence. Future versions require separate authorization.
 
 Memory enablement is app-wide after explicit destination/scope consent. Shared records retain their source project; unintegrated specialists remain task-scoped. Migrations preserve backups, corrections, tombstones and legacy banks. Timeline inference is advisory, runs at most once per 20 seconds per conversation with two global slots, and never edits approved plans. Preserve exact provider rejection metadata and recorded failures; do not automatically retry refusals or substitute providers.
 

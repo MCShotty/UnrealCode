@@ -1,6 +1,6 @@
 # Roadmap implementation checkpoint
 
-Current local development: **1.0.1**, covering global memory, timeline summaries, model discovery, refusals and UI polish. See [ACCEPTANCE_1.0.1.md](ACCEPTANCE_1.0.1.md). Public v1.0.0 remains unchanged; 1.0.1 publication is authorized after its CI and attestation gates; final published evidence is recorded separately.
+Current published release: **1.0.1**, covering global memory, timeline summaries, model discovery, refusals, UI polish and manual release notifications. See [published verification](RELEASE_VERIFICATION_1.0.1.md) and [local acceptance](ACCEPTANCE_1.0.1.md). Public v1.0.0 remains unchanged. Future releases require separate authorization.
 
 
 > Current patch verification and local candidate digest: [WORK_IN_PROGRESS.md](WORK_IN_PROGRESS.md). Feature implementation: [PARITY_IMPLEMENTATION.md](PARITY_IMPLEMENTATION.md). Counts, hashes and release notes below are historical snapshots.
