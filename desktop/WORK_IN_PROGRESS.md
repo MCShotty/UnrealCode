@@ -3,8 +3,13 @@
 ## 1.0 release-readiness checkpoint — 2026-09-28
 
 The current local, unsigned candidate is
-`dist/release-readiness-20260928/UnrealCode-Setup-1.0.0-preview.1.exe`.
-SHA-256: `9E8974A3C54C664A6C45CDA83499C439C055DC6D1C3B39E0135B62166A4CDCFD`.
+`dist/release-readiness-1fd1a0b/UnrealCode-Setup-1.0.0-preview.1.exe`.
+SHA-256: `2FA55CE240A0876C3195C55F75EECC8950B69D5994A5719C7AE6F8E8DD993550`.
+Product source is frozen in local commit `1fd1a0b`. The untracked
+`docs/orbit-garden-demo.html` is an unrelated demo and was preserved outside
+that commit. The new package's `app.asar` hash exactly matches the prior
+acceptance package. The new installer also passed its own composer/activity,
+recovery, signature-state and payload-audit checks.
 This is a private preview checkpoint, not a stable 1.0 acceptance or publication.
 The existing prohibition on pushing or publishing 1.0 remains in force.
 
@@ -36,7 +41,7 @@ its heading, accepts the current structured `DOCKER_MISSING` guidance, tests
 the selected packaged executable, and writes screenshots only to its isolated
 temporary profile. Its missing-Docker and encrypted-key checks passed. A live
 Codex subscription check used a disposable file and completed native ReadFile.
-A live Hindsight check on the exact package verified model setup, retention,
+A live Hindsight check on the matching runtime package verified model setup, retention,
 recall, reflection, a private database backup, restore into a new volume,
 forgetting, and explicit re-verification. Synthetic memory usage was 10 model
 requests, 21,396 input tokens and 925 output tokens.
@@ -46,12 +51,17 @@ production npm packages**, comparing seven local credential values privately
 with zero matches. Reachable Git history scanned 1,257 blobs with zero secret
 hits. The patch whitespace check passed. No 1.0 tag, push, release asset
 upload, installation, or visibility change was made in this sweep.
+The local CI-equivalent Docker build and bridge capability check passed; its
+temporary image tag was removed afterward. No valid code-signing certificate
+was found in the current-user or machine certificate stores, and no publisher
+signing configuration is present. Windows Sandbox and Hyper-V management are
+not available here; a fresh-machine acceptance run remains external.
 
 Still open for stable 1.0: publisher signing and a signed-update exercise;
 fresh-machine installation and upgrades from supported 0.x profiles; hosted
 CI on the frozen candidate; native desktop and assistive-technology checks;
 live Claude/OpenAI API verification where valid credentials exist; and a
-reviewed, reproducible source commit. The recent user-reported overflow must
+reviewed signed release artifact. The recent user-reported overflow must
 also be confirmed against this new executable in the visible app rather than
 the identical screenshot of an older build.
 
