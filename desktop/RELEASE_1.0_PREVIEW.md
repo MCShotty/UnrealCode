@@ -1,10 +1,11 @@
-# UnrealCode 1.0 local preview
+# UnrealCode 1.0 preview history
 
 > Current local coding-workflow implementation and verification: [PARITY_IMPLEMENTATION.md](PARITY_IMPLEMENTATION.md). Earlier counts, hashes and release notes below are historical snapshots, not the current candidate.
 
-**Local only. Do not push or publish this version without a new user instruction.**
-The stable 1.0 acceptance gate remains open: signing and fresh-machine installation
-have not been verified. Hosted CI has not been rerun for this local candidate.
+This section records an earlier local preview. The owner later authorized
+signing and pushing 1.0; see WORK_IN_PROGRESS.md for the current candidate,
+second-machine installation report, source-push authorization, and remaining
+signing gate. The historical counts and hashes below are not current acceptance.
 
 ## Implemented
 

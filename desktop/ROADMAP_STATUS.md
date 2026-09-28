@@ -4,7 +4,17 @@
 
 Active checkout: `I:\UnrealCode`; origin: `MCShotty/UnrealCode` (public at the 2026-09-28 check).
 
-## 1.0 preview — local only
+## 1.0 release preparation — 2026-09-28
+
+The owner explicitly authorized signing and pushing 1.0. No trusted Windows
+code-signing identity is configured locally or in repository secrets, so a
+stable signed installer, `v1.0.0` tag, and release assets remain pending.
+The audited preview source branch may be pushed to run hosted CI. The owner
+reported successful installation and post-install testing on another machine;
+the preview installer digest matches the local candidate. Current verification
+and remaining gates are in WORK_IN_PROGRESS.md.
+
+## Earlier 1.0 preview — local checkpoint
 
 User instruction: **do not push or publish 1.0 yet**. No 1.0 GitHub release or
 visibility change is authorized. Features and limits: RELEASE_1.0_PREVIEW.md.

@@ -11,7 +11,10 @@ that commit. The new package's `app.asar` hash exactly matches the prior
 acceptance package. The new installer also passed its own composer/activity,
 recovery, signature-state and payload-audit checks.
 This is a local preview checkpoint, not a stable 1.0 acceptance or publication.
-The existing prohibition on pushing or publishing 1.0 remains in force.
+The owner explicitly authorized signing and pushing 1.0 on 2026-09-28. Because
+no trusted signer is configured, the audited preview source branch may be
+pushed for hosted CI; the stable tag and release assets remain pending a
+verified signed installer.
 
 The full desktop suite initially exposed a 5-second timeout in a browser
 WebSocket fixture under suite load. That test passed alone in 3.4 seconds; its
@@ -73,7 +76,7 @@ GitHub currently reports `MCShotty/UnrealCode` as public. Historical Desktop
 acceptance run `36269843333` actually started: its bridge job passed and the
 Windows job failed at the old missing-Docker smoke assertion, now corrected and
 passed locally. Hosted CI has not run on this 1.0 checkpoint. A push would expose
-the new source publicly; the explicit 1.0 push hold remains active.
+the new source publicly; the owner has now authorized that source push for CI.
 An attempt to remove the superseded local `dist/release-readiness-20260928`
 test package was rejected by automatic approval review with the sole reason
 `blocked by policy`. It remains intact; no alternate deletion method was used.

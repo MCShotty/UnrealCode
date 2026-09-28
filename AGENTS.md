@@ -1,13 +1,14 @@
 # Working on UnrealCode
 
-## Current release hold
+## Current release boundary
 
-**Do not push or publish 1.0, upload its artifacts, create a remote 1.0 release,
-or change repository visibility without a new explicit user instruction.**
-README edits, bug fixes, builds, local commits, and tests do not lift this hold.
-Keep source and installers local. Check `desktop/WORK_IN_PROGRESS.md` and
-`desktop/ROADMAP_STATUS.md` before release work; distinguish historical acceptance
-from checks run on the current patch.
+The owner explicitly authorized signing and pushing 1.0 on 2026-09-28. An audited
+preview source-branch push for hosted CI is authorized. No trusted signing
+identity is configured yet: do not tag or publish a stable 1.0 release, upload
+an unsigned installer as signed, or claim signing passed before verifying the
+actual installer and app signatures. Do not change repository visibility.
+Check `desktop/WORK_IN_PROGRESS.md` and `desktop/ROADMAP_STATUS.md` before release
+work; distinguish historical acceptance from checks run on the current patch.
 
 The active checkout on the owner's machine is `I:\UnrealCode`.
 `I:\UnrealGUI` is a preserved backup, not a second place to implement changes.

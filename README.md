@@ -13,7 +13,7 @@ Bring your own provider, open a project, and work with an agent that can inspect
 
 UnrealCode is a general-purpose coding application. It does not require Unreal Engine. Its execution engine is the [Unreal Agent Go harness](https://github.com/unreallabsai/unreal-agent) from Unreal Labs; the desktop application adds the interface, project controls, provider setup, integrations, and recovery workflows.
 
-> **Development status:** this checkout contains `1.0.0-preview.1`, a local, unsigned preview. Stable 1.0 has not passed its release gates and is not published. See [current implementation and verification](desktop/PARITY_IMPLEMENTATION.md), [release status](desktop/ROADMAP_STATUS.md) and [preview notes](desktop/RELEASE_1.0_PREVIEW.md) for verified checks and limits. Published installers, when available, are on the [Releases page](https://github.com/MCShotty/UnrealCode/releases).
+> **Development status:** this checkout contains `1.0.0-preview.1` source for hosted CI and an unsigned local installer. Stable 1.0 still needs a trusted signing identity and a verified signed package before it can be tagged or published. See [current implementation and verification](desktop/PARITY_IMPLEMENTATION.md), [release status](desktop/ROADMAP_STATUS.md) and [preview history](desktop/RELEASE_1.0_PREVIEW.md) for verified checks and limits. Published installers, when available, are on the [Releases page](https://github.com/MCShotty/UnrealCode/releases).
 
 ## What you can do
 
