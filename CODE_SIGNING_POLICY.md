@@ -1,9 +1,11 @@
 # Code signing policy
 
-**Status: proposed.** UnrealCode's current 1.0 preview installer is unsigned.
-No SignPath Foundation subscription or signing policy has been approved for this
-project, and no release should be described as SignPath-signed until its actual
-Authenticode signature has been verified.
+**Status: unsigned 1.0 distribution; future signing proposal.** UnrealCode's
+1.0 installer is distributed with a SHA-256 manifest and GitHub build-provenance
+attestation, as described in [release verification](desktop/VERIFY_RELEASE.md).
+Neither is a Windows Authenticode signature. No SignPath Foundation subscription
+or signing policy has been approved for this project, and no release should be
+described as SignPath-signed until its actual signature has been verified.
 
 The project is seeking the open-source route described as **“Free code signing
 provided by SignPath.io, certificate by SignPath Foundation.”** If accepted,
@@ -23,7 +25,7 @@ are published in its [open-source terms](https://signpath.org/terms.html).
 - The application privacy disclosure is in [PRIVACY.md](PRIVACY.md); security
   reports use [SECURITY.md](SECURITY.md).
 
-## Proposed release procedure
+## Proposed procedure for a future signed release
 
 1. Build from a reviewed, publicly reachable Git commit in hosted CI. The
    current desktop workflow runs Windows and Go checks, packages the app, and
@@ -36,8 +38,8 @@ are published in its [open-source terms](https://signpath.org/terms.html).
    project's own signed output. Verify product/version metadata and the exact
    source revision before approval.
 4. Verify Authenticode signatures, publisher identity, timestamps, installer
-   digest, update metadata, and installation on Windows before publishing a
-   `v1.0.0` tag or GitHub release assets. Publish the signed artifact's digest.
+   digest, update metadata, and installation on Windows before publishing any
+   release represented as signed. Publish the signed artifact's digest.
 
 The desktop includes the MIT-licensed Unreal Agent harness and builds an
 extended Go backend from bundled source. This upstream-derived arrangement

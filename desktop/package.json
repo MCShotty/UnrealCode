@@ -1,6 +1,6 @@
 {
   "name": "unrealcode",
-  "version": "1.0.0-preview.1",
+  "version": "1.0.0",
   "private": true,
   "description": "UnrealCode Windows desktop application built on Unreal Agent",
   "author": "UnrealCode contributors",
@@ -17,6 +17,7 @@
     "licenses:generate": "node scripts/generate-notices.mjs",
     "brand:generate": "node scripts/generate-brand-assets.mjs",
     "build:win": "npm run typecheck && npm run build:code && npm run licenses:generate && node scripts/build-release.mjs",
+    "build:release:unsigned": "npm run typecheck && npm run build:code && npm run licenses:generate && node scripts/build-release.mjs --unsigned-public",
     "test": "vitest run",
     "build:stable": "npm run typecheck && npm run build:code && npm run licenses:generate && node scripts/build-release.mjs --stable"
   },

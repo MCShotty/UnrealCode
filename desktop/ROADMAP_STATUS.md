@@ -6,13 +6,13 @@ Active checkout: `I:\UnrealCode`; origin: `MCShotty/UnrealCode` (public at the 2
 
 ## 1.0 release preparation — 2026-09-28
 
-The owner explicitly authorized signing and pushing 1.0. No trusted Windows
-code-signing identity is configured locally or in repository secrets, so a
-stable signed installer, `v1.0.0` tag, and release assets remain pending.
-The audited preview source branch may be pushed to run hosted CI. The owner
-reported successful installation and post-install testing on another machine;
-the preview installer digest matches the local candidate. Current verification
-and remaining gates are in WORK_IN_PROGRESS.md.
+The owner replaced the signing prerequisite with an unsigned public release
+whose installer SHA-256, Git tag, GitHub Artifact Attestation, and build scripts
+are published. Windows publisher trust and in-app updates remain unavailable.
+The previous preview source passed hosted Windows and backend CI at `8ab295d`;
+the owner reported successful installation and post-install testing of its
+matching preview installer on another machine. The final tagged 1.0 package
+and attestation still require their own hosted run. See WORK_IN_PROGRESS.md.
 
 ## Earlier 1.0 preview — local checkpoint
 

@@ -13,7 +13,7 @@ Bring your own provider, open a project, and work with an agent that can inspect
 
 UnrealCode is a general-purpose coding application. It does not require Unreal Engine. Its execution engine is the [Unreal Agent Go harness](https://github.com/unreallabsai/unreal-agent) from Unreal Labs; the desktop application adds the interface, project controls, provider setup, integrations, and recovery workflows.
 
-> **Development status:** this checkout contains `1.0.0-preview.1` source for hosted CI and an unsigned local installer. Stable 1.0 still needs a trusted signing identity and a verified signed package before it can be tagged or published. See [current implementation and verification](desktop/PARITY_IMPLEMENTATION.md), [release status](desktop/ROADMAP_STATUS.md) and [preview history](desktop/RELEASE_1.0_PREVIEW.md) for verified checks and limits. Published installers, when available, are on the [Releases page](https://github.com/MCShotty/UnrealCode/releases).
+> **Windows distribution:** UnrealCode 1.0 uses an unsigned installer with a published SHA-256 manifest, a Git tag, and a GitHub Actions build-provenance attestation. [Verify the release](desktop/VERIFY_RELEASE.md) before installing. Windows will still report an unknown publisher; in-app updates stay disabled until trusted code signing is available. See [release status](desktop/ROADMAP_STATUS.md), [implementation evidence](desktop/PARITY_IMPLEMENTATION.md), and the [Releases page](https://github.com/MCShotty/UnrealCode/releases).
 
 ## What you can do
 
@@ -33,7 +33,7 @@ UnrealCode is a general-purpose coding application. It does not require Unreal E
 | **Verification** | Saved review/test/fix workflows, named verification commands, bounded opt-in repair loops, local model health checks, and explicitly started decision-model comparisons. |
 | **Usage and performance** | Provider-reported session tokens, cache/reasoning/decision usage where available, a parallel operation inspector, Codex subscription percentages, and optional organization reports. No estimated dollar costs. |
 | **Desktop experience** | Dark, Light, and Follow Windows themes; resizable/collapsible panels, focus layout, command palette, container terminal, restrained spring animations, and reduced-motion support. |
-| **Recovery — local preview** | Settings/session backup and restore, integrity checks, pre-migration backups, guarded export and reattachment of verified interrupted-restore volumes, storage cleanup previews, redacted support exports, and signed-update infrastructure. Unsigned builds keep updates unavailable. |
+| **Recovery** | Settings/session backup and restore, integrity checks, pre-migration backups, guarded export and reattachment of verified interrupted-restore volumes, storage cleanup previews, and redacted support exports. Unsigned builds keep in-app updates unavailable. |
 
 ## Providers and sign-in
 
@@ -145,17 +145,18 @@ npm test
 npm run build:win
 ```
 
-The build creates a local NSIS installer under `desktop/dist/`; it does not publish a GitHub release. See [BUILDING.md](desktop/BUILDING.md) for Docker, packaged-app, signing, and audit checks, and [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance. Coding assistants should read [AGENTS.md](AGENTS.md). Report vulnerabilities using [SECURITY.md](SECURITY.md).
+The build creates a local NSIS installer under `desktop/dist/`; it does not publish a GitHub release. The public [Windows release workflow](.github/workflows/desktop-release.yml) builds from a tagged commit and publishes only after the tests, audits, checksum, and attestation checks pass. Its [packaging](desktop/scripts/build-release.mjs) and [checksum](desktop/scripts/sha256-release.mjs) scripts are public. See [BUILDING.md](desktop/BUILDING.md) for local steps and [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance. Coding assistants should read [AGENTS.md](AGENTS.md). Report vulnerabilities using [SECURITY.md](SECURITY.md).
 
-## Code signing policy and privacy
+## Release provenance, signing, and privacy
 
-The current 1.0 preview is unsigned. The proposed free open-source signing
-route, release responsibilities, and verification steps are in the
-[Code signing policy](CODE_SIGNING_POLICY.md). SignPath Foundation approval is
-pending; no installer is represented as signed before its actual signature is
-checked. [Privacy and data flows](PRIVACY.md) explains local storage and when
-configured providers, connections, and other services receive information.
+The 1.0 Windows installer is unsigned. Its SHA-256 manifest and GitHub Artifact
+Attestation establish integrity and build provenance, not a trusted Windows
+publisher. Use the [verification guide](desktop/VERIFY_RELEASE.md) for each
+download. The [code signing policy](CODE_SIGNING_POLICY.md) records the deferred
+SignPath option; no installer is represented as signed before its actual
+signature is checked. [Privacy and data flows](PRIVACY.md) explains local storage
+and when configured providers, connections, and other services receive information.
 
 ### Current limits
 
-Windows + Docker is the supported target. Native execution, macOS/Linux desktop support, full language servers/debugging, an extension marketplace, and Claude subscription integration are outside this release. Recovery import currently requires the original Windows profile/app-data and project paths. Fresh-machine installation, real publisher signing/signed updates, and full assistive-technology acceptance remain prerequisites for stable 1.0.
+Windows + Docker is the supported target. Native execution, macOS/Linux desktop support, full language servers/debugging, an extension marketplace, and Claude subscription integration are outside this release. Recovery import currently requires the original Windows profile/app-data and project paths. The installer is unsigned, so trusted publisher identity and in-app signed updates remain unavailable. Full assistive-technology acceptance has not been established.

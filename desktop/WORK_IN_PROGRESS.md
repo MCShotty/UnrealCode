@@ -1,5 +1,24 @@
 # Active roadmap work
 
+## 1.0 unsigned provenance release — 2026-09-28
+
+The owner replaced the certificate requirement with a public SHA-256 manifest,
+Git tag, GitHub Artifact Attestation, and public build scripts. The release
+workflow now builds and audits from the exact tag and will publish only after
+checksum and attestation verification. It has not yet run on the final tag;
+the installer remains explicitly unsigned and in-app updates stay disabled.
+The previous source acceptance run `36455245383` passed Windows and backend
+jobs at `8ab295d`. The unrelated untracked demo under `docs/` is preserved.
+Local unsigned preflight package: `dist-release-preflight/UnrealCode-Setup-1.0.0.exe`,
+SHA-256 `424902428A662D4FB143111E38A354D7565EB4937250E6FB983724A3C671DBD0`.
+Both installer and unpacked app report Authenticode `NotSigned`. TypeScript and
+389 desktop tests passed (3 optional skips); the checksum tamper tests and
+packaged no-Docker/credential smoke passed. The payload audit scanned 1,114
+files, reviewed 207 production packages, compared seven local credential
+values privately, and found zero matches. The reachable-history scan found
+zero matches in 1,593 blobs. This local hash will differ from the hosted build;
+only the tagged hosted artifact is eligible for publication.
+
 ## 1.0 release-readiness checkpoint — 2026-09-28
 
 The audited preview source was pushed to the public `codex/desktop-roadmap`

@@ -4,13 +4,20 @@ import { createRequire } from 'node:module'
 import { promisify } from 'node:util'
 import { basename, dirname, join, resolve } from 'node:path'
 const require=createRequire(import.meta.url)
-const stable=process.argv.includes('--stable'),publisher=process.env.UNREALCODE_PUBLISHER?.trim()
+const stable=process.argv.includes('--stable'),unsignedPublic=process.argv.includes('--unsigned-public'),publisher=process.env.UNREALCODE_PUBLISHER?.trim()
+if(stable&&unsignedPublic)throw new Error('Choose signed or explicitly unsigned release packaging')
 // A separate local candidate directory lets QA proceed when Windows retains
 // an image handle on an exited test process in the previous unpacked build.
 const output=process.argv.find(value=>value.startsWith('--output='))?.slice('--output='.length)
 if(stable&&!publisher)throw new Error('Stable builds require UNREALCODE_PUBLISHER and valid Windows signing credentials')
 const version=JSON.parse(readFileSync('package.json','utf8')).version
 if(stable&&!/^\d+\.\d+\.\d+$/.test(version))throw new Error('Stable packaging requires a stable package version')
+if(unsignedPublic){
+ if(!/^\d+\.\d+\.\d+$/.test(version))throw new Error('Public unsigned packaging requires a stable package version')
+ const signingVariables=['UNREALCODE_PUBLISHER','CSC_LINK','CSC_KEY_PASSWORD','CSC_NAME','CSC_INSTALLER_LINK','CSC_INSTALLER_KEY_PASSWORD','WIN_CSC_LINK','WIN_CSC_KEY_PASSWORD','WIN_CSC_NAME']
+ if(signingVariables.some(name=>process.env[name]))throw new Error('Signing configuration is present; refuse an ambiguous unsigned release build')
+ process.env.CSC_IDENTITY_AUTO_DISCOVERY='false'
+}
 const channel=version.includes('-')?'preview':'latest'
 if(version.includes('-')&&!/^\d+\.\d+\.\d+-preview\.\d+$/.test(version))throw new Error('Prerelease package versions must use the preview channel suffix')
 // Optional workaround for Windows hosts that stall the generated NSIS helper.

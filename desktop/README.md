@@ -32,7 +32,7 @@ node scripts/qa.mjs --workspace --flows --motion
 node scripts/qa.mjs --workspace --flows --packaged
 ```
 
-Local 1.0 preview builds produce `dist/UnrealCode-Setup-1.0.0-preview.1.exe`. The preview is not published. It bundles backend source and builds a Docker image tagged with the app version and source fingerprint, so a rebuilt installer does not reuse an older backend image. No host Go installation is required. For a live Codex tool call, use `node scripts/qa-live.mjs --codex`. A synthetic Jev integration check is `node scripts/qa.mjs --workspace --temp-workspace --decision` when `TYPESAFE_API_KEY` is available.
+The 1.0 package produces `dist/UnrealCode-Setup-1.0.0.exe`. Use `npm run build:release:unsigned` for the explicit public unsigned path and [verify each release](VERIFY_RELEASE.md). The package bundles backend source and builds a Docker image tagged with the app version and source fingerprint, so a rebuilt installer does not reuse an older backend image. No host Go installation is required. For a live Codex tool call, use `node scripts/qa-live.mjs --codex`. A synthetic Jev integration check is `node scripts/qa.mjs --workspace --temp-workspace --decision` when `TYPESAFE_API_KEY` is available.
 
 The installer includes third-party license texts in `resources/licenses`, plus Electron and Chromium notices at the application root. `npm run build:win` regenerates the npm notices and stops if a new dependency's license needs review.
 

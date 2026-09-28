@@ -68,7 +68,37 @@ for automated acceptance; live checks require existing credentials and are
 reported separately. The installer includes source used to build the Docker
 backend locally. Docker Desktop, external CLIs and model weights are not bundled.
 
-## Signed distribution
+## Public unsigned distribution
+
+The owner chose an unsigned Windows 1.0 release with SHA-256 hashes, a Git tag,
+GitHub Artifact Attestations, and public build scripts. Build locally with:
+
+```powershell
+npm run build:release:unsigned
+node scripts/audit-release.mjs
+node scripts/sha256-release.mjs --write
+node scripts/sha256-release.mjs --verify
+```
+
+For a locked previous local `dist/win-unpacked` folder, build with
+`npm run build:release:unsigned -- --output=dist-release-test` and set
+`UNREALCODE_RELEASE_OUTPUT=dist-release-test` for the checksum script. The
+hosted workflow always uses a fresh default `dist` directory.
+
+This explicit build mode rejects signing environment variables and disables
+automatic certificate discovery. The [public release workflow](../.github/workflows/desktop-release.yml)
+runs the tests and audits again on GitHub's Windows runner, checks that the NSIS
+installer is unsigned, generates and verifies its checksum, creates and verifies
+an attestation for the exact source ref, and uploads only the installer and
+`SHA256SUMS`. The workflow can be dispatched on `main` for a nonpublishing
+preflight; publication occurs only from a matching `v1.*` Git tag. Follow
+[VERIFY_RELEASE.md](VERIFY_RELEASE.md) after downloading release assets.
+
+Unsigned builds deliberately keep the in-app updater unavailable. Future
+updates must be installed manually after verifying each release. An attestation
+proves build origin and integrity; it is not a Windows publisher signature.
+
+## Future signed distribution
 
 Set `UNREALCODE_PUBLISHER` to the certificate's actual Windows publisher name and
 configure electron-builder's supported signing credentials in the build system.
@@ -83,14 +113,14 @@ The public update feed is fixed to MCShotty/UnrealCode. No account token is embe
 The app disables automatic downloads and install-on-quit. Explicit restart checks
 active work, saves a recovery backup, and rechecks the installer hash and publisher.
 
-Unsigned candidates deliberately show updates as unavailable. Private-repository
-distribution is manual until public visibility and signed release gates pass.
+Unsigned candidates deliberately show updates as unavailable.
 
 ## Final release gates
 
 Record fresh-machine install, upgrade from supported 0.x profiles, failed migration
-recovery, interrupted download, invalid signatures, backup restoration, long-session
-stability, scaling, keyboard/screen-reader checks and all theme variants. Hosted CI
-and local acceptance are separate evidence; a runner that never starts has not passed.
-Audit all reachable Git history and all retained release assets before changing
-repository visibility. Keep upstream MIT attribution and dependency notices.
+recovery, backup restoration, long-session stability, scaling, keyboard/screen-reader
+checks and all theme variants. Hosted CI and local acceptance are separate evidence;
+a runner that never starts has not passed. Audit all reachable Git history and the
+release payload before publishing. Keep upstream MIT attribution and dependency
+notices. Do not claim unsigned distribution covers signed-update or invalid-signature
+acceptance; those features remain unavailable until a trusted signer exists.

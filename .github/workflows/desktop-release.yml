@@ -1,0 +1,132 @@
+name: UnrealCode Windows release
+
+on:
+  push:
+    tags: ['v1.*']
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: unrealcode-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'MCShotty/UnrealCode' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v1.'))
+    runs-on: windows-2025
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - name: Validate tag and source ancestry
+        shell: pwsh
+        run: |
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($package.version -notmatch '^\d+\.\d+\.\d+$') { throw 'A release requires a stable package version' }
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            if ($env:GITHUB_REF_NAME -ne "v$($package.version)") { throw 'Git tag and package version differ' }
+            git merge-base --is-ancestor HEAD origin/main
+            if ($LASTEXITCODE -ne 0) { throw 'The release tag must be reachable from main' }
+          }
+      - run: go test ../cmd/unrealcode-host-files
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test -- --testTimeout=15000
+      - run: node --test scripts/check-secret-patterns.mjs scripts/sha256-release.node-test.mjs
+      - run: node scripts/audit-history.mjs
+      - run: npm run build:release:unsigned
+      - run: node scripts/audit-release.mjs
+      - run: node scripts/qa.mjs --no-docker --credentials --packaged
+      - name: Write and verify SHA-256 manifest
+        run: |
+          node scripts/sha256-release.mjs --write
+          node scripts/sha256-release.mjs --verify
+      - name: Confirm the release installer is unsigned
+        shell: pwsh
+        run: |
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $installer = Join-Path dist "UnrealCode-Setup-$($package.version).exe"
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer
+          if ($signature.Status -ne 'NotSigned') { throw "Review unexpected installer signature state: $($signature.Status)" }
+      - name: Attest the built installer
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: desktop/dist/UnrealCode-Setup-*.exe
+      - name: Verify build provenance
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $installer = Join-Path dist "UnrealCode-Setup-$($package.version).exe"
+          gh attestation verify $installer --repo $env:GITHUB_REPOSITORY --signer-workflow "$env:GITHUB_REPOSITORY/.github/workflows/desktop-release.yml" --source-ref $env:GITHUB_REF --source-digest $env:GITHUB_SHA --deny-self-hosted-runners
+          if ($LASTEXITCODE -ne 0) { throw 'Installer attestation verification failed' }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: unrealcode-windows-release
+          path: |
+            desktop/dist/UnrealCode-Setup-*.exe
+            desktop/dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      attestations: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: unrealcode-windows-release
+          path: desktop/dist
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v5
+        with:
+          node-version: '24'
+      - name: Verify downloaded installer and attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node desktop/scripts/sha256-release.mjs --verify
+          version="$(node -p "require('./desktop/package.json').version")"
+          installer="desktop/dist/UnrealCode-Setup-${version}.exe"
+          gh attestation verify "$installer" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/desktop-release.yml" \
+            --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
+      - name: Publish the unsigned Windows release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./desktop/package.json').version")"
+          gh release create "$GITHUB_REF_NAME" \
+            "desktop/dist/UnrealCode-Setup-${version}.exe" desktop/dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "UnrealCode ${version}" --notes-file desktop/RELEASE_NOTES_1.0.md

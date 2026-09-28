@@ -2,11 +2,14 @@
 
 ## Current release boundary
 
-The owner explicitly authorized signing and pushing 1.0 on 2026-09-28. An audited
-preview source-branch push for hosted CI is authorized. No trusted signing
-identity is configured yet: do not tag or publish a stable 1.0 release, upload
-an unsigned installer as signed, or claim signing passed before verifying the
-actual installer and app signatures. Do not change repository visibility.
+The owner authorized an unsigned public 1.0 release using published SHA-256
+hashes, a Git tag, GitHub Artifact Attestations, and public build scripts after
+confirming that no trusted Windows signing certificate is available. Build and
+attest the installer in hosted CI from the exact tag; verify the downloaded
+artifact before publication. Clearly disclose that Windows Authenticode signing
+and automatic in-app updates are unavailable. Never label an unsigned installer
+as signed or claim hashes/attestations establish Windows publisher trust. Do not
+change repository visibility.
 Check `desktop/WORK_IN_PROGRESS.md` and `desktop/ROADMAP_STATUS.md` before release
 work; distinguish historical acceptance from checks run on the current patch.
 
@@ -26,8 +29,10 @@ natural humor when appropriate. Report concrete evidence and limitations.
 
 UnrealCode is a Windows Electron/React coding application backed by the Unreal
 Agent Go harness in Docker. It is not an Unreal Engine plugin or a Claude Code
-wrapper. The current local version is a 1.0 preview; stable distribution still
-requires signing and fresh-machine acceptance.
+wrapper. The 1.0 installer is unsigned and distributed with checksums and a
+GitHub build-provenance attestation. Fresh-machine evidence comes from the
+owner's verified preview installation; do not mislabel it as a test of the
+final tagged installer.
 
 | Location | Responsibility |
 | --- | --- |
@@ -149,6 +154,8 @@ npm run build:win
 
 `build:win` creates a local unsigned candidate by default and does not publish.
 Run it through npm: the helper uses npm's actual production dependency tree.
+`build:release:unsigned` is the explicit public 1.0 packaging path; verify its
+`SHA256SUMS` and attestation from the exact tagged GitHub Actions run.
 `build:stable` requires genuine signing credentials and publisher identity;
 never weaken signing checks to make a release pass.
 
@@ -190,7 +197,7 @@ cause, then run relevant suites. Broaden checks for changed boundaries, not
 trivial implementation details. Report what ran and what remains unverified.
 A hosted job that never started is not a pass.
 
-Before any separately authorized release, audit the actual payload and history:
+Before a release, audit the actual payload and history:
 
 ```powershell
 node --test scripts/check-secret-patterns.mjs
