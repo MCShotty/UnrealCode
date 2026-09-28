@@ -41,6 +41,9 @@ are published in its [open-source terms](https://signpath.org/terms.html).
 
 The desktop includes the MIT-licensed Unreal Agent harness and builds an
 extended Go backend from bundled source. This upstream-derived arrangement
-must be disclosed for SignPath's review; eligibility is not assumed. The
+currently fails SignPath's published modified-upstream conditions and would
+require an exception before this proposed route could be used. The
 project's attribution and dependency inventory are in [README.md](README.md)
 and [desktop/OPTIONAL_RUNTIME_INVENTORY.md](desktop/OPTIONAL_RUNTIME_INVENTORY.md).
+The [application packet](desktop/SIGNPATH_APPLICATION.md) records the evidence
+and eligibility blocker for the project owner to review.

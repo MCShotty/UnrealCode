@@ -10,8 +10,13 @@ release audit. Its smoke step failed because a Docker CLI with an unavailable
 daemon correctly returned `DOCKER_UNAVAILABLE` instead of the local fixture's
 `DOCKER_MISSING`. The smoke assertion now accepts either precise failure code
 with its own required recovery action and Retry; local smoke and 31 focused
-failure-classification tests pass. A rerun on the patched branch is pending.
-The free SignPath Foundation route is being evaluated and has not been approved.
+failure-classification tests pass. The next hosted run (`36454513515`) passed
+bridge, Windows tests, packaging, and audit, then identified a third legitimate
+Docker state on its smoke host: `DOCKER_WINDOWS_ENGINE`. The smoke assertion now
+accepts that state only with its specific setup-help and Retry actions. A new
+hosted run is pending. SignPath Foundation's published modified-upstream rules
+are currently unmet; only an explicit exception could make its free NSIS signing
+route available. The proposed policy and application evidence record this openly.
 No trusted 1.0 signature, stable tag, or release asset exists.
 
 The current local, unsigned candidate is

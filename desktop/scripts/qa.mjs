@@ -31,7 +31,7 @@ try {
   if (process.argv.includes('--no-docker')) {
     result.dockerStatus = await page.evaluate(() => window.unreal.dockerStatus())
     const failure = result.dockerStatus.failure
-    const requiredAction = { DOCKER_MISSING: 'docker-help', DOCKER_UNAVAILABLE: 'docker-open' }[failure?.code]
+    const requiredAction = { DOCKER_MISSING: 'docker-help', DOCKER_UNAVAILABLE: 'docker-open', DOCKER_WINDOWS_ENGINE: 'docker-help', DOCKER_CONTEXT: 'docker-help' }[failure?.code]
     if (result.dockerStatus.ready || result.dockerStatus.phase !== 'unavailable' || !requiredAction || !failure.actions.includes(requiredAction) || !failure.actions.includes('retry')) throw new Error(`Missing actionable Docker guidance: ${failure?.code || 'no failure'}`)
   }
   if (process.argv.includes('--credentials')) {
