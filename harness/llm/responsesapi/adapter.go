@@ -26,6 +26,12 @@ type APIError struct {
 	Message    string
 	Param      string
 	Type       string
+	RequestID  string
+	RetryAfter string
+}
+
+func (err *APIError) ProviderFailure() llm.Failure {
+	return llm.Failure{Code: err.Code, Message: err.Message, StatusCode: err.StatusCode, Type: err.Type, RequestID: err.RequestID, RetryAfter: err.RetryAfter}
 }
 
 func (err *APIError) Error() string {
@@ -121,13 +127,21 @@ func (adapter *adapter) Respond(ctx context.Context, request llm.Request, option
 		adapter.trace(Exchange{RequestBody: body, StatusCode: statusCode, ResponseBody: responseBody})
 	}
 	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
-		return llm.Response{}, fmt.Errorf("create response: %w", providerError(statusCode, responseBody))
+		failure := providerError(statusCode, responseBody)
+		failure.RequestID = headers.Get("x-request-id")
+		failure.RetryAfter = headers.Get("retry-after")
+		return llm.Response{}, fmt.Errorf("create response: %w", failure)
 	}
 	response, err := decodeResponse(responseBody)
 	if err != nil {
 		return llm.Response{}, err
 	}
 	response.RateLimits = llm.SafeRateLimitHeaders(headers)
+	if response.Failure != nil {
+		response.Failure.StatusCode = statusCode
+		response.Failure.RequestID = headers.Get("x-request-id")
+		response.Failure.RetryAfter = headers.Get("retry-after")
+	}
 	return response, nil
 }
 

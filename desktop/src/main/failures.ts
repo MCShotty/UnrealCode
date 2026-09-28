@@ -1,6 +1,25 @@
 import { randomUUID } from 'node:crypto'
 import type { AppFailure, RecoveryAction } from '../shared/failure'
 import type { AgentEvent } from '../shared/api'
+import { providerIssue } from '../shared/provider-issue'
+
+export function providerFailure(raw: unknown): AppFailure {
+  const issue=providerIssue(raw)
+  const labels:Record<typeof issue.category,[string,string]>={
+    refusal:['Request declined','The provider declined this request. Review its response and edit the request if appropriate.'],
+    authentication:['Reconnect your account','Your credential was rejected or expired. Reconnect in Settings, then explicitly retry.'],
+    access:['Model access denied','This account or endpoint cannot use the selected model. Refresh the model catalog and review provider access.'],
+    subscription:['Subscription limit reached','Review your subscription limits and reset time in Usage. Resume explicitly when access is available.'],
+    quota:['Provider quota exhausted','Check your provider balance or billing quota. Resume explicitly after restoring access.'],
+    rate_limit:['Provider rate limit reached','Wait for the reported reset or retry time, then explicitly retry.'],
+    context:['Context limit reached','Review attached context or compact the conversation before retrying.'],
+    options:['Model option unsupported','Review the model, reasoning, speed and tool settings before retrying.'],
+    transient:['Provider temporarily unavailable','Your accepted answers and completed tools are saved. Retry the response when the service recovers.'],
+    unknown:['Provider response failed','Review the provider response and settings before deliberately retrying.']
+  }
+  const [title,message]=labels[issue.category]
+  return {code:`PROVIDER_${issue.category.toUpperCase()}`,scope:'provider',title,message,actions:issue.category==='refusal'?[]:['settings'],retryable:issue.category==='transient'||issue.category==='rate_limit',reference:randomUUID().slice(0,8),details:redactDiagnostic(issue.message),providerIssue:{...issue,message:redactDiagnostic(issue.message)}}
+}
 
 export function redactDiagnostic(value: string): string { return redactContent(value).slice(-4000) }
 export function redactContent(value: string): string {
@@ -17,6 +36,7 @@ export class ActionableError extends Error {
 export function classifyFailure(error: unknown, scope = 'application'): AppFailure {
   if (error instanceof ActionableError) return error.failure
   const raw = error instanceof Error ? error.message : String(error), value = `${scope} ${raw}`.toLowerCase()
+  const providerCode=/provider response failed \(([^)]+)\)/i.exec(raw)?.[1];if(providerCode)return providerFailure({Code:providerCode,Message:raw})
   const systemCode = String((error as { code?: string })?.code || '')
   let code = 'UNEXPECTED', title = 'This action could not finish', message = 'Review the task’s current state and the details below before retrying. You can also export a support bundle.', actions: RecoveryAction[] = ['support'], retryable = false
   const match = (pattern: RegExp): boolean => pattern.test(value)
@@ -38,7 +58,7 @@ export function classifyFailure(error: unknown, scope = 'application'): AppFailu
   else if (match(/saved metadata exceeds.*size limit/)) set('METADATA_TOO_LARGE','Saved data needs review','The saved metadata is larger than this app can safely load. The original file was preserved; inspect a recovery backup or export a support bundle before changing it.',['settings','support'])
   else if(match(/history.*worker|history cache|cache queue/)) set('CACHE_UNAVAILABLE','History cache is unavailable','Original sessions are retained. Rebuild the cache to restore local history browsing.',['cache-rebuild','support'])
   else if (match(/certificate|self.signed|unable to verify|tls/)) set('TLS_FAILURE','Secure connection failed','Check the endpoint and trusted certificates or proxy configuration. TLS verification remains enabled.',['settings','support'])
-  else if (match(/\b401\b|unauthorized|invalid.*(key|token)|expired.*(login|credential|token)|not authenticated|authentication/)) set('AUTH_REQUIRED','Reconnect your account','Reconnect or update the credentials for this service in settings, then retry the action.',['settings'])
+  else if (match(/\b401\b|unauthorized|invalid.*(key|token)|expired.*(login|credential|token)|not authenticated|authentication|no codex login|codex credentials rejected|api key must be set/)) set('AUTH_REQUIRED','Reconnect your account','Reconnect or update the credentials for this service in settings, then retry the action.',['settings'])
   else if (match(/\b429\b|rate.limit|quota|insufficient.credit/)) set('PROVIDER_LIMIT','Provider limit reached','Check the provider’s quota or reset time. Resume the task when access is available.',['settings'])
   else if(match(/empty_response|incomplete_response|provider returned no answer|provider stopped at its output limit|provider.*incomplete response/))set('PROVIDER_INCOMPLETE','The provider returned an incomplete response','Your accepted answers and completed tool results are saved. Use Retry response in this conversation when you are ready.',[],false)
   else if(match(/provider response failed|server_error|json error injected into sse stream/))set('PROVIDER_FAILED','The provider could not finish its response','Your accepted answers and completed tool results are saved. Review the provider status or settings, then use Retry response in this conversation.',['settings'],false)
@@ -63,8 +83,8 @@ export function withEventFailure(event:AgentEvent):AgentEvent {
   if(event.failure||!event.payload||typeof event.payload!=='object')return event
   const payload=event.payload as Record<string,unknown>
   if(event.event==='session.item'){
-    const data=(payload.Data??payload.data) as Record<string,unknown>|undefined,response=(data?.Response??data?.response) as Record<string,unknown>|undefined,providerFailure=(response?.Failure??response?.failure) as Record<string,unknown>|undefined
-    if(providerFailure){const failure=classifyFailure(new Error(String(providerFailure.Message??providerFailure.message??'The provider returned an incomplete response')),'provider');const dataKey='Data'in payload?'Data':'data',responseKey=data&&'Response'in data?'Response':'response',failureKey=response&&'Failure'in response?'Failure':'failure';return {...event,failure,payload:{...payload,[dataKey]:{...data,[responseKey]:{...response,[failureKey]:{Code:providerFailure.Code??providerFailure.code,Message:failure.message}}}}}}
+    const data=(payload.Data??payload.data) as Record<string,unknown>|undefined,response=(data?.Response??data?.response) as Record<string,unknown>|undefined,providerFailure=((response?.Failure??response?.failure)||((response?.Stop??response?.stop)==='refused'?{Code:'model_refusal',Message:'The provider declined this request.'}:undefined)) as Record<string,unknown>|undefined
+    if(providerFailure){const failure=classifyProviderEvent(providerFailure);const dataKey='Data'in payload?'Data':'data',responseKey=data&&'Response'in data?'Response':'response',failureKey=response&&'Failure'in response?'Failure':'failure';return {...event,failure,payload:{...payload,[dataKey]:{...data,[responseKey]:{...response,[failureKey]:{...providerFailure,Message:failure.message,Issue:failure.providerIssue}}}}}}
   }
   if(event.event==='session.status'&&payload.status==='error'||event.event==='decision.error'){
     const failure=classifyFailure(new Error(String(payload.message||'The agent request failed')),event.event)
@@ -72,3 +92,5 @@ export function withEventFailure(event:AgentEvent):AgentEvent {
   }
   return event
 }
+
+const classifyProviderEvent = providerFailure

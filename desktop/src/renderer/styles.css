@@ -1,4 +1,4 @@
-:root { font-family: Inter, "Segoe UI", system-ui, sans-serif; color-scheme: dark; font-synthesis: none; }
+:root { font-family: Inter, "Segoe UI", system-ui, sans-serif; font-synthesis: none; }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 0; background: var(--bg); }
 button, input, select, textarea { font: inherit; }

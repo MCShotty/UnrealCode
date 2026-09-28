@@ -2,10 +2,11 @@ const { parentPort, workerData, threadId } = require('node:worker_threads')
 const { DatabaseSync } = require('node:sqlite')
 const db = new DatabaseSync(workerData.path, { readOnly: workerData.reader === true })
 db.exec('PRAGMA busy_timeout=2000; PRAGMA foreign_keys=ON;')
-if(db.prepare('PRAGMA user_version').get().user_version>3)throw Error('History cache version is newer than this application')
+if(db.prepare('PRAGMA user_version').get().user_version>4)throw Error('History cache version is newer than this application')
 if (!workerData.reader) {
   if (db.prepare('PRAGMA journal_mode=WAL').get().journal_mode !== 'wal') throw Error('History cache requires a local disk with SQLite WAL support')
   db.exec(`PRAGMA synchronous=NORMAL;
+    CREATE TABLE IF NOT EXISTS timeline_summaries(project TEXT,session TEXT,id TEXT,seq INTEGER,payload TEXT,PRIMARY KEY(project,session,id));
     CREATE TABLE IF NOT EXISTS sessions(project TEXT NOT NULL, session TEXT NOT NULL, metadata TEXT, cursor INTEGER NOT NULL DEFAULT 0, high INTEGER NOT NULL DEFAULT 0, synced TEXT, PRIMARY KEY(project,session));
     CREATE TABLE IF NOT EXISTS events(project TEXT NOT NULL, session TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, at TEXT, payload TEXT NOT NULL, text TEXT NOT NULL, original TEXT NOT NULL DEFAULT '', UNIQUE(project,session,seq));
     CREATE INDEX IF NOT EXISTS event_time ON events(project,at DESC);
@@ -21,9 +22,9 @@ if (!workerData.reader) {
 const activityModule=require('./activity-projection.cjs')
 if(!workerData.reader)activityModule.initialize(db)
 const activity=activityModule.service(db)
-if(!workerData.reader&&db.prepare('PRAGMA user_version').get().user_version<3){
+if(!workerData.reader&&db.prepare('PRAGMA user_version').get().user_version<4){
  db.exec('BEGIN IMMEDIATE')
- try{for(const row of db.prepare('SELECT project,session FROM sessions').all())activity.project(row.project,row.session);db.exec('PRAGMA user_version=3; COMMIT')}catch(error){db.exec('ROLLBACK');throw error}
+ try{for(const row of db.prepare('SELECT project,session FROM sessions').all())activity.project(row.project,row.session);db.exec('PRAGMA user_version=4; COMMIT')}catch(error){db.exec('ROLLBACK');throw error}
 }
 const get = (value,key) => value && typeof value === 'object' ? value[key] ?? value[key[0].toLowerCase()+key.slice(1)] : undefined
 function searchable(event) {
@@ -97,6 +98,9 @@ function run(method,p){
     const row=db.prepare('SELECT rowid,payload FROM events WHERE project=? AND session=? AND seq=?').get(p.project,p.session,p.seq)
     if(row){const paths=db.prepare('SELECT path FROM files WHERE project=? AND session=? AND seq=?').all(p.project,p.session,p.seq).map(x=>x.path);db.prepare('UPDATE events SET text=?,original=? WHERE rowid=?').run([searchable(JSON.parse(row.payload)),...paths].join('\n').toLowerCase(),[searchable(JSON.parse(row.payload)),...paths].join('\n'),row.rowid)}
   })
+  if(method==='timeline.put')return transaction(()=>{db.prepare('DELETE FROM timeline_summaries WHERE project=? AND session=?').run(p.project,p.session);const put=db.prepare('INSERT INTO timeline_summaries VALUES(?,?,?,?,?)');for(const row of p.rows)put.run(p.project,p.session,row.id,row.toSeq,JSON.stringify(row))})
+  if(method==='timeline.summaries')return db.prepare('SELECT payload FROM timeline_summaries WHERE project=? AND session=? AND seq<? ORDER BY seq DESC LIMIT 50').all(p.project,p.session,p.before||Number.MAX_SAFE_INTEGER).map(row=>JSON.parse(row.payload)).reverse()
+  if(method==='timeline.evidence')return db.prepare("SELECT seq,kind,at,original FROM events WHERE project=? AND session=? AND seq<? AND (original<>'' OR kind IN ('session.idle','session.needs_input','permission.requested','verification.result')) ORDER BY seq DESC LIMIT 60").all(p.project,p.session,p.before||Number.MAX_SAFE_INTEGER).reverse().map(row=>({seq:row.seq,kind:row.kind,at:row.at,text:(row.original||row.kind).slice(0,550)}))
   if(method==='page'){
     const limit=Math.min(1000,Math.max(1,p.limit||500)),before=p.before||Number.MAX_SAFE_INTEGER
     const rows=p.around?db.prepare('SELECT payload,seq FROM events WHERE project=? AND session=? AND seq>=? ORDER BY seq LIMIT ?').all(p.project,p.session,Math.max(1,p.around-100),limit):db.prepare('SELECT payload,seq FROM events WHERE project=? AND session=? AND seq<? ORDER BY seq DESC LIMIT ?').all(p.project,p.session,before,limit).reverse()

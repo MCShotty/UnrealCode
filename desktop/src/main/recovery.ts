@@ -41,8 +41,8 @@ async function sanitizeMemoryRuntime(target:string):Promise<void>{
 
 async function sanitizeMemoryRecords(target:string):Promise<void>{
  const value=JSON.parse(await fs.readFile(target,'utf8'))
- if(!value||value.version!==1||!value.settings||typeof value.settings!=='object'||Array.isArray(value.settings)||!value.records||typeof value.records!=='object'||Array.isArray(value.records))throw Error('Invalid memory recovery metadata; original app data is unchanged')
- value.settings.enabled=false;value.settings.projects=[];value.settings.verifiedProfile=undefined
+ if(!value||![1,2].includes(value.version)||!value.settings||typeof value.settings!=='object'||Array.isArray(value.settings)||!value.records||typeof value.records!=='object'||Array.isArray(value.records))throw Error('Invalid memory recovery metadata; original app data is unchanged')
+ value.settings.enabled=false;value.settings.globalConsent=false;value.settings.projects=[];value.settings.verifiedProfile=undefined
  const restoredDump=await exists(join(dirname(target),'database.dump'))
  for(const rows of Object.values(value.records) as any[][]){
   if(!Array.isArray(rows)||rows.some(row=>!row||typeof row!=='object'||Array.isArray(row)))throw Error('Invalid memory recovery records')

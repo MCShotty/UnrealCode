@@ -66,6 +66,20 @@ func response(source openaiapi.Response) (llm.Response, error) {
 		}
 		converted.Output = append(converted.Output, item)
 	}
+	// Refusal content can occur in an otherwise "completed" Responses envelope.
+	for _, output := range source.Output {
+		if kind, _ := output.Discriminator(); kind == "message" {
+			message, err := output.AsOutputMessage()
+			if err != nil {
+				continue
+			}
+			for _, part := range message.Content {
+				if kind, _ := part.Discriminator(); kind == "refusal" {
+					converted.Stop = llm.StopRefused
+				}
+			}
+		}
+	}
 	return converted, nil
 }
 

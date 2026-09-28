@@ -281,7 +281,7 @@ it('rejects a contradictory empty-memory marker before replacing settings',async
 it('halts restore before replacing settings when backed-up memory metadata is unsupported',async()=>{
  const {data,service}=await fixture(),directory=join(data,'memory','2026-09-28_00-00-00.000Z'),backup=join(root,'backup')
  await fs.mkdir(directory,{recursive:true});await fs.writeFile(join(data,'settings.json'),'{"theme":"light"}')
- await fs.writeFile(join(directory,'memory.json'),JSON.stringify({version:2,settings:{},records:{}}))
+ await fs.writeFile(join(directory,'memory.json'),JSON.stringify({version:99,settings:{},records:{}}))
  await service.export(backup);await fs.writeFile(join(data,'settings.json'),'{"theme":"dark"}')
  await expect(service.restore(backup)).rejects.toThrow('Invalid memory recovery metadata')
  expect(await fs.readFile(join(data,'settings.json'),'utf8')).toBe('{"theme":"dark"}')

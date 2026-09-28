@@ -18,6 +18,9 @@ or a selected local endpoint. No key is required to compile or run fixture tests
 `UNREAL_DESKTOP_USER_DATA` selects an isolated profile for testing.
 `UNREAL_DESKTOP_BACKGROUND_CHECK=1` uses offscreen rendering only when that isolated
 profile is set. It does not establish native-window or fresh-machine acceptance.
+Offscreen fixtures suppress automatic release-network checks; notification tests
+exercise the scheduler with fake time and intercept GitHub responses in the
+packaged app. No GitHub token or model credential is needed for these fixtures.
 
 `predev`, `pretest`, and `prebuild:code` build `cmd/unrealcode-host-files` with
 host Go or the pinned Go Docker image. This small native helper performs host

@@ -1,5 +1,8 @@
 # Roadmap implementation checkpoint
 
+Current local development: **1.0.1**, covering global memory, timeline summaries, model discovery, refusals and UI polish. See [ACCEPTANCE_1.0.1.md](ACCEPTANCE_1.0.1.md). Public v1.0.0 remains unchanged; 1.0.1 publication is authorized after its CI and attestation gates; final published evidence is recorded separately.
+
+
 > Current patch verification and local candidate digest: [WORK_IN_PROGRESS.md](WORK_IN_PROGRESS.md). Feature implementation: [PARITY_IMPLEMENTATION.md](PARITY_IMPLEMENTATION.md). Counts, hashes and release notes below are historical snapshots.
 
 Active checkout: `I:\UnrealCode`; origin: `MCShotty/UnrealCode` (public at the 2026-09-28 check).

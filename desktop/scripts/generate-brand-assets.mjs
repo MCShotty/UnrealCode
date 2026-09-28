@@ -7,8 +7,8 @@ import { resolve, dirname, join } from 'node:path'
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const assets = join(desktop, 'assets'), brand = join(assets, 'brand')
 const dark = readFileSync(join(brand, 'unrealcode-mark-dark.svg'), 'utf8')
-const light = dark.replaceAll('#F5F7FA', '#122039').replaceAll('#00B9DA', '#007C94')
-const icon = dark.replace('<title>UnrealCode</title>', '<title>UnrealCode</title>\n  <rect width="320" height="320" rx="60" fill="#101726"/>')
+const light = dark.replaceAll('#F5F7FA', '#0027CC')
+const icon = dark.replace('<title>UnrealCode</title>', '<title>UnrealCode</title>\n  <rect width="320" height="320" rx="60" fill="#10161B"/>')
 writeFileSync(join(brand, 'unrealcode-mark-light.svg'), light)
 writeFileSync(join(brand, 'unrealcode-icon.svg'), icon)
 

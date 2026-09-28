@@ -3,4 +3,4 @@ export type StorageItem = { id:string; category:'checkpoints'|'index'|'worktrees
 export type RetainedVolume = { id:string; volume:string; source:string; project?:string; resolvedProject?:string; isolated?:boolean; backupId:string; status:'planned'|'present'|'in-use'|'unavailable'|'owner-mismatch'; exportable:boolean; attachable:boolean; reason:string }
 export type RetainedVolumeReport = { items:RetainedVolume[]; additional:number }
 export type RecoveryStatus = { busy:boolean; message:string; migrationError?:string; waitingForDependency?:boolean; failure?:import('./failure').AppFailure; lastBackup?:string }
-export type UpdateState = { channel:'stable'|'preview'; state:'unavailable'|'idle'|'checking'|'available'|'downloading'|'ready'|'error'; message:string; version?:string; percent?:number }
+export type UpdateState = { channel:'stable'|'preview'; state:'unavailable'|'idle'|'checking'|'available'|'downloading'|'ready'|'error'; message:string; version?:string; percent?:number; delivery?:'manual'|'signed'; automaticChecks?:boolean; releaseUrl?:string; checkedAt?:string; stale?:boolean; dismissed?:boolean; retryAt?:string }

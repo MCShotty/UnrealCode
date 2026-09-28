@@ -129,6 +129,13 @@ func (adapter *adapter) exchangeAttempt(ctx context.Context, request primitives.
 			result.retry = errors.Is(result.err, io.ErrUnexpectedEOF)
 			return result
 		}
+		if result.apiError != nil {
+			result.apiError.RequestID = result.headers.Get("x-request-id")
+			result.apiError.RetryAfter = result.headers.Get("retry-after")
+			if result.apiError.StatusCode == 0 {
+				result.apiError.StatusCode = result.status
+			}
+		}
 		result.retry = retryableResponseError(result.apiError, request.RetryPolicy.RetryableStatusCodes)
 		return result
 	}

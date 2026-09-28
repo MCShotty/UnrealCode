@@ -1,0 +1,9 @@
+import {expect,it,vi} from 'vitest'
+import {EventEmitter} from 'node:events'
+import {PassThrough} from 'node:stream'
+vi.mock('./settings',()=>({codexCredential:()=>({accessToken:'fixture-token',accountId:'fixture'}),getKey:()=>''}))
+vi.mock('./account-usage',()=>({codexExecutable:()=>null}))
+import {normalizeCatalogModel,readCodexCatalog} from './model-catalog'
+function fake(pages:any[]){const child=new EventEmitter() as any;child.stdout=new PassThrough();child.stdin=new PassThrough();child.kill=vi.fn();const sent:any[]=[];child.stdin.on('data',(data:Buffer)=>{const request=JSON.parse(data.toString());sent.push(request);if(request.method==='initialize')queueMicrotask(()=>child.stdout.write(JSON.stringify({id:request.id,result:{}})+'\n'));if(request.method==='model/list'){const result=pages.shift();queueMicrotask(()=>child.stdout.write(JSON.stringify({id:request.id,result})+'\n'))}});return {child,sent,spawn:vi.fn(()=>child) as any}}
+it('reads every page, retains hidden models, and terminates the CLI',async()=>{const f=fake([{data:[{id:'one',hidden:true,supportedReasoningEfforts:[{reasoningEffort:'high'}]}],nextCursor:'next'},{data:[{id:'two',inputModalities:['text','image']}],nextCursor:null}]);const rows=await readCodexCatalog('fixture.exe',f.spawn);expect(rows.map(row=>row.id)).toEqual(['one','two']);expect(rows[0]).toMatchObject({hidden:true,availability:'listed',reasoning:['high']});expect(f.sent.at(-1).params.cursor).toBe('next');expect(f.child.kill).toHaveBeenCalled()})
+it('rejects repeated page cursors and missing CLI without inferring account denial',async()=>{const f=fake([{data:[],nextCursor:'same'},{data:[],nextCursor:'same'}]);await expect(readCodexCatalog('fixture',f.spawn)).rejects.toThrow('repeated');await expect(readCodexCatalog(null)).rejects.toThrow('Install Codex');expect(normalizeCatalogModel({id:'hidden',hidden:true})?.availability).toBe('listed')})

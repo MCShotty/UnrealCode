@@ -43,7 +43,7 @@ func prop(v any, key string) any {
 func str(v any) string  { s, _ := v.(string); return s }
 func array(v any) []any { a, _ := v.([]any); return a }
 func freshLifecycle() *lifecycle {
-	return &lifecycle{ProjectionVersion: 3, Outcome: turnOutcome{State: "idle"}, Calls: map[string]string{}, Failures: map[string]string{}, Waiting: map[string]bool{}, Pending: map[string]bool{}}
+	return &lifecycle{ProjectionVersion: 4, Outcome: turnOutcome{State: "idle"}, Calls: map[string]string{}, Failures: map[string]string{}, Waiting: map[string]bool{}, Pending: map[string]bool{}}
 }
 func (s *lifecycle) consume(kind string, p map[string]any, at time.Time) {
 	if s.Calls == nil {
@@ -82,7 +82,7 @@ func (s *lifecycle) consume(kind string, p map[string]any, at time.Time) {
 		case "turn":
 			s.Outcome.TurnID = str(prop(d, "ID"))
 		case "model_response":
-			if prop(prop(d, "Response"), "Failure") != nil {
+			if prop(prop(d, "Response"), "Failure") != nil || str(prop(prop(d, "Response"), "Stop")) == "refused" {
 				s.Outcome.State = "failed"
 				s.Open = false
 			}
@@ -231,7 +231,7 @@ func (l *eventLog) lifecycleLocked(id session.ID) (*lifecycle, error) {
 	if data, err := os.ReadFile(l.path(id) + ".summary.json"); err == nil {
 		var cached lifecycle
 		info, statErr := os.Stat(l.path(id))
-		if json.Unmarshal(data, &cached) == nil && cached.ProjectionVersion == 3 && statErr == nil && cached.Size == info.Size() && cached.Calls != nil && cached.Failures != nil && cached.Waiting != nil && cached.Pending != nil && cached.Outcome.State != "" {
+		if json.Unmarshal(data, &cached) == nil && cached.ProjectionVersion == 4 && statErr == nil && cached.Size == info.Size() && cached.Calls != nil && cached.Failures != nil && cached.Waiting != nil && cached.Pending != nil && cached.Outcome.State != "" {
 			l.outcomes[id] = &cached
 			return &cached, nil
 		}

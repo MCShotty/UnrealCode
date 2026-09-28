@@ -37,6 +37,16 @@ and daybreak mode for coding. Do not claim unsupported controls were enabled.
 Communicate plainly, with brief,
 natural humor when appropriate. Report concrete evidence and limitations.
 
+## Authorized 1.0.1 release
+
+The owner explicitly authorized documenting, committing, pushing, merging and publishing 1.0.1 after its acceptance gates pass. This supersedes the earlier 1.0.1 publication hold, and applies only to this version. Include the accumulated 1.0.1 implementation, theme polish, bug fixes and release notifications. Leave the unrelated untracked `docs/orbit-garden-demo.html` untouched. Keep v1.0.0's tag and assets intact.
+
+Merge the reviewed `codex/1.0.1` PR after Windows, backend and Go CI passes. Run the nonpublishing release workflow on the exact merged `main` commit, then tag `v1.0.1`. Publish only the workflow-built installer and checksum manifest after provenance verification; verify the downloaded published artifact again. Do not substitute a local candidate for the attested hosted artifact. See `CHANGELOG.md`, `desktop/ACCEPTANCE_1.0.1.md`, and `desktop/RELEASE_NOTES_1.0.1.md` for scope and evidence. Future versions require separate authorization.
+
+Memory enablement is app-wide after explicit destination/scope consent. Shared records retain their source project; unintegrated specialists remain task-scoped. Migrations preserve backups, corrections, tombstones and legacy banks. Timeline inference is advisory, runs at most once per 20 seconds per conversation with two global slots, and never edits approved plans. Preserve exact provider rejection metadata and recorded failures; do not automatically retry refusals or substitute providers.
+
+Release discovery lives in Electron main and uses the fixed public GitHub releases endpoint without credentials. Automatic checks default on, run when due after startup and at most daily across restarts; manual checks remain possible when automation is off. Persist retry times, ETags and per-version dismissal. Validate versions, channel, installer/checksum assets and owned release URLs. Unsigned builds offer **View release & changelog**, not automatic download/install. Keep the signed updater's checksum/publisher gates. New network checks must never block startup, tools or steering. The checker cache is rebuildable, stored under a timestamp location in app data, and excluded from private content backups.
+
 ## Product and architecture
 
 UnrealCode is a Windows Electron/React coding application backed by the Unreal
@@ -140,6 +150,11 @@ and Off; GLiNER remains separate entity extraction.
 - Keep the UC silhouette and square accent. Use solid fills without gradients,
   bloom, glow, or shadows in the mark. Both themes share geometry.
   Source: `desktop/assets/brand/unrealcode-mark-dark.svg`.
+- Brand references are cobalt `#0027CC`, red `#D10D0D`, steel `#79858D`, and white.
+  Use cobalt filled actions with white text, accessible blue text/focus tones in
+  dark mode, and steel-neutral surfaces. The UC square is red; its light-mode
+  silhouette is cobalt. Preserve status semantics and terminal ANSI meanings.
+  `material-tokens.css` owns the palettes; do not force `color-scheme` in layout CSS.
 - After editing the source, run `npm run brand:generate` from `desktop/`.
   It renders SVGs using Playwright Chromium and exports Windows PNG/ICO assets.
   Install its renderer if needed: `npx playwright install chromium --only-shell`.
@@ -241,7 +256,7 @@ unsigned updates manually.
   tool evidence, including nonzero shell exits. Exact successful retries clear
   unresolved warnings. Connection availability is separate from turn outcome.
 - Hindsight uses pinned optional Docker images and local weights, a separate
-  verified model profile, a credential broker, project banks, and a durable
+  verified model profile, a credential broker, an app-wide shared bank plus isolated task banks, and a durable
   outbox. Preserve corrections/tombstones and dump the private database before
   backup/upgrade. Never put provider credentials in its containers.
 - The dedicated Playwright browser has independent project profiles and origin

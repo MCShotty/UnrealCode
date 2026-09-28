@@ -1,5 +1,10 @@
 # Active roadmap work
 
+## 1.0.1 local candidate — 2026-09-28
+
+Implementation and verification are recorded in [ACCEPTANCE_1.0.1.md](ACCEPTANCE_1.0.1.md); changes are described in [RELEASE_NOTES_1.0.1.md](RELEASE_NOTES_1.0.1.md). The local installer is unsigned. The owner authorized the 1.0.1 commit, merge and release on 2026-09-29, after release-notification implementation and acceptance checks. The sections below are historical: v1.0.0 has since been published, as recorded in root AGENTS.md.
+
+
 ## 1.0 unsigned provenance release — 2026-09-28
 
 The owner replaced the certificate requirement with a public SHA-256 manifest,

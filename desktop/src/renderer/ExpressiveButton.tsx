@@ -9,8 +9,6 @@ import { ProgressIndicator } from './ProgressIndicator'
 export function ExpressiveButton({ disabled, children, ...props }: Omit<HTMLMotionProps<'button'>, 'children'> & {children?: ReactNode}) {
   const reduced = useReducedMotion()
   return <motion.button {...props} disabled={disabled}
-    animate={{ scale: 1 }}
-    whileHover={disabled || reduced ? { scale: 1 } : { scale: 1.015 }}
-    whileTap={disabled || reduced ? { scale: 1 } : { scale: .965 }}
-    transition={reduced ? instant : expressive.control}>{(props['aria-busy']===true||props['aria-busy']==='true')&&<ProgressIndicator/>}{children}</motion.button>
+    initial="rest" animate="rest" whileHover={disabled||reduced?'rest':'hover'} whileTap={disabled||reduced?'rest':'press'}>
+    <motion.span className="expressive-button-face" variants={{rest:{scale:1},hover:{scale:1.015},press:{scale:.965}}} transition={reduced?instant:expressive.control}>{(props['aria-busy']===true||props['aria-busy']==='true')&&<ProgressIndicator/>}{children}</motion.span></motion.button>
 }

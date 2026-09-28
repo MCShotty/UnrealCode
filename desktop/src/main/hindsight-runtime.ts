@@ -58,9 +58,7 @@ export class HindsightRuntime {
    try{await this.docker(['network','inspect',network])}catch{await this.docker(['network','create',network])}
    for(const volume of [this.volume,this.cache])await this.docker(['volume','create','--label','ai.unrealcode.kind=memory',volume])
    try{await this.docker(['inspect',this.database]);await this.docker(['start',this.database])}catch{await this.docker(['run','-d','--name',this.database,'--network',network,'--label','ai.unrealcode.kind=memory','--memory','512m','--cpus','1','-e','POSTGRES_USER=unrealcode','-e','POSTGRES_DB=memory','-e','POSTGRES_HOST_AUTH_METHOD=trust','--mount',`type=volume,source=${this.volume},target=/var/lib/postgresql/data`,MEMORY_POSTGRES_IMAGE])}
-   let healthy=false;for(let attempt=0;attempt<30;attempt++){try{await this.docker(['exec',this.database,'pg_isready','-U','unrealcode','-d','memory']);healthy=true;break}catch{await new Promise(resolve=>setTimeout(resolve,500))}}
-   if(!healthy)throw Error('Memory database did not become ready')
-   await this.docker(['exec',this.database,'psql','-U','unrealcode','-d','memory','-c','CREATE EXTENSION IF NOT EXISTS vector;'])
+   await this.waitForDatabase(active)
    active()
    if(previous?.restoreRequired&&previous.backup&&!previous.backup.empty){
     const dump=join(this.directory,'database.dump'),hash=createHash('sha256');for await(const bytes of createReadStream(dump))hash.update(bytes);if(hash.digest('hex')!==previous.backup.sha256)throw Error('Memory recovery dump failed its integrity check')
@@ -88,6 +86,15 @@ export class HindsightRuntime {
    if(epoch!==this.epoch)throw Error('Memory startup was cancelled')
    this.ready=true;this.state='ready';this.message='Hindsight memory is ready';this.onChanged()
   }catch(error){const cancelled=epoch!==this.epoch;await this.stop();if(!cancelled){this.state='unavailable';this.message=error instanceof Error?error.message:'Memory runtime unavailable';this.onChanged()}throw error}
+ }
+ private async waitForDatabase(active:()=>void):Promise<void>{
+  // The image temporarily starts a Unix-socket-only server during first init.
+  // TCP readiness identifies the final server, avoiding its planned shutdown.
+  for(let attempt=0;attempt<30;attempt++){
+   active()
+   try{await this.docker(['exec',this.database,'pg_isready','-h','127.0.0.1','-U','unrealcode','-d','memory']);active();await this.docker(['exec',this.database,'psql','-h','127.0.0.1','-U','unrealcode','-d','memory','-c','CREATE EXTENSION IF NOT EXISTS vector;']);return}
+   catch{active();if(attempt===29)throw Error('Memory database did not become ready');await new Promise(resolve=>setTimeout(resolve,500))}
+  }
  }
  async snapshot():Promise<void>{
   const manifest=join(this.directory,'runtime.json')

@@ -63,3 +63,9 @@ it('keeps retained worker notices in the initiating work and preserves earlier f
  const {cache,event,put}=await fixture();await put([event('session.item',input(),0),event('session.item',{Kind:'model_response',Data:{Response:{Output:[{Type:'message',Data:{Text:'Initial findings'}}]}}},1),event('session.idle',{messageIds:['m']},2),event('session.item',{Kind:'input',Data:{Kind:'external',ID:'worker-notice',Payload:{prompt:'<unrealcode_worker_event>Findings</unrealcode_worker_event>'}}},20),event('session.item',{Kind:'model_response',Data:{Response:{Output:[{Type:'message',Data:{Text:'Reviewed worker findings'}}]}}},21),event('session.idle',{messageIds:['worker-notice']},22)])
  const view=await cache.workView('p','s',false);expect(view.works).toHaveLength(1);expect(view.works[0].finalMessageIds).toEqual(['2:message:0','5:message:0']);expect(view.works[0].elapsedMs).toBeUndefined()
 })
+it('replays a legacy refused stop as failure even after a historical completed idle',async()=>{
+ const {cache,event,put}=await fixture()
+ await put([event('session.item',input(),0),event('session.item',{Kind:'model_response',Data:{TurnID:'t',Response:{Stop:'refused',Output:[{Type:'message',Data:{Text:'Declined'}}]}}},100),event('session.idle',{messageIds:['m'],outcome:{state:'completed'}},110)])
+ expect((await cache.workView('p','s',false)).works.at(-1)?.state).toBe('failed')
+ expect((await cache.page('p','s')).events[1].failure?.providerIssue?.category).toBe('refusal')
+})

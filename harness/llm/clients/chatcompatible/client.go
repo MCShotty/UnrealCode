@@ -197,7 +197,23 @@ func (client *Client) send(ctx context.Context, body []byte) (llm.Response, bool
 		return llm.Response{}, false, errors.New("local model response exceeds 16 MB")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return llm.Response{}, response.StatusCode == 429 || response.StatusCode >= 500, fmt.Errorf("local model HTTP %d", response.StatusCode)
+		var payload struct {
+			Error struct {
+				Code    string `json:"code"`
+				Type    string `json:"type"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		_ = json.Unmarshal(data, &payload)
+		failure := llm.Failure{StatusCode: response.StatusCode, Code: payload.Error.Code, Type: payload.Error.Type, Message: payload.Error.Message, RequestID: response.Header.Get("x-request-id"), RetryAfter: response.Header.Get("retry-after")}
+		if failure.Message == "" {
+			failure.Message = http.StatusText(response.StatusCode)
+		}
+		retry := response.StatusCode == 429 || response.StatusCode >= 500
+		if strings.Contains(failure.Code, "quota") || strings.Contains(failure.Code, "policy") || strings.Contains(failure.Code, "permission") {
+			retry = false
+		}
+		return llm.Response{}, retry, &llm.ProviderError{Detail: failure}
 	}
 	var decoded struct {
 		ID      string `json:"id"`
@@ -205,6 +221,7 @@ func (client *Client) send(ctx context.Context, body []byte) (llm.Response, bool
 			FinishReason string `json:"finish_reason"`
 			Message      struct {
 				Content   string `json:"content"`
+				Refusal   string `json:"refusal"`
 				ToolCalls []struct {
 					ID       string `json:"id"`
 					Function struct {
@@ -237,6 +254,12 @@ func (client *Client) send(ctx context.Context, body []byte) (llm.Response, bool
 	result.RateLimits = llm.SafeRateLimitHeaders(response.Header)
 	if choice.FinishReason == "length" {
 		result.Stop = llm.StopMaxOutputTokens
+	}
+	if choice.FinishReason == "content_filter" || choice.Message.Refusal != "" {
+		result.Stop = llm.StopRefused
+		if choice.Message.Refusal != "" {
+			choice.Message.Content = choice.Message.Refusal
+		}
 	}
 	if choice.Message.Content != "" {
 		result.Output = append(result.Output, llm.Item{ProviderID: decoded.ID + ":text", Type: llm.ItemMessage, Data: llm.Message{Role: llm.RoleAssistant, Text: choice.Message.Content}})

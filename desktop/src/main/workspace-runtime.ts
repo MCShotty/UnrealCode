@@ -65,7 +65,8 @@ export class WorkspaceRuntime {
   readonly queue: TaskQueue
   readonly index: ConversationIndex
   readonly repository: RepositoryIndex
-  private directory: string
+  readonly directory: string
+  get profileDirectory():string{return this.data}
   private pending = 0
   private indexSync: Promise<void> | null = null
   private verifiedSessionList = false

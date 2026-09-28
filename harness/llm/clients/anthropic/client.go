@@ -290,7 +290,7 @@ func (client *Client) send(ctx context.Context, body []byte) (llm.Response, bool
 		if message == "" {
 			message = http.StatusText(response.StatusCode)
 		}
-		return llm.Response{}, response.StatusCode == 429 || response.StatusCode >= 500, fmt.Errorf("Claude API status %d: %s", response.StatusCode, message)
+		return llm.Response{}, response.StatusCode == 429 || response.StatusCode >= 500, &llm.ProviderError{Detail: llm.Failure{StatusCode: response.StatusCode, Code: failure.Error.Type, Type: failure.Error.Type, Message: message, RequestID: response.Header.Get("request-id"), RetryAfter: response.Header.Get("retry-after")}}
 	}
 	var decoded apiResponse
 	if err := json.Unmarshal(data, &decoded); err != nil {
