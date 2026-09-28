@@ -1,17 +1,29 @@
 # Working on UnrealCode
 
-## Current release boundary
+## Published release and release boundary
 
-The owner authorized an unsigned public 1.0 release using published SHA-256
-hashes, a Git tag, GitHub Artifact Attestations, and public build scripts after
-confirming that no trusted Windows signing certificate is available. Build and
-attest the installer in hosted CI from the exact tag; verify the downloaded
-artifact before publication. Clearly disclose that Windows Authenticode signing
-and automatic in-app updates are unavailable. Never label an unsigned installer
-as signed or claim hashes/attestations establish Windows publisher trust. Do not
-change repository visibility.
-Check `desktop/WORK_IN_PROGRESS.md` and `desktop/ROADMAP_STATUS.md` before release
-work; distinguish historical acceptance from checks run on the current patch.
+The public [v1.0.0 release](https://github.com/MCShotty/UnrealCode/releases/tag/v1.0.0)
+is an **unsigned** Windows NSIS installer from annotated tag `v1.0.0` at
+`3f25c1bce449d3476639fc976778ced6955274d7`. Its published installer
+SHA-256 is `dcf587607c8825a647a9d5493bdd146d7ffda7754d25b8e43d085feb9ad8e558`.
+The tagged [release workflow](.github/workflows/desktop-release.yml) passed
+tests, credential/license audits, checksum verification, and GitHub Artifact
+Attestation creation and verification. The downloaded release asset was also
+verified against that hash and attestation. See
+[VERIFY_RELEASE.md](desktop/VERIFY_RELEASE.md) for user-facing commands.
+
+Hashes and attestations establish integrity and build provenance; they do not
+provide Windows Authenticode publisher trust. The published installer reports
+`NotSigned` (the local 1.0 preflight app EXE did too), so in-app auto-updates
+remain disabled. Never describe this release as signed or suggest that Windows
+warnings are removed. Preserve public repository visibility; do not move
+`v1.0.0` or replace its release assets.
+The owner's authorization for this release does not automatically authorize a
+later version. Before future publication, use a new reviewed commit and tag,
+run the nonpublishing release workflow on `main`, and verify the downloaded
+artifact from the tagged run. `desktop/WORK_IN_PROGRESS.md` and
+`desktop/ROADMAP_STATUS.md` contain dated historical checkpoints; distinguish
+them from current source and release evidence.
 
 The active checkout on the owner's machine is `I:\UnrealCode`.
 `I:\UnrealGUI` is a preserved backup, not a second place to implement changes.
@@ -30,9 +42,9 @@ natural humor when appropriate. Report concrete evidence and limitations.
 UnrealCode is a Windows Electron/React coding application backed by the Unreal
 Agent Go harness in Docker. It is not an Unreal Engine plugin or a Claude Code
 wrapper. The 1.0 installer is unsigned and distributed with checksums and a
-GitHub build-provenance attestation. Fresh-machine evidence comes from the
-owner's verified preview installation; do not mislabel it as a test of the
-final tagged installer.
+GitHub build-provenance attestation. The owner tested the earlier preview on
+another machine; that does not establish a fresh-machine test of the exact
+tagged installer.
 
 | Location | Responsibility |
 | --- | --- |
@@ -46,6 +58,7 @@ final tagged installer.
 | `internal/openaiapi/` | Generated client. Follow `third_party/openai-openapi/README.md` to regenerate; do not hand-edit generated bindings. |
 | `desktop/worker/` | Optional local decision/entity worker and tests. |
 | `desktop/scripts/` | Packaging, notices, audits, fixture QA, and benchmarks. |
+| `.github/workflows/desktop-release.yml` | Authoritative Windows release build, attestation, and publication from a matching tag. The inherited `release.yml` is upstream-only and skips this repository. |
 | `desktop/assets/brand/` | Solid UC vector mark, theme variants, and PNG exports. |
 
 The Go module intentionally retains `github.com/unreallabsai/unreal-agent`.
@@ -154,8 +167,12 @@ npm run build:win
 
 `build:win` creates a local unsigned candidate by default and does not publish.
 Run it through npm: the helper uses npm's actual production dependency tree.
-`build:release:unsigned` is the explicit public 1.0 packaging path; verify its
-`SHA256SUMS` and attestation from the exact tagged GitHub Actions run.
+`build:release:unsigned` is the explicit unsigned public packaging path and
+rejects signing environment variables. For a future version, update both
+`desktop/package.json` and `desktop/package-lock.json`, add matching
+`desktop/RELEASE_NOTES_<version>.md`, and verify its `SHA256SUMS` and attestation
+from the exact tagged GitHub Actions run. A local installer hash is not the
+hosted release hash.
 `build:stable` requires genuine signing credentials and publisher identity;
 never weaken signing checks to make a release pass.
 
@@ -203,13 +220,17 @@ Before a release, audit the actual payload and history:
 node --test scripts/check-secret-patterns.mjs
 node scripts/audit-release.mjs
 node scripts/audit-history.mjs
+node scripts/sha256-release.mjs --write
+node scripts/sha256-release.mjs --verify
 ```
 
 Reports identify locations/rules without printing secrets. Regenerate notices;
 review new licenses and preserve Electron/Chromium, Go, OpenAPI, terminal, and
 transitive npm attribution. Do not bundle external CLIs, Docker Desktop, optional
 model packages, or weights without a separate redistribution review. Follow
-`desktop/BUILDING.md` for full release gates.
+`desktop/BUILDING.md` for full release gates. GitHub publishes only the tagged
+installer and `SHA256SUMS` after attestation verification; users must install
+unsigned updates manually.
 
 ## Coding-workflow extensions
 
@@ -229,6 +250,6 @@ model packages, or weights without a separate redistribution review. Follow
 - Background jobs use `setsid --wait` and an owned process-group marker. Hooks
   need reviewed definitions and normal operation permissions; a successful hook
   cannot approve its target. Keep cancellation independent across operations.
-- `desktop/PARITY_IMPLEMENTATION.md` is the current local evidence record.
+- `desktop/PARITY_IMPLEMENTATION.md` is a dated feature evidence record.
   `qa-parity.mjs`, `qa-parity-live.mjs`, `qa-tool-recovery-live.mjs`, and
   `qa-hindsight.mjs` exercise these extensions in disposable profiles.
