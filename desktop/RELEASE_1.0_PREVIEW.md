@@ -1,8 +1,10 @@
 # UnrealCode 1.0 local preview
 
+> Current local coding-workflow implementation and verification: [PARITY_IMPLEMENTATION.md](PARITY_IMPLEMENTATION.md). Earlier counts, hashes and release notes below are historical snapshots, not the current candidate.
+
 **Local only. Do not push or publish this version without a new user instruction.**
 The stable 1.0 acceptance gate remains open: signing and fresh-machine installation
-have not been verified. Hosted Actions runners remain blocked by account billing.
+have not been verified. Hosted CI has not been rerun for this local candidate.
 
 ## Implemented
 
@@ -26,7 +28,13 @@ have not been verified. Hosted Actions runners remain blocked by account billing
 - Public-source build, contribution and security-reporting documentation, retained
   upstream MIT attribution and expanded dependency notices.
 
-## Verification observations
+## Local bug-hunt follow-up
+
+Fixed evaluation backup/cleanup volume identities, retained evaluation backup discovery, file/directory replacement recovery (including nested folders and Windows aliases), and stale workspace metadata saves. Replaced the logo with flat light/dark UC assets and corrected light welcome contrast. Rewrote README.md and added AGENTS.md.
+
+Current source passes 105 desktop tests, TypeScript, Go race/vet, and three Python tests. The final local installer passed packaged coding, recovery, branding and accessibility checks, plus a 918-file/212-package credential and redistribution audit with zero matches. See ROADMAP_STATUS.md for the current hash. These changes remain uncommitted and unpublished.
+
+## Earlier verification observations
 
 The full Go race suite and vet and 99 desktop tests passed. The final installer
 hash and detailed acceptance evidence are recorded in ROADMAP_STATUS.md. Docker fixtures

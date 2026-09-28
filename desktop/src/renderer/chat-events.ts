@@ -16,10 +16,10 @@ function formatTime(value: unknown): string {
 }
 function asMessage(value: unknown): string {
   if (typeof value === 'string') return value
-  if (value && typeof value === 'object') return string(field(value, 'prompt', 'Text', 'text'))
+  if (value && typeof value === 'object') return string(field(value, 'prompt', 'Prompt', 'Text', 'text'))
   return ''
 }
-export type ParsedEntry = { id: string; kind: 'user' | 'assistant' | 'tool' | 'decision' | 'status' | 'question'; seq?: number; text: string; title: string; timestamp: string; status?: string; raw?: unknown }
+export type ParsedEntry = { id: string; kind: 'user' | 'assistant' | 'tool' | 'decision' | 'status' | 'question'; seq?: number; eventSequences?:number[]; text: string; title: string; timestamp: string; status?: string; raw?: unknown; phase?:string; activityId?:string; questionResponseId?:string }
 export function parseEvents(events: AgentEvent[]): ParsedEntry[] {
   const result: ParsedEntry[] = []
   const compactionTurns=new Set<string>()
@@ -27,6 +27,7 @@ export function parseEvents(events: AgentEvent[]): ParsedEntry[] {
   const operationCalls = new Map<string, string>()
   const callOperations = new Map<string, string[]>()
   const operationStates = new Map<string,string>()
+  const inheritedCalls = new Set<string>()
   const terminal = (state:string) => ['completed','failed','canceled'].includes(state)
   const callKey = (call:string,turn:unknown) => `call:${string(turn)}:${call}`
   // Telemetry can precede the persisted tool-call status in the event stream.
@@ -36,15 +37,17 @@ export function parseEvents(events: AgentEvent[]): ParsedEntry[] {
     const data=field(event.payload,'Data','data'),key=callKey(string(field(data,'CallID','callId')),field(data,'TurnID','turnId'))
     const ids=field(field(data,'Status','status'),'WaitingFor','waitingFor')
     if(Array.isArray(ids)){const names=ids.map(id=>typeof id==='string'?id:string(field(id,'ID','id'))).filter(Boolean);callOperations.set(key,names);for(const id of names)operationCalls.set(id,key)}
+    if(Array.isArray(field(data,'InheritedOperations','inheritedOperations')))inheritedCalls.add(key)
   }
   const operationState = (value:unknown):void => {const id=string(field(value,'ID','id')),state=string(field(value,'Status','status'));if(id&&state&&!(terminal(operationStates.get(id)||'')&&!terminal(state)))operationStates.set(id,state)}
-  const callState = (key:string):string => {const ids=callOperations.get(key)||[];if(!ids.length)return 'completed';const states=ids.map(id=>operationStates.get(id)||'running');if(states.some(state=>!terminal(state)))return 'running';return states.includes('failed')?'failed':states.includes('canceled')?'canceled':'completed'}
+  const callState = (key:string):string => {const ids=callOperations.get(key)||[];if(!ids.length)return 'completed';const states=ids.map(id=>operationStates.get(id)||'running');if(states.some(state=>!terminal(state)))return inheritedCalls.has(key)?'not carried into fork':'running';return states.includes('failed')?'failed':states.includes('canceled')?'canceled':'completed'}
   let sequence = 0
+  let providerFailureSeen = false
   const toolEntry = (key: string, update: Partial<ParsedEntry>): void => {
     update.seq = sequence
     const existing = tools.get(key)
-    if (existing) { Object.assign(existing, update); return }
-    const created: ParsedEntry = { id: key, kind: 'tool', title: update.title || 'Tool call', text: update.text || '', timestamp: update.timestamp || '', status: update.status, raw: update.raw, seq: sequence }
+    if (existing) { const anchor=existing.seq;Object.assign(existing, update);existing.seq=anchor;existing.eventSequences||=[];if(!existing.eventSequences.includes(sequence))existing.eventSequences.push(sequence);return }
+    const created: ParsedEntry = { id: key, kind: 'tool', title: update.title || 'Tool call', text: update.text || '', timestamp: update.timestamp || '', status: update.status, raw: update.raw, seq: sequence,eventSequences:[sequence] }
     tools.set(key, created)
     result.push(created)
   }
@@ -67,7 +70,7 @@ export function parseEvents(events: AgentEvent[]): ParsedEntry[] {
     }
     if (event.event === 'session.status') {
       const state = string(field(event.payload, 'status'))
-      if (state === 'error') result.push({ id: `${event.seq}:error`, kind: 'status', title: 'Agent error', text: string(field(event.payload, 'message')), timestamp: '', status: 'error' })
+      if (state === 'error'&&!providerFailureSeen) result.push({ id: `${event.seq}:error`, kind: 'status', title: 'Agent error', text: string(field(event.payload, 'message')), timestamp: '', status: 'error' })
       continue
     }
     if (event.event === 'operation.update') {
@@ -87,12 +90,17 @@ export function parseEvents(events: AgentEvent[]): ParsedEntry[] {
     if(kind==='turn'&&field(data,'Type','type')==='compaction'){compactionTurns.add(string(field(data,'ID','id')));continue}
     if (kind === 'input') {
       if (string(field(data, 'Kind', 'kind')) !== 'external') continue
+      providerFailureSeen=false
       const payload = field(data, 'Payload', 'payload')
-      const text = (typeof payload === 'string' ? payload : asMessage(payload)).split('<unrealcode_context>')[0].trimEnd()
-      result.push({ id: `${event.seq}:input`, kind: 'user', title: 'You', text, timestamp })
+      const text = field(payload,'retryOf')?'Retry response':(typeof payload === 'string' ? payload : asMessage(payload)).split(/<unrealcode_(?:context|memory)>/)[0].trimEnd()
+      const questionResponseId=string(field(field(payload,'questionResponse'),'id'))||undefined
+      result.push({ id: `${event.seq}:input`, seq:event.seq, kind: text.startsWith('<unrealcode_worker_event>')?'assistant':'user', title: text.startsWith('<unrealcode_worker_event>')?'Specialist update':'You', text:text.replace(/<\/?unrealcode_worker_event>/g,''), timestamp,raw:payload,questionResponseId })
     } else if (kind === 'model_response') {
       if(compactionTurns.has(string(field(data,'TurnID','turnId'))))continue
       const response = field(data, 'Response', 'response')
+      const failure=field(response,'Failure','failure')
+      if(failure)providerFailureSeen=true
+      if(failure)result.push({id:`${event.seq}:failure`,seq:event.seq,kind:'status',title:'Response failed',text:string(field(failure,'Message','message'))||'The provider returned an incomplete response. Retry explicitly when ready.',timestamp,status:'error',raw:failure})
       const outputs = field(response, 'Output', 'output')
       if (!Array.isArray(outputs)) continue
       for (let index = 0; index < outputs.length; index++) {
@@ -101,11 +109,11 @@ export function parseEvents(events: AgentEvent[]): ParsedEntry[] {
         const content = field(output, 'Data', 'data')
         if (outputType === 'message') {
           const text = asMessage(content)
-          if (text) result.push({ id: `${event.seq}:message:${index}`, kind: 'assistant', title: 'UnrealCode', text, timestamp })
+          if (text) result.push({ id: `${event.seq}:message:${index}`,seq:event.seq, kind: 'assistant', title: 'UnrealCode', text, timestamp,phase:string(field(content,'Phase','phase')) })
         } else if (outputType === 'tool_call') {
           const callID = string(field(content, 'CallID', 'callId')) || `${event.seq}:${index}`
           const key=callKey(callID,field(data,'TurnID','turnId'))
-          toolEntry(key, { title: string(field(content, 'Name', 'name')) || 'Tool call', text: string(field(content, 'Arguments', 'arguments')), timestamp, status: tools.get(key)?.status||'started', raw: content })
+          toolEntry(key, { activityId:key.slice(5), title: string(field(content, 'Name', 'name')) || 'Tool call', text: string(field(content, 'Arguments', 'arguments')), timestamp, status: tools.get(key)?.status||'started', raw: content })
         }
       }
     } else if (kind === 'tool_call_status') {
@@ -120,6 +128,8 @@ export function parseEvents(events: AgentEvent[]): ParsedEntry[] {
       const hasError = !!string(field(status, 'Error', 'error'))
       const snapshots=field(data,'Operations','operations')
       if(Array.isArray(snapshots))for(const snapshot of snapshots)operationState(snapshot)
+      const inherited=field(data,'InheritedOperations','inheritedOperations')
+      if(Array.isArray(inherited))for(const snapshot of inherited)operationState(snapshot)
       toolEntry(key, { title: tools.get(key)?.title || 'Tool call', text: tools.get(key)?.text || callID, timestamp, status: hasError ? 'failed' : callState(key), raw: data })
     }
   }

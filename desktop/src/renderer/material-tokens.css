@@ -1,0 +1,104 @@
+/* Reference palette → Material system roles → product/component aliases.
+   The blue/red/gray brand remains fixed; tonal roles adapt to the theme. */
+:root {
+  --md-ref-blue: #0027cc;
+  --md-ref-red: #d10d0d;
+  --md-ref-gray: #79858d;
+  --md-ref-white: #ffffff;
+  --md-sys-shape-small: 8px;
+  --md-sys-shape-medium: 12px;
+  --md-sys-shape-large: 20px;
+  --md-sys-shape-extra-large: 28px;
+  --md-sys-shape-full: 999px;
+  --md-sys-space-1: 4px;
+  --md-sys-space-2: 8px;
+  --md-sys-space-3: 12px;
+  --md-sys-space-4: 16px;
+  --md-sys-space-6: 24px;
+  --md-sys-space-8: 32px;
+  --md-sys-type-body: 14px;
+  --md-sys-type-label: 12px;
+  --md-sys-type-title: 20px;
+  --md-sys-type-headline: 30px;
+  --md-sys-motion-effects: 150ms;
+  --md-sys-motion-state: 180ms;
+  --md-sys-motion-state-easing: cubic-bezier(.2, 0, 0, 1);
+  --md-comp-control-rest-radius: 24px;
+  --md-comp-control-pressed-radius: 12px;
+  --md-comp-button-height: 40px;
+  --md-comp-icon-target: 40px;
+  --md-comp-pane-radius: var(--md-sys-shape-large);
+  --md-comp-nav-width: 216px;
+  --md-comp-page-padding: clamp(20px, 3vw, 40px);
+}
+:root, [data-theme="dark"] {
+  --md-sys-color-surface: #0e1420;
+  --md-sys-color-surface-container-lowest: #0a101a;
+  --md-sys-color-surface-container-low: #141c2a;
+  --md-sys-color-surface-container: #1b2535;
+  --md-sys-color-surface-container-high: #263246;
+  --md-sys-color-surface-container-highest: #313f55;
+  --md-sys-color-on-surface: #e8edf7;
+  --md-sys-color-on-surface-variant: #b6c2d5;
+  --md-sys-color-primary: #afc2ff;
+  --md-sys-color-on-primary: #052b8c;
+  --md-sys-color-primary-container: #253d73;
+  --md-sys-color-on-primary-container: #dce5ff;
+  --md-sys-color-secondary-container: #29374e;
+  --md-sys-color-on-secondary-container: #d9e4f9;
+  --md-sys-color-outline: #8391a9;
+  --md-sys-color-outline-variant: #3b4960;
+  --md-sys-color-error: #ffb3b0;
+  --md-sys-color-error-container: #542726;
+  --md-sys-color-success: #88dcb0;
+  --md-sys-color-tertiary: #d0bcff;
+  --md-sys-color-scrim: #050911b8;
+  --md-sys-elevation-2: 0 8px 28px #0004;
+  color-scheme: dark;
+}
+[data-theme="light"] {
+  --md-sys-color-surface: #f4f6fc;
+  --md-sys-color-surface-container-lowest: #ffffff;
+  --md-sys-color-surface-container-low: #ffffff;
+  --md-sys-color-surface-container: #ebeff8;
+  --md-sys-color-surface-container-high: #e2e8f4;
+  --md-sys-color-surface-container-highest: #d8e1f0;
+  --md-sys-color-on-surface: #19243a;
+  --md-sys-color-on-surface-variant: #4e5e76;
+  --md-sys-color-primary: var(--md-ref-blue);
+  --md-sys-color-on-primary: var(--md-ref-white);
+  --md-sys-color-primary-container: #dce5ff;
+  --md-sys-color-on-primary-container: #052b83;
+  --md-sys-color-secondary-container: #e0e7f4;
+  --md-sys-color-on-secondary-container: #23364f;
+  --md-sys-color-outline: #6b7a91;
+  --md-sys-color-outline-variant: #c4cedf;
+  --md-sys-color-error: var(--md-ref-red);
+  --md-sys-color-error-container: #ffe3df;
+  --md-sys-color-success: #17673e;
+  --md-sys-color-tertiary: #7042a7;
+  --md-sys-color-scrim: #18253e70;
+  --md-sys-elevation-2: 0 8px 28px #1b2c4a18;
+  color-scheme: light;
+}
+:root, [data-theme] {
+  --bg: var(--md-sys-color-surface);
+  --panel: var(--md-sys-color-surface-container-low);
+  --panel-2: var(--md-sys-color-surface-container);
+  --panel-3: var(--md-sys-color-surface-container-high);
+  --text: var(--md-sys-color-on-surface);
+  --sub: var(--md-sys-color-on-surface-variant);
+  --muted: var(--md-sys-color-on-surface-variant);
+  --accent: var(--md-sys-color-primary);
+  --accent-soft: var(--md-sys-color-primary-container);
+  --line: var(--md-sys-color-outline-variant);
+  --line-soft: color-mix(in srgb, var(--line) 52%, transparent);
+  --danger: var(--md-sys-color-error);
+  --green: var(--md-sys-color-success);
+  --purple: var(--md-sys-color-tertiary);
+  --brand-gray: var(--md-ref-gray);
+  --surface: var(--panel); --surface-hover: var(--panel-3); --border: var(--line); --text-secondary: var(--sub);
+  --scroll-thumb: var(--md-sys-color-outline);
+  --scroll-hover: var(--accent);
+  --scroll-track: var(--panel);
+}

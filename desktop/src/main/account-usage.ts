@@ -1,3 +1,4 @@
+import {backendEnvironment} from './child-environment'
 import { spawn } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
 import { delimiter, isAbsolute, join } from 'node:path'
@@ -73,7 +74,7 @@ async function report(source: 'openai' | 'anthropic', key: string, fetcher: Fetc
   throw new Error(`${source} usage report exceeded 50 pages`)
 }
 
-function codexExecutable(): string | null {
+export function codexExecutable(): string | null {
   const local = process.env.LOCALAPPDATA
   if (local) {
     const folder = join(local, 'OpenAI', 'Codex', 'bin')
@@ -118,7 +119,7 @@ export async function readCodexWindows(binary = codexExecutable()): Promise<Usag
   if (!binary) throw new Error('Codex CLI is not installed. Install Codex and sign in to see subscription limits.')
   if (!codexStatus().available) throw new Error('Sign in with Codex to see subscription limits.')
   return new Promise((resolve, reject) => {
-    const child = spawn(binary, ['app-server', '--stdio'], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] })
+    const child = spawn(binary, ['app-server', '--stdio'], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'],env:backendEnvironment() })
     const reader = createInterface({ input: child.stdout })
     let settled = false
     const timer = setTimeout(() => finish(new Error('Codex usage request timed out')), 15000)

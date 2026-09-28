@@ -10,7 +10,7 @@ if (!process.argv.includes('--codex')) throw new Error('Live provider verificati
 const root = mkdtempSync(join(tmpdir(), 'unrealcode-live-')), project = join(root, 'project')
 mkdirSync(project); writeFileSync(join(project, 'sample.txt'), 'UNREALCODE_NATIVE_READ_OK\n')
 if(process.argv.includes('--teams')){const git=args=>execFileSync('git',['-C',project,...args],{windowsHide:true,stdio:'ignore'});git(['init']);git(['add','.']);git(['-c','user.name=Fixture','-c','user.email=fixture@localhost','commit','-m','Live read fixture'])}
-const app = await electron.launch({ executablePath: resolve('dist/win-unpacked/UnrealCode.exe'), args: [], env: { ...process.env, UNREAL_DESKTOP_USER_DATA: join(root, 'data') } })
+const app = await electron.launch({ executablePath: resolve(process.env.UNREALCODE_QA_EXECUTABLE || 'dist/win-unpacked/UnrealCode.exe'), args: [], env: { ...process.env, UNREAL_DESKTOP_USER_DATA: join(root, 'data'), UNREAL_DESKTOP_BACKGROUND_CHECK: '1' } })
 try {
   const page = await app.firstWindow()
   await page.getByRole('button', { name: 'Set up later' }).click()

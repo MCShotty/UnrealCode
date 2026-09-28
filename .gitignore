@@ -21,5 +21,6 @@ __pycache__/
 /desktop/out/
 /desktop/generated/
 /desktop/dist/
+/desktop/dist-*/
 /desktop/design/desktop-*-current.png
 /desktop/design/desktop-current.png

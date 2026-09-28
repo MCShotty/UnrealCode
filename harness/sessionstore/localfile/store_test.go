@@ -860,6 +860,11 @@ func TestForkCopiesHistoryThroughTurnWithoutOperations(t *testing.T) {
 			t.Fatalf("child item %d kind = %q, want %q", index, page.Items[index].Kind, wantKind)
 		}
 	}
+	inheritedStatus := page.Items[2].Data.(sessionstore.ToolCallStatus)
+	if len(inheritedStatus.Operations) != 0 || len(inheritedStatus.InheritedOperations) != 1 ||
+		inheritedStatus.InheritedOperations[0].Status != operation.StatusAwaiting {
+		t.Fatalf("forked operation history = %#v, want read-only awaiting snapshot", inheritedStatus)
+	}
 	fork := page.Items[len(page.Items)-1].Data.(sessionstore.Fork)
 	if fork.ParentID != "parent" || fork.PreviousTurnID != "turn-1" {
 		t.Fatalf("fork record = %#v", fork)

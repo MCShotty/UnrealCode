@@ -1,7 +1,28 @@
-import { it,expect } from 'vitest'
+import { it,expect,vi } from 'vitest'
 import { createServer } from 'node:http'
 import { randomUUID,createHash } from 'node:crypto'
 import { McpOAuth } from './mcp-auth'
+
+it('rejects a non-HTTP loopback authorization URL before opening it',async()=>{
+ const config={id:randomUUID(),name:'OAuth fixture',kind:'remote' as const,url:'https://fixture.example/mcp',auth:'oauth' as const,args:[],timeoutMs:5000}
+ const stored={discovery:{authorizationServerUrl:'ftp://localhost'}}
+ const secrets={get:()=>structuredClone(stored),set:()=>{},remove:()=>{}}
+ const open=vi.fn(async()=>{})
+ const provider=new McpOAuth(config,secrets,open,true)
+ ;(provider as any).server={};(provider as any).nonce='fixture-state'
+ await expect(provider.redirectToAuthorization(new URL('ftp://localhost/authorize?state=fixture-state'))).rejects.toThrow('validation')
+ expect(open).not.toHaveBeenCalled()
+})
+
+it('ignores an externally redirected callback URI in saved OAuth state',()=>{
+ const config={id:randomUUID(),name:'OAuth fixture',kind:'remote' as const,url:'https://fixture.example/mcp',auth:'oauth' as const,args:[],timeoutMs:5000}
+ for(const redirect of ['https://untrusted.example/callback','http://127.0.0.1:0/callback']){
+  const secrets={get:()=>({redirect}),set:()=>{},remove:()=>{}}
+  const provider=new McpOAuth(config,secrets,async()=>{},false)
+  expect(provider.redirectUrl).toBeUndefined()
+  expect(provider.clientMetadata.redirect_uris).toEqual([])
+ }
+})
 
 it('performs scoped OAuth with PKCE, rejects wrong state, and keeps tokens out of connection metadata',async()=>{
  let issuer='',challenge='',exchanged=false,opened=false

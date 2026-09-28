@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Settings } from '../shared/api'
+import { motion } from 'motion/react'
+import { useReducedMotion } from './useReducedMotion'
+import { effects, expressive, instant } from './motion'
 
 export function useTheme(theme: Settings['theme'] | undefined): void {
   useEffect(() => {
@@ -31,6 +34,7 @@ export function ResizeHandle({ label, value, min, max, reverse = false, onChange
 
 export type Command = { id: string; label: string; shortcut?: string; run: () => void }
 export function CommandPalette({ commands, onClose }: { commands: Command[]; onClose: () => void }): ReactNode {
+  const reduced = useReducedMotion()
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(0)
   const input = useRef<HTMLInputElement>(null)
@@ -41,8 +45,8 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
     return () => previous?.focus()
   }, [])
   const execute = (command: Command): void => { onClose(); command.run() }
-  return <div className="palette-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <div role="dialog" aria-modal="true" aria-label="Command palette" className="command-palette" onKeyDown={(event) => {
+  return <motion.div className="palette-overlay" initial={reduced ? false : { opacity: 0 }} animate={{ opacity: 1 }} transition={reduced ? instant : effects.fast} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+    <motion.div role="dialog" aria-modal="true" aria-label="Command palette" className="command-palette" initial={reduced ? false : { y: -18, scale: .97 }} animate={{ y: 0, scale: 1 }} transition={reduced ? instant : expressive.dialog} onKeyDown={(event) => {
       if (event.key === 'Escape') { event.preventDefault(); onClose() }
       if (event.key === 'Tab') { event.preventDefault(); input.current?.focus() }
       if (event.key === 'ArrowDown') { event.preventDefault(); setSelected((value) => Math.min(value + 1, matches.length - 1)) }
@@ -52,6 +56,6 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
       <input ref={input} aria-label="Search commands" value={query} onChange={(event) => { setQuery(event.target.value); setSelected(0) }} placeholder="Search commands…"/>
       <div className="command-results">{matches.map((command, index) => <button key={command.id} className={index === selected ? 'selected' : ''} onMouseEnter={() => setSelected(index)} onClick={() => execute(command)}><span>{command.label}</span><kbd>{command.shortcut}</kbd></button>)}{!matches.length && <p>No matching commands.</p>}</div>
       <small>↑ ↓ to choose · Enter to run · Esc to close</small>
-    </div>
-  </div>
+    </motion.div>
+  </motion.div>
 }

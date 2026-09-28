@@ -16,7 +16,7 @@ import (
 
 const teamPlan operation.RemoteJobPlanType = "unrealcode.team"
 
-var teamNames = []string{"TeamDispatch", "TeamStatus", "TeamSteer", "TeamCancel"}
+var teamNames = []string{"TeamDispatch", "TeamStatus", "TeamSteer", "TeamCancel", "TeamWait", "TeamFollowUp"}
 
 func teamTools(enabled bool) []tool.ExtraStaticTool {
 	text := map[string]any{"type": "string"}
@@ -25,10 +25,12 @@ func teamTools(enabled bool) []tool.ExtraStaticTool {
 		properties        map[string]any
 		required          []any
 	}{
-		{"TeamDispatch", "Dispatch a specialist only when the user enabled this task's team. Supply explicit ownership. Workers use isolated recorded snapshots, inherit restrictions, and cannot publish or delegate. Returns immediately after starting; inspect TeamStatus for findings. Changes require user integration.", map[string]any{"role": map[string]any{"type": "string", "enum": []any{"explorer", "implementer", "reviewer"}}, "assignment": text, "ownership": map[string]any{"type": "array", "items": text}}, []any{"role", "assignment", "ownership"}},
+		{"TeamDispatch", "Dispatch a specialist only when the user enabled this task's team. Supply explicit ownership. Workers use isolated recorded snapshots, inherit restrictions, and cannot publish or delegate. Returns immediately after starting; inspect TeamStatus for findings. Changes require user integration.", map[string]any{"role": map[string]any{"type": "string", "enum": []any{"explorer", "implementer", "reviewer", "browser-tester"}}, "assignment": text, "ownership": map[string]any{"type": "array", "items": text}, "expectedResult": text, "acceptance": map[string]any{"type": "array", "items": text}}, []any{"role", "assignment", "ownership", "expectedResult", "acceptance"}},
 		{"TeamStatus", "Read this task's specialists, bounded findings, usage and pending integration. Inspect at useful checkpoints; do not poll in a tight loop.", map[string]any{}, nil},
 		{"TeamSteer", "Send a focused steering message to one active specialist in this task. Does not broaden its original permissions or ownership.", map[string]any{"workerId": text, "message": text}, []any{"workerId", "message"}},
 		{"TeamCancel", "Cancel one specialist in this task while retaining its worktree, session and evidence.", map[string]any{"workerId": text}, []any{"workerId"}},
+		{"TeamWait", "Wait up to 30 seconds for specialist progress without blocking other tools. Returns current findings; do useful independent work first.", map[string]any{}, []any{}},
+		{"TeamFollowUp", "Continue a retained specialist within its existing assignment, ownership and restrictions. Does not create nested workers.", map[string]any{"workerId": text, "message": text}, []any{"workerId", "message"}},
 	}
 	result := make([]tool.ExtraStaticTool, 0, len(definitions))
 	for _, d := range definitions {

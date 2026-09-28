@@ -1,5 +1,7 @@
 # Roadmap implementation checkpoint
 
+> Current patch verification and local candidate digest: [WORK_IN_PROGRESS.md](WORK_IN_PROGRESS.md). Feature implementation: [PARITY_IMPLEMENTATION.md](PARITY_IMPLEMENTATION.md). Counts, hashes and release notes below are historical snapshots.
+
 Active checkout: `I:\UnrealCode`; private origin: `MCShotty/UnrealCode`.
 
 ## 1.0 preview — local only
@@ -9,7 +11,11 @@ visibility change is authorized. Features and limits: RELEASE_1.0_PREVIEW.md.
 
 Version: `1.0.0-preview.1`. Installer:
 `desktop/dist/UnrealCode-Setup-1.0.0-preview.1.exe`.
-SHA-256: `1E00847D1A081DAD962F0FAE21690FE8CC7DD95B5B67866B13B90F6631C17042`.
+SHA-256: `47001949E60DB01E55D2D2E6AB4998A710669E5371FB4F08358B171035C32C56`.
+
+Latest local bug-hunt follow-up: 105 desktop tests, TypeScript, Go race/vet and three Python tests passed. The rebuilt package passed coding, recovery, light/dark/system branding and accessibility checks; its credential/dependency audit scanned 918 files/artifacts and 212 production packages with zero secret matches. Flat UC brand assets, a rewritten product README, root AGENTS.md, and recovery/workspace fixes are ready locally. Details are in WORK_IN_PROGRESS.md. Nothing was committed or pushed.
+
+### Earlier preview acceptance (historical baseline)
 
 Local acceptance: 99 desktop tests; TypeScript; full Go race suite and vet, with
 the bridge race suite repeated after the latest-history capability; three Python

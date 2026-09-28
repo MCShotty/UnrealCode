@@ -27,7 +27,7 @@ const server = createServer(async (req, res) => {
 })
 await new Promise(resolve => server.listen(0, '0.0.0.0', resolve))
 const packaged = process.argv.includes('--packaged')
-const app = await electron.launch({ executablePath: resolve(packaged ? 'dist/win-unpacked/UnrealCode.exe' : 'node_modules/electron/dist/electron.exe'), args: packaged ? [] : ['.'], cwd: process.cwd(), env: { ...process.env, UNREAL_DESKTOP_USER_DATA: join(root, 'data') } })
+const app = await electron.launch({ executablePath: resolve(process.env.UNREALCODE_QA_EXECUTABLE||(packaged ? 'dist/win-unpacked/UnrealCode.exe' : 'node_modules/electron/dist/electron.exe')), args: packaged ? [] : ['.'], cwd: process.cwd(), env: { ...process.env, UNREAL_DESKTOP_USER_DATA: join(root, 'data') } })
 const report = { root, errors: [], warnings: [] }
 try {
  const page = await app.firstWindow(); page.on('pageerror', error => report.errors.push(error.message)); page.on('console', message => { if (['error', 'warning'].includes(message.type())) report.warnings.push(message.text()) })
@@ -120,6 +120,6 @@ try {
  console.log(JSON.stringify(report))
 } catch (error) {
   report.failure = String(error)
-  try { const page = await app.firstWindow(); report.visibleErrors = await page.locator('.error-inline,.banner-error').allTextContents();report.failedEditor=await page.evaluate(async()=>({active:await window.unreal.activeWorkspace(),read:(await window.unreal.editorRead('sample.txt')).workspace,rendered:document.querySelector('.files-page')?.getAttribute('data-workspace'),tabs:document.querySelector('.editor-tabs')?.textContent})); await page.screenshot({ path: join(root, 'failure.png') }) } catch {}
+  try { const page = await app.firstWindow(); report.visibleErrors = await page.locator('.error-inline,.banner-error').allTextContents();report.failureDetails=await page.locator('.failure-notice details').allTextContents();report.failedEditor=await page.evaluate(async()=>({active:await window.unreal.activeWorkspace(),read:(await window.unreal.editorRead('sample.txt')).workspace,rendered:document.querySelector('.files-page')?.getAttribute('data-workspace'),tabs:document.querySelector('.editor-tabs')?.textContent})); await page.screenshot({ path: join(root, 'failure.png') }) } catch {}
   writeFileSync(join(root, 'report.json'), JSON.stringify(report, null, 2)); console.log(JSON.stringify(report)); throw error
 } finally { await app.close().catch(() => {}); server.close() }

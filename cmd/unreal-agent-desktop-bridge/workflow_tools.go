@@ -57,17 +57,21 @@ func (p *contextPreferences) excludes(path string) bool {
 }
 
 type workflowArgs struct {
-	Action   string   `json:"action"`
-	Query    string   `json:"query"`
-	Question string   `json:"question"`
-	Choices  []string `json:"choices,omitempty"`
+	Action     string         `json:"action"`
+	Query      string         `json:"query"`
+	Question   string         `json:"question"`
+	Choices    []string       `json:"choices,omitempty"`
+	Mode       string         `json:"mode,omitempty"`
+	Questions  []questionItem `json:"questions,omitempty"`
+	QuestionID string         `json:"questionId,omitempty"`
 }
 type workflowTranslator struct{ action string }
 
 func workflowTools() []tool.ExtraStaticTool {
 	return []tool.ExtraStaticTool{
 		{Definition: tool.Definition{Tool: llm.Tool{Type: llm.ToolFunction, Name: "ProjectSearch", Description: "Search project text for a literal query, honoring the user's context exclusions. Prefer this for automatic source retrieval. Results include paths and line numbers; exclusions are context preferences, not filesystem permissions.", Parameters: map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}, "required": []any{"query"}}}}, Translator: workflowTranslator{"search"}},
-		{Definition: tool.Definition{Tool: llm.Tool{Type: llm.ToolFunction, Name: "RequestInput", Description: "Ask the user a required question and wait for their reply. Use this when further work needs a user decision. This pauses task-queue advancement; it does not grant permissions.", Parameters: map[string]any{"type": "object", "properties": map[string]any{"question": map[string]any{"type": "string"}, "choices": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}, "required": []any{"question"}}}}, Translator: workflowTranslator{"input"}},
+		{Definition: tool.Definition{Tool: llm.Tool{Type: llm.ToolFunction, Name: "RequestInput", Description: "Ask one to three questions. Required mode waits for the user's explicit answers; background mode lets you continue independent work. Use WaitForInput when a background answer becomes necessary. Answers never grant tool permissions.", Parameters: questionSchema()}}, Translator: workflowTranslator{"input"}},
+		{Definition: tool.Definition{Tool: llm.Tool{Type: llm.ToolFunction, Name: "WaitForInput", Description: "Wait for an existing background question without asking again. Independent operations continue.", Parameters: map[string]any{"type": "object", "properties": map[string]any{"questionId": map[string]any{"type": "string"}}, "required": []string{"questionId"}}}}, Translator: workflowTranslator{"wait_input"}},
 	}
 }
 func (t workflowTranslator) Translate(ctx tool.Context, call llm.ToolCall) tool.CallStatus {
@@ -79,8 +83,13 @@ func (t workflowTranslator) Translate(ctx tool.Context, call llm.ToolCall) tool.
 	if t.action == "search" && (strings.TrimSpace(args.Query) == "" || len(args.Query) > 500) {
 		return tool.CallStatus{Error: "Search needs a query below 500 bytes"}
 	}
-	if t.action == "input" && (strings.TrimSpace(args.Question) == "" || len(args.Question) > 4000 || len(args.Choices) > 5) {
-		return tool.CallStatus{Error: "RequestInput needs a question below 4000 bytes and at most five choices"}
+	if t.action == "input" {
+		if err := normalizeQuestions(&args); err != nil {
+			return tool.CallStatus{Error: err.Error()}
+		}
+	}
+	if t.action == "wait_input" && args.QuestionID == "" {
+		return tool.CallStatus{Error: "Choose an existing question ID"}
 	}
 	encoded, _ := json.Marshal(args)
 	spec, err := operation.NewRemoteJobSpec(operation.RemoteJobPlan{Type: workflowPlan, Version: 1, Data: jsontext.Value(encoded)})
@@ -94,18 +103,21 @@ func (t workflowTranslator) TranslateResult(id string, status tool.CallStatus, v
 }
 
 type workflowHandler struct {
-	ctx         context.Context
-	preferences *contextPreferences
-	workspace   string
-	events      *eventLog
-	session     session.ID
-	mu          sync.Mutex
-	waiting     map[operation.ID]operation.Operation
-	cancels     map[operation.ID]context.CancelFunc
-	updates     chan operation.Operation
-	queueMu     sync.Mutex
-	queue       []operation.Operation
-	wake        chan struct{}
+	ctx              context.Context
+	preferences      *contextPreferences
+	workspace        string
+	workspaceID      string
+	questions        *questionLedger
+	waitingQuestions map[operation.ID]string
+	events           *eventLog
+	session          session.ID
+	mu               sync.Mutex
+	waiting          map[operation.ID]operation.Operation
+	cancels          map[operation.ID]context.CancelFunc
+	updates          chan operation.Operation
+	queueMu          sync.Mutex
+	queue            []operation.Operation
+	wake             chan struct{}
 }
 
 func newWorkflowHandler(ctx context.Context, p *contextPreferences, workspace string, events *eventLog, id session.ID) *workflowHandler {
@@ -158,16 +170,41 @@ func (h *workflowHandler) AddRemoteJob(value operation.Operation) error {
 	if json.Unmarshal(state.Plan.Data, &args) != nil {
 		return errors.New("invalid workflow plan")
 	}
-	if args.Action == "input" {
+	if args.Action == "input" || args.Action == "wait_input" {
+		var q questionRequest
+		if args.Action == "input" {
+			if err = normalizeQuestions(&args); err != nil {
+				return err
+			}
+			q, err = h.questions.create(h.session, h.workspaceID, string(value.ID), args)
+		} else {
+			q, err = h.questions.promote(h.session, args.QuestionID)
+		}
+		if err != nil {
+			return err
+		}
+		if q.State != "pending" || q.Mode == "background" {
+			encoded, _ := json.Marshal(q)
+			state.TerminalResult = string(encoded)
+			step, err := operation.UpdateRemoteJob(value, state, operation.StatusCompleted)
+			if err == nil {
+				h.publish(*step.Operation)
+			}
+			return err
+		}
 		step, err := operation.UpdateRemoteJob(value, state, operation.StatusAwaiting)
 		if err != nil {
 			return err
 		}
 		h.mu.Lock()
 		h.waiting[value.ID] = *step.Operation
+		if h.waitingQuestions == nil {
+			h.waitingQuestions = map[operation.ID]string{}
+		}
+		h.waitingQuestions[value.ID] = q.ID
 		h.publish(*step.Operation)
 		h.mu.Unlock()
-		h.events.enqueue(h.session, "session.needs_input", map[string]any{"question": args.Question, "choices": args.Choices, "operationId": value.ID})
+		h.events.enqueue(h.session, "session.needs_input", map[string]any{"questionId": q.ID, "question": q.Questions[0].Title, "operationId": value.ID})
 		return nil
 	}
 	if args.Action != "search" {
@@ -199,9 +236,18 @@ func (h *workflowHandler) AddRemoteJob(value operation.Operation) error {
 func (h *workflowHandler) CancelRemoteJob(id operation.ID, _ string) error {
 	h.mu.Lock()
 	value, found := h.waiting[id]
+	questionID := h.waitingQuestions[id]
 	delete(h.waiting, id)
+	delete(h.waitingQuestions, id)
 	cancel := h.cancels[id]
 	h.mu.Unlock()
+	if questionID != "" {
+		if q, err := h.questions.cancelOperation(h.session, questionID); err == nil {
+			h.resolveQuestion(q)
+		} else {
+			return err
+		}
+	}
 	if cancel != nil {
 		cancel()
 	}
@@ -223,13 +269,17 @@ func (h *workflowHandler) pendingQuestions() []operation.ID {
 	}
 	return ids
 }
-func (h *workflowHandler) answerQuestions(ids []operation.ID, text string) {
+func (h *workflowHandler) resolveQuestion(q questionRequest) {
 	h.mu.Lock()
-	waiting := make([]operation.Operation, 0, len(ids))
-	for _, id := range ids {
+	waiting := make([]operation.Operation, 0)
+	for id, key := range h.waitingQuestions {
+		if key != q.ID {
+			continue
+		}
 		if value, found := h.waiting[id]; found {
 			waiting = append(waiting, value)
 			delete(h.waiting, id)
+			delete(h.waitingQuestions, id)
 		}
 	}
 	h.mu.Unlock()
@@ -238,8 +288,11 @@ func (h *workflowHandler) answerQuestions(ids []operation.ID, text string) {
 		if err != nil {
 			continue
 		}
-		state.TerminalResult = text
+		state.TerminalResult = questionText(q)
 		step, err := operation.UpdateRemoteJob(value, state, operation.StatusCompleted)
+		if q.State == "cancelled" {
+			step, err = operation.CancelRemoteJob(value)
+		}
 		if err == nil {
 			h.publish(*step.Operation)
 		}

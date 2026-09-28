@@ -4,17 +4,11 @@ import { promises as fs,watch,type FSWatcher } from 'node:fs'
 import { dirname,join } from 'node:path'
 import { promisify } from 'node:util'
 import { editorPath } from './editor-files'
+import {projectBytes,projectEntries} from './project-fs'
 import type { RepositoryHit,RepositorySearch,RepositoryStatus } from '../shared/repository-context'
 type FileRecord = { path: string; signature: string; revision: string; text: string }
 const digest=(bytes:Buffer)=>createHash('sha256').update(bytes).digest('hex')
 const maxFile=512*1024,maxBytes=64*1024*1024,maxFiles=20000
-async function boundedBytes(path:string):Promise<Buffer>{
- const handle=await fs.open(path,'r')
- try{const stat=await handle.stat();if(!stat.isFile()||stat.size>maxFile)throw Error('Not bounded regular text');const bytes=Buffer.alloc(stat.size+1);let offset=0
-  while(offset<bytes.length){const read=await handle.read(bytes,offset,bytes.length-offset,offset);if(!read.bytesRead)break;offset+=read.bytesRead}
-  if(offset!==stat.size||(await handle.stat()).size!==stat.size)throw Error('File changed while indexing');return bytes.subarray(0,offset)
- }finally{await handle.close()}
-}
 export class RepositoryIndex {
  private records=new Map<string,FileRecord>()
  private refreshedAt?:string
@@ -33,14 +27,14 @@ export class RepositoryIndex {
  refresh():Promise<void>{if(!this.inflight)this.inflight=this.scan().finally(()=>{this.inflight=undefined});return this.inflight}
  private async names():Promise<string[]>{
   try{const result=await promisify(execFile)('git',['ls-files','-co','--exclude-standard','-z'],{cwd:this.root,windowsHide:true,timeout:15000,maxBuffer:8*1024*1024});return [...new Set(result.stdout.split('\0').filter(Boolean))].sort()}
-  catch{const result:string[]=[];const visit=async(path:string)=>{for(const item of await fs.readdir(join(this.root,path),{withFileTypes:true})){const relative=path?`${path}/${item.name}`:item.name;if(this.excludes(relative)||item.isSymbolicLink())continue;if(result.length>=maxFiles){this.omitted++;return}if(item.isDirectory())await visit(relative);else if(item.isFile())result.push(relative)}};await visit('');return result.sort()}
+  catch{const result:string[]=[];const visit=async(path:string)=>{for(const item of await projectEntries(this.root,path)){const relative=path?`${path}/${item.name}`:item.name;if(this.excludes(relative))continue;if(result.length>=maxFiles){this.omitted++;return}if(item.directory)await visit(relative);else result.push(relative)}};await visit('');return result.sort()}
  }
  private async read(path:string):Promise<FileRecord>{
   const target=await editorPath(this.root,path),stat=await fs.lstat(target)
   if(!stat.isFile()||stat.isSymbolicLink()||stat.size>maxFile)throw Error('Not bounded regular text')
   const signature=`${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`
   const cached=this.records.get(path);if(cached?.signature===signature)return cached
-  const bytes=await boundedBytes(target)
+  const {bytes}=await projectBytes(this.root,path,maxFile)
   const text=new TextDecoder('utf-8',{fatal:true}).decode(bytes);if(text.includes('\0'))throw Error('Binary file')
   return{path,signature,revision:digest(bytes),text}
  }
@@ -67,7 +61,7 @@ export class RepositoryIndex {
   // Re-read returned files even if timestamps stayed the same. Stale snippets
   // are omitted; a later query will rebuild the affected cache entry.
   const fresh:RepositoryHit[]=[]
-  for(const hit of hits){try{const target=await editorPath(this.root,hit.path),bytes=await boundedBytes(target);if(digest(bytes)!==hit.revision){this.records.delete(hit.path);continue}fresh.push(hit)}catch{this.records.delete(hit.path)}}
+  for(const hit of hits){try{const {bytes}=await projectBytes(this.root,hit.path,maxFile);if(digest(bytes)!==hit.revision){this.records.delete(hit.path);continue}fresh.push(hit)}catch{this.records.delete(hit.path)}}
   return{query,hits:fresh.slice(0,30),status:this.status()}
  }
 }

@@ -44,17 +44,26 @@ type chatMessage struct {
 }
 
 type chatRequest struct {
-	Model     string           `json:"model"`
-	Messages  []chatMessage    `json:"messages"`
-	Tools     []map[string]any `json:"tools,omitempty"`
-	MaxTokens *int64           `json:"max_tokens,omitempty"`
+	Model           string              `json:"model"`
+	Messages        []chatMessage       `json:"messages"`
+	Tools           []map[string]any    `json:"tools,omitempty"`
+	MaxTokens       *int64              `json:"max_tokens,omitempty"`
+	ReasoningEffort llm.ReasoningEffort `json:"reasoning_effort,omitempty"`
 }
 
 func buildRequest(request llm.Request) (chatRequest, error) {
 	if request.Model.ID == "" {
 		return chatRequest{}, errors.New("local model ID is required")
 	}
-	result := chatRequest{Model: request.Model.ID, MaxTokens: request.Model.MaxOutputTokens}
+	if request.Model.ReasoningEffort != "" && !request.Model.ReasoningEffort.Valid() {
+		return chatRequest{}, fmt.Errorf("unsupported reasoning effort %q", request.Model.ReasoningEffort)
+	}
+	maxTokens := request.Model.MaxOutputTokens
+	if maxTokens == nil {
+		defaultMaxTokens := int64(2048)
+		maxTokens = &defaultMaxTokens
+	}
+	result := chatRequest{Model: request.Model.ID, MaxTokens: maxTokens, ReasoningEffort: request.Model.ReasoningEffort}
 	pending := make(map[string]bool)
 	var deferred []chatMessage
 	flush := func() {
@@ -67,11 +76,19 @@ func buildRequest(request llm.Request) (chatRequest, error) {
 	for _, item := range request.Input {
 		switch value := item.Data.(type) {
 		case llm.Message:
+			var content any = value.Text
+			if len(value.Images) > 0 {
+				parts := []map[string]any{{"type": "text", "text": value.Text}}
+				for _, image := range value.Images {
+					parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]string{"url": image}})
+				}
+				content = parts
+			}
 			if value.Role == llm.RoleUser && len(pending) > 0 {
-				appendUser(chatMessage{Role: "user", Content: value.Text})
+				appendUser(chatMessage{Role: "user", Content: content})
 				continue
 			}
-			result.Messages = append(result.Messages, chatMessage{Role: string(value.Role), Content: value.Text})
+			result.Messages = append(result.Messages, chatMessage{Role: string(value.Role), Content: content})
 		case llm.ToolCall:
 			if !json.Valid([]byte(value.Arguments)) {
 				return chatRequest{}, fmt.Errorf("invalid tool arguments for %q", value.Name)

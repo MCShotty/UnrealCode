@@ -1,9 +1,14 @@
+import { storageLocation } from './storage-locations'
 import { createHash, randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import type { Checkpoint, CheckpointFile, CheckpointPreview } from '../shared/api'
+import { prepareFileDestination, removeEmptyParents } from './file-topology'
+import { atomicMetadata } from './atomic-metadata'
+import { readBoundedRegularFile } from './bounded-file-read'
+import {projectBytes,projectEntries,projectWrite,projectDelete,projectPrune} from './project-fs'
 
 const exec = promisify(execFile)
 const hash = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
@@ -47,7 +52,7 @@ export class CheckpointStore {
   }
   private directory: string
   constructor(private project: string, data: string) {
-    this.directory = join(data, 'checkpoints', hash(Buffer.from(resolve(project).toLowerCase())))
+    this.directory = storageLocation(data, 'checkpoints', resolve(project), join(data, 'checkpoints', hash(Buffer.from(resolve(project).toLowerCase()))))
   }
   private metadata(id: string): string {
     if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error('Invalid checkpoint ID')
@@ -66,7 +71,7 @@ export class CheckpointStore {
     for (const part of name.split('/')) {
       current = join(current, part)
       try { if ((await fs.lstat(current)).isSymbolicLink()) throw new Error('Symbolic links and junctions are not restored') }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+      catch (error) { if (!['ENOENT','ENOTDIR'].includes((error as NodeJS.ErrnoException).code || '')) throw error }
     }
     return path
   }
@@ -77,10 +82,10 @@ export class CheckpointStore {
     } catch {
       const result: string[] = []
       const visit = async (directory: string, prefix = ''): Promise<void> => {
-        for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+        for (const entry of await projectEntries(this.project,prefix.replace(/\/$/,''))) {
           if (['.git', 'node_modules', '.venv', '__pycache__', 'dist', 'build'].includes(entry.name)) continue
           const name = prefix + entry.name
-          if (entry.isDirectory()) await visit(join(directory, entry.name), `${name}/`)
+          if (entry.directory) await visit(join(directory, entry.name), `${name}/`)
           else result.push(name)
           if (result.length > 10000) throw new Error('Project exceeds the checkpoint file limit')
         }
@@ -101,12 +106,15 @@ export class CheckpointStore {
           if (offset + index >= 10000) throw new Error('Checkpoint file limit exceeded')
           const path = await this.safe(name)
           let stat
-          try { stat = await fs.lstat(path) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error }
+          try { stat = await fs.lstat(path) } catch (error) { if (['ENOENT','ENOTDIR'].includes((error as NodeJS.ErrnoException).code || '')) return; throw error }
+          // Git still lists the old file when it was replaced by a directory.
+          // Capture its deletion; the directory's children are separate entries.
+          if (stat.isDirectory()) return
           if (!stat.isFile()) throw new Error('Not a regular file')
           if (stat.size > maxFile) throw new Error('File exceeds 8 MB')
           total += stat.size
           if (total > maxSnapshot) throw new Error('Checkpoint exceeds 128 MB')
-          const bytes = await fs.readFile(path)
+          const {bytes,mode} = await projectBytes(this.project,name,maxFile)
           const after = await fs.stat(path)
           if (stat.mtimeMs !== after.mtimeMs || stat.size !== bytes.length || stat.ino !== after.ino) throw new Error('File changed during capture')
           const digest = hash(bytes)
@@ -118,21 +126,15 @@ export class CheckpointStore {
             try { await fs.writeFile(this.blob(digest), bytes, { flag: 'wx', mode: 0o600 }) }
             catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
           }
-          snapshot.files[name] = { hash: digest, size: bytes.length, mode: stat.mode }
+          snapshot.files[name] = { hash: digest, size: bytes.length, mode }
         } catch (error) { snapshot.skipped[name] = (error as Error).message }
       }))
     }
     return snapshot
   }
-  private async save(value: Stored): Promise<void> {
-    await fs.mkdir(this.directory, { recursive: true })
-    const path = this.metadata(value.id)
-    const temporary = `${path}.${randomUUID()}.tmp`
-    await fs.writeFile(temporary, JSON.stringify(value), { mode: 0o600 })
-    await fs.rename(temporary, path)
-  }
+  private save(value: Stored): Promise<void> { return atomicMetadata(this.metadata(value.id),JSON.stringify(value)) }
   private async read(id: string): Promise<Stored> {
-    const value = JSON.parse(await fs.readFile(this.metadata(id), 'utf8')) as Stored
+    const value = JSON.parse((await readBoundedRegularFile(this.metadata(id), 16 * 1024 * 1024)).toString('utf8')) as Stored
     for (const snapshot of [value.before, value.after]) if (snapshot) { Object.setPrototypeOf(snapshot.files, null); Object.setPrototypeOf(snapshot.skipped, null) }
     return value
   }
@@ -185,8 +187,9 @@ export class CheckpointStore {
   }
   private async bytes(entry?: Entry): Promise<Buffer | undefined> {
     if (!entry) return undefined
-    const bytes = await fs.readFile(this.blob(entry.hash))
-    if (hash(bytes) !== entry.hash) throw new Error('Checkpoint content failed integrity verification')
+    if (!Number.isSafeInteger(entry.size) || entry.size < 0 || entry.size > maxFile) throw new Error('Checkpoint content size is invalid')
+    const bytes = await readBoundedRegularFile(this.blob(entry.hash), maxFile)
+    if (bytes.length !== entry.size || hash(bytes) !== entry.hash) throw new Error('Checkpoint content failed integrity verification')
     return bytes
   }
   async preview(id: string, path: string): Promise<CheckpointPreview> {
@@ -196,7 +199,7 @@ export class CheckpointStore {
     const binary = !!before?.includes(0) || !!after?.includes(0)
     const target = await this.safe(path)
     let current: string | undefined
-    try { current = hash(await fs.readFile(target)) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+    try { if (!(await fs.lstat(target)).isDirectory()) current = hash((await projectBytes(this.project,path,maxFile)).bytes) } catch (error) { if (/size limit|changed while/.test(String(error)))current='uncaptured-current';else if (!['ENOENT','ENOTDIR'].includes((error as NodeJS.ErrnoException).code || '')) throw error }
     const reason = value.state !== 'complete' ? 'Incomplete checkpoint cannot be restored' : value.files.find((file) => file.path === path)?.reason
     let diff = ''
     if (!binary) {
@@ -222,22 +225,14 @@ export class CheckpointStore {
     // Recovery is durable before the first project write. Restore only the selected files.
     const recovery = await this.begin(value.sessionId, randomUUID(), `Recovery before restoring ${value.title}`)
     try {
-      for (const name of unique) {
+      for (const name of unique.sort((a,b)=>Number(!!value.before.files[a])-Number(!!value.before.files[b]))) {
         if ((await this.preview(id, name)).conflict) throw new Error(`File changed during restoration: ${name}`)
         const target = await this.safe(name)
         const original = value.before.files[name]
         const bytes = await this.bytes(original)
-        if (bytes === undefined) await fs.unlink(target)
+        if (bytes === undefined) { await projectDelete(this.project,name,value.after?.files[name]?.hash||'missing');await projectPrune(this.project,name) }
         else {
-          await fs.mkdir(dirname(target), { recursive: true })
-          await this.safe(name)
-          const temporary = join(dirname(target), `.unrealcode-restore-${randomUUID()}`)
-          await fs.writeFile(temporary, bytes, { flag: 'wx', mode: original.mode })
-          try {
-            if ((await this.preview(id, name)).conflict) throw new Error(`File changed during restoration: ${name}`)
-            await this.safe(name)
-            await fs.rename(temporary, target)
-          } finally { await fs.unlink(temporary).catch(() => {}) }
+          await projectWrite(this.project,name,bytes,{expected:value.after?.files[name]?.hash||'missing',mode:original.mode,replaceDirectory:true})
         }
       }
       await this.finish(recovery)

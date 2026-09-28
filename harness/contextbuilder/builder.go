@@ -50,22 +50,25 @@ func (current *builder) AddExternalInput(input inbox.Input) error {
 	}
 
 	var text string
+	var images []string
 	if err := json.Unmarshal(input.Payload, &text); err != nil {
 		var value struct {
-			Prompt string `json:"prompt"`
-			Advice string `json:"advice"`
+			Prompt string   `json:"prompt"`
+			Advice string   `json:"advice"`
+			Images []string `json:"images"`
 		}
 		if objectErr := json.Unmarshal(input.Payload, &value); objectErr != nil || value.Prompt == "" {
 			return fmt.Errorf("decode external input %q: %w", input.ID, err)
 		}
 		text = value.Prompt
+		images = value.Images
 		if value.Advice != "" {
 			text += "\n\n<unrealcode_decision_advice>\n" + value.Advice + "\n</unrealcode_decision_advice>"
 		}
 	}
 	current.stagedSuffix = append(current.stagedSuffix, llm.Item{
 		Type: llm.ItemMessage,
-		Data: llm.Message{Role: llm.RoleUser, Text: text},
+		Data: llm.Message{Role: llm.RoleUser, Text: text, Images: images},
 	})
 	return nil
 }
@@ -96,6 +99,11 @@ func (current *builder) SetSystemPrompt(prompt string) {
 }
 
 func (current *builder) AddModelResponse(response llm.Response) {
+	// Retain failed responses in the journal, but never present their partial
+	// tool calls as valid conversation history on a deliberate retry.
+	if response.Failure != nil {
+		return
+	}
 	current.committedPrefix = append(current.committedPrefix, response.Output...)
 }
 

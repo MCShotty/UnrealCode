@@ -1,3 +1,4 @@
+import { closeHistoryCaches } from './history-cache'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 import { appendFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -8,7 +9,7 @@ import type { AgentEvent } from '../shared/api'
 let root: string
 const id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
 beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'unrealcode-index-')) })
-afterEach(async () => { await rm(root, { recursive: true, force: true }) })
+afterEach(async () => { await closeHistoryCaches(); await rm(root, { recursive: true, force: true }) })
 const event = (seq: number, text: string): AgentEvent => ({ v: 1, sessionId: id, seq, event: 'session.item', payload: { Kind: 'input', Data: { Kind: 'external', Payload: { Prompt: text } } } })
 
 it('replays out-of-order events without duplicates and preserves changed filenames', async () => {

@@ -5,6 +5,14 @@ import type { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } fr
 import type { ConnectionConfig } from '../shared/connections'
 import type { ConnectionSecrets } from './connection-vault'
 
+const loopback=(url:URL)=>['127.0.0.1','localhost','[::1]'].includes(url.hostname)
+function savedRedirect(value:unknown):string{
+  if(typeof value!=='string'||value.length>2048)return ''
+  try{const url=new URL(value);if(url.protocol==='http:'&&url.hostname==='127.0.0.1'&&Number(url.port)>0&&url.pathname==='/callback'&&!url.username&&!url.password&&!url.search&&!url.hash)return url.toString()}
+  catch{/* Malformed saved callback data never becomes an authorization destination. */}
+  return ''
+}
+
 export async function mcpFetch(url: string | URL, init?: RequestInit): Promise<Response> {
   const target = new URL(url)
   if (target.protocol !== 'https:' && !(target.protocol === 'http:' && ['127.0.0.1','localhost','[::1]'].includes(target.hostname))) throw new Error('MCP authentication requires HTTPS or loopback')
@@ -26,7 +34,7 @@ export class McpOAuth implements OAuthClientProvider {
   private reject?: (reason: Error) => void
   private timer?: NodeJS.Timeout
   constructor(private config: ConnectionConfig,private secrets: ConnectionSecrets,private open: (url:string)=>Promise<void>,private interactive: boolean) {
-    this.redirect = String(this.secrets.get(config.id).redirect || '')
+    this.redirect = savedRedirect(this.secrets.get(config.id).redirect)
   }
   get redirectUrl(): string | undefined { return this.redirect || undefined }
   get clientMetadata(): OAuthClientMetadata { return { client_name:'UnrealCode', redirect_uris: this.redirect ? [this.redirect] : [], grant_types:['authorization_code','refresh_token'], response_types:['code'], token_endpoint_auth_method:'none' } }
@@ -51,7 +59,10 @@ export class McpOAuth implements OAuthClientProvider {
     if (!this.interactive || !this.server || !this.nonce) throw new Error('Authentication required. Use Reconnect with sign-in.')
     const discovery = this.discoveryState()
     const issuer = discovery?.authorizationServerUrl
-    if (!issuer || new URL(issuer).origin !== url.origin || (url.protocol !== 'https:' && url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') || url.searchParams.get('state') !== this.nonce) throw new Error('Authorization URL failed issuer or state validation')
+    let issuerURL:URL|undefined
+    try{if(issuer)issuerURL=new URL(issuer)}catch{/* Invalid discovery data is rejected below. */}
+    const allowed=(value:URL)=>value.protocol==='https:'||(value.protocol==='http:'&&loopback(value))
+    if (!issuerURL||!allowed(issuerURL)||!allowed(url)||issuerURL.username||issuerURL.password||url.username||url.password||url.hash||issuerURL.origin!==url.origin||url.searchParams.get('state')!==this.nonce)throw new Error('Authorization URL failed issuer or state validation')
     await this.open(url.toString())
   }
   async signIn(): Promise<void> {
@@ -60,8 +71,11 @@ export class McpOAuth implements OAuthClientProvider {
     this.code = new Promise<string>((resolve,reject)=> { this.settle=resolve; this.reject=reject })
     // Install a handler immediately so timeout cannot create an unhandled rejection.
     void this.code.catch(()=>{})
+    try{
     this.server=createServer((request,response)=> {
-      const url=new URL(request.url || '/','http://127.0.0.1')
+      let url:URL
+      try{url=new URL(request.url || '/','http://127.0.0.1')}
+      catch{response.writeHead(400).end('Invalid OAuth callback');return}
       if (request.method !== 'GET' || url.pathname !== '/callback' || url.searchParams.get('state') !== this.nonce) { response.writeHead(400).end('Invalid OAuth callback'); return }
       const code=url.searchParams.get('code')
       if (!code || code.length>8192 || url.searchParams.has('error')) { response.writeHead(400).end('Authorization declined'); this.reject?.(new Error('Authorization declined')); return }
@@ -75,9 +89,14 @@ export class McpOAuth implements OAuthClientProvider {
     if (this.redirect !== next) this.invalidateCredentials('client')
     this.redirect=next; this.save({ redirect:next })
     this.timer=setTimeout(()=>this.reject?.(new Error('Sign-in timed out; reconnect to retry')),180000)
-    try {
       const result=await auth(this,{serverUrl:this.config.url!,fetchFn:mcpFetch})
       if (result === 'REDIRECT') await auth(this,{serverUrl:this.config.url!,authorizationCode:await this.code,fetchFn:mcpFetch})
-    } finally { clearTimeout(this.timer); this.server.closeAllConnections(); this.server.close(); this.server=undefined; this.verifier=''; this.nonce='' }
+    } finally {
+      clearTimeout(this.timer);this.timer=undefined
+      const server=this.server;this.server=undefined
+      try{server?.closeAllConnections()}catch{}
+      try{server?.close()}catch{}
+      this.verifier='';this.nonce='';this.code=undefined;this.settle=undefined;this.reject=undefined
+    }
   }
 }

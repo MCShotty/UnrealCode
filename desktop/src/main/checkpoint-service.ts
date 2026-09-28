@@ -59,7 +59,7 @@ export class CheckpointService {
     await this.exclusive(async () => {
       const active = this.active.get(event.sessionId)
       if (!active) return
-      const payload = event.payload as { messageIds?: string[]; status?: string }
+      const payload = event.payload as { messageIds?: string[]; status?: string; outcome?: {state:string} }
       if (event.event === 'session.idle') {
         for (const id of payload.messageIds || []) active.pending.delete(id)
         if (active.pending.size) return
@@ -67,7 +67,7 @@ export class CheckpointService {
       const interrupted = event.event !== 'session.idle'
       await this.store.finish(active.id, active.overlap ? 'Concurrent sessions or a container terminal could change this workspace; restoration is disabled' : payload.status === 'error' ? 'Turn failed before normal completion' : undefined)
       this.active.delete(event.sessionId)
-      this.onState(event.sessionId, interrupted ? payload.status === 'error' ? 'failed' : 'stopped' : 'idle', active.id)
+      this.onState(event.sessionId, payload.outcome?.state || (interrupted ? payload.status === 'error' ? 'failed' : 'stopped' : 'idle'), active.id)
     })
   }
 }

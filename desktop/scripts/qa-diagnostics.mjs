@@ -21,7 +21,7 @@ const server = createServer(async (req, res) => {
 })
 await new Promise(resolve => server.listen(0, '0.0.0.0', resolve))
 const packaged = process.argv.includes('--packaged'), live = process.argv.includes('--live-decisions')
-const app = await electron.launch({ executablePath: resolve(packaged ? 'dist/win-unpacked/UnrealCode.exe' : 'node_modules/electron/dist/electron.exe'), args: packaged ? [] : ['.'], cwd: process.cwd(), env: { ...process.env, UNREAL_DESKTOP_USER_DATA: join(root, 'data') } })
+const app = await electron.launch({ executablePath: resolve(process.env.UNREALCODE_QA_EXECUTABLE||(packaged ? 'dist/win-unpacked/UnrealCode.exe' : 'node_modules/electron/dist/electron.exe')), args: packaged ? [] : ['.'], cwd: process.cwd(), env: { ...process.env, UNREAL_DESKTOP_USER_DATA: join(root, 'data') } })
 const report = { root, errors: [] }
 let traceSession = ''
 try {

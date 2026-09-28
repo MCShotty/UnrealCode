@@ -1,10 +1,29 @@
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import type { FileEntry, SkillEntry } from '../shared/api'
+import { readBoundedRegularFile } from './bounded-file-read'
+import {projectBytes,projectEntries,projectWrite,projectDelete} from './project-fs'
 
 const execFileAsync = promisify(execFile)
+const previewLimit = 1024 * 1024
+const skillLimit = 512 * 1024
+const skillLocks = new Map<string, Promise<void>>()
+
+async function withSkillLock<T>(root: string, name: string, work: (canonicalRoot: string) => Promise<T>): Promise<T> {
+  const canonicalRoot = await fs.realpath(root)
+  const path = join(canonicalRoot, '.harness', 'skills', name)
+  const key = process.platform === 'win32' ? path.toLowerCase() : path
+  const previous = skillLocks.get(key) || Promise.resolve()
+  let unlock!: () => void
+  const current = new Promise<void>(resolve => { unlock = resolve })
+  skillLocks.set(key, current)
+  await previous
+  try { return await work(canonicalRoot) }
+  finally { unlock(); if (skillLocks.get(key) === current) skillLocks.delete(key) }
+}
 
 export async function inside(root: string, requested = ''): Promise<string> {
   const canonicalRoot = await fs.realpath(root)
@@ -20,15 +39,14 @@ export async function inside(root: string, requested = ''): Promise<string> {
 export async function listFiles(root: string, requested = ''): Promise<FileEntry[]> {
   const canonicalRoot = await fs.realpath(root)
   const dir = await inside(canonicalRoot, requested)
-  const entries = await fs.readdir(dir, { withFileTypes: true })
+  const entries = await projectEntries(canonicalRoot,relative(canonicalRoot,dir).replaceAll('\\','/'))
   const result: FileEntry[] = []
   for (const entry of entries) {
     if (entry.name === '.git' || entry.name === 'node_modules') continue
     const full = join(dir, entry.name)
     try {
       const safe = await inside(canonicalRoot, relative(canonicalRoot, full))
-      const stat = await fs.stat(safe)
-      result.push({ name: entry.name, path: relative(canonicalRoot, safe).replaceAll('\\', '/'), directory: stat.isDirectory(), size: stat.size })
+      result.push({ name: entry.name, path: relative(canonicalRoot, safe).replaceAll('\\', '/'), directory: entry.directory, size: entry.size })
     } catch { /* Skip links leaving the project. */ }
   }
   return result.sort((a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name))
@@ -36,9 +54,8 @@ export async function listFiles(root: string, requested = ''): Promise<FileEntry
 
 export async function readFile(root: string, requested: string): Promise<string> {
   const path = await inside(root, requested)
-  const stat = await fs.stat(path)
-  if (!stat.isFile() || stat.size > 1024 * 1024) throw new Error('Only text files up to 1 MB can be previewed')
-  const bytes = await fs.readFile(path)
+  const bytes = (await projectBytes(root,relative(await fs.realpath(root),path).replaceAll('\\','/'),previewLimit)).bytes
+  if (await inside(root, requested) !== path) throw new Error('Project path changed while reading; retry')
   if (bytes.includes(0)) throw new Error('Binary file preview is unavailable')
   return bytes.toString('utf8')
 }
@@ -74,50 +91,51 @@ function skillDir(root: string, name: string): string {
 }
 
 export async function listSkills(root: string): Promise<SkillEntry[]> {
+  root=await fs.realpath(root)
   const base = join(root, '.harness', 'skills')
   let folders: string[]
-  try { folders = await fs.readdir(base) } catch { return [] }
+  try {
+    folders = []
+    const directory = await projectEntries(root,'.harness/skills')
+    for (const entry of directory) {
+      if (folders.length >= 128) throw new Error('Skill directory contains more than 128 entries')
+      folders.push(entry.name)
+    }
+  } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error }
   const result: SkillEntry[] = []
+  let totalBytes = 0
   for (const name of folders) {
     if (!skillName.test(name)) continue
+    let bytes: Buffer | undefined
     try {
       const path = await inside(root, relative(root, join(skillDir(root, name), 'SKILL.md')))
-      const content = await fs.readFile(path, 'utf8')
-      const description = content.match(/^description:\s*(.+)$/m)?.[1]?.trim() || ''
-      result.push({ name, description, content })
+      bytes = (await projectBytes(root,relative(root,path).replaceAll('\\','/'),skillLimit)).bytes
     } catch { /* Invalid or inaccessible skill. */ }
+    if (!bytes) continue
+    if (totalBytes + bytes.length > 4 * 1024 * 1024) throw new Error('Skill content exceeds the 4 MiB aggregate limit')
+    totalBytes += bytes.length
+    const content = bytes.toString('utf8')
+    const description = content.match(/^description:\s*(.+)$/m)?.[1]?.trim() || ''
+    result.push({ name, description, content })
   }
   return result.sort((a, b) => a.name.localeCompare(b.name))
 }
 
 export async function saveSkill(root: string, name: string, content: string): Promise<void> {
-  if (content.length > 512 * 1024) throw new Error('Skill file is too large')
+  skillDir(root, name)
+  if (Buffer.byteLength(content, 'utf8') > skillLimit) throw new Error('Skill file is too large')
   if (!/^---\s*\r?\n[\s\S]*?\r?\n---/.test(content) || !/^name:\s*\S+/m.test(content) || !/^description:\s*\S+/m.test(content)) {
     throw new Error('SKILL.md needs YAML frontmatter with name and description')
   }
-  const dir = skillDir(root, name)
-  const parent = join(root, '.harness')
-  const skills = join(parent, 'skills')
-  for (const segment of [parent, skills, dir]) {
-    try { await inside(root, relative(root, segment)) }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-      await fs.mkdir(segment)
-      await inside(root, relative(root, segment))
-    }
-  }
-  const safe = await inside(root, relative(root, dir))
-  const target = join(safe, 'SKILL.md')
-  try { await inside(root, relative(root, target)) } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-  }
-  const temporary = join(safe, `SKILL.md.${Date.now()}.tmp`)
-  await fs.writeFile(temporary, content, { encoding: 'utf8', flag: 'wx' })
-  await fs.rename(temporary, target)
+  return withSkillLock(root, name, async (root) => {
+    await projectWrite(root,`.harness/skills/${name}/SKILL.md`,Buffer.from(content))
+  })
 }
 
 export async function deleteSkill(root: string, name: string): Promise<void> {
-  const target = await inside(root, relative(root, join(skillDir(root, name), 'SKILL.md')))
-  await fs.unlink(target)
+  skillDir(root, name)
+  await withSkillLock(root, name, async (root) => {
+    await projectDelete(root,`.harness/skills/${name}/SKILL.md`)
+  })
   // Supporting files are intentionally retained; removing SKILL.md disables it.
 }

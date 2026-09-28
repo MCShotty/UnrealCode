@@ -1,7 +1,8 @@
-import { existsSync,readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { atomicMetadata } from './atomic-metadata'
 import { defaultWorkflowPresets,validatePresets,type WorkflowPresets,type WorkflowRun,type VerificationResult,type VerificationProfile,type WorkflowTemplate } from '../shared/verification'
+import { readBoundedJSONSync } from './bounded-file-read'
 
 type Runner={verify(session:string,profile:VerificationProfile,operationId:string,signal:AbortSignal):Promise<VerificationResult>;repair(session:string,prompt:string,messageId:string,signal:AbortSignal):Promise<void>}
 export class VerificationWorkflows {
@@ -9,14 +10,15 @@ export class VerificationWorkflows {
  private runs:WorkflowRun[]=[]
  private active=new Map<string,AbortController>()
  onChanged:()=>void=()=>{}
- constructor(private path:string,private runner:Runner){if(existsSync(path)){const saved=JSON.parse(readFileSync(path,'utf8')) as {version:number;presets:WorkflowPresets;runs:WorkflowRun[]};if(saved.version!==1||!Array.isArray(saved.runs))throw new Error('Unsupported workflow metadata; prior data retained');this.presets=validatePresets(saved.presets);this.runs=saved.runs;for(const run of this.runs)if(['running','repairing'].includes(run.state)){run.state='interrupted';run.message='Application restarted. Review the last attempt and start another run explicitly.'}}}
- private async save():Promise<void>{await atomicMetadata(this.path,JSON.stringify({version:1,presets:this.presets,runs:this.runs}));this.onChanged()}
+ private notify():void{try{this.onChanged()}catch{/* Renderer teardown cannot undo a saved verification run. */}}
+ constructor(private path:string,private runner:Runner){if(existsSync(path)){const saved=readBoundedJSONSync<{version:number;presets:WorkflowPresets;runs:WorkflowRun[]}>(path,128*1024*1024);if(saved.version!==1||!Array.isArray(saved.runs))throw new Error('Unsupported workflow metadata; prior data retained');this.presets=validatePresets(saved.presets);this.runs=saved.runs;for(const run of this.runs)if(['running','repairing'].includes(run.state)){run.state='interrupted';run.message='Application restarted. Review the last attempt and start another run explicitly.'}}}
+ private async save():Promise<void>{const encoded=JSON.stringify({version:1,presets:this.presets,runs:this.runs});if(Buffer.byteLength(encoded)>128*1024*1024)throw new Error('Verification workflow metadata exceeds its safe size limit');await atomicMetadata(this.path,encoded);this.notify()}
  settings():WorkflowPresets{return structuredClone(this.presets)}
   list():WorkflowRun[]{return structuredClone(this.runs)}
   summaries():WorkflowRun[]{return this.runs.map(run=>({...structuredClone(run),attempts:run.attempts.map(attempt=>({...attempt,output:attempt.output.slice(0,2000)}))}))}
   record(id:string):WorkflowRun{const run=this.runs.find(item=>item.id===id);if(!run)throw new Error('Workflow run not found');return structuredClone(run)}
  get busy():boolean{return this.active.size>0}
- async update(value:WorkflowPresets):Promise<void>{this.presets=validatePresets(value);await this.save()}
+ async update(value:WorkflowPresets):Promise<void>{const before=this.presets;this.presets=validatePresets(value);try{await this.save()}catch(error){this.presets=before;throw error}}
  snapshot(profileId:string,repairTemplateId:string|undefined,maxRepairAttempts:number):Pick<WorkflowRun,'profile'|'repairTemplate'|'maxRepairAttempts'>{
   const profile=this.presets.profiles.find(item=>item.id===profileId),repairTemplate=repairTemplateId?this.presets.templates.find(item=>item.id===repairTemplateId&&item.kind==='fix'):undefined
   if(!profile||repairTemplateId&&!repairTemplate)throw new Error('Select a saved verification profile and, optionally, a fix template')
@@ -28,8 +30,8 @@ export class VerificationWorkflows {
   if(this.runs.length>=100)throw new Error('Workflow history is full; remove a finished record before starting another run')
   const run:WorkflowRun={...structuredClone(snapshot),id:randomUUID(),sessionId,createdAt:new Date().toISOString(),state:'running',repairsStarted:0,attempts:[]},controller=new AbortController()
   this.runs.push(run);this.active.set(run.id,controller)
-  try{await this.save()}catch(error){this.active.delete(run.id);throw error}
-  void this.execute(run,controller.signal).catch(async error=>{run.state=controller.signal.aborted?'cancelled':'failed';run.message=error instanceof Error?error.message:'Workflow failed';await this.save()}).finally(()=>{this.active.delete(run.id);this.onChanged()}).catch(()=>{})
+  try{await this.save()}catch(error){this.active.delete(run.id);this.runs=this.runs.filter(item=>item.id!==run.id);throw error}
+  void this.execute(run,controller.signal).catch(async error=>{run.state=controller.signal.aborted?'cancelled':'failed';run.message=error instanceof Error?error.message:'Workflow failed';await this.save()}).finally(()=>{this.active.delete(run.id);this.notify()}).catch(()=>{})
   return run.id
  }
  private async execute(run:WorkflowRun,signal:AbortSignal):Promise<void>{
@@ -48,6 +50,6 @@ export class VerificationWorkflows {
  cancel(id:string):void{const controller=this.active.get(id);if(!controller)throw new Error('This verification workflow is not active');controller.abort()}
   stopAll():void{for(const controller of this.active.values())controller.abort()}
   cancelSession(sessionId:string):void{for(const run of this.runs)if(run.sessionId===sessionId)this.active.get(run.id)?.abort()}
- async remove(id:string):Promise<void>{if(this.active.has(id))throw new Error('Cancel and finish the workflow first');this.runs=this.runs.filter(run=>run.id!==id);await this.save()}
+ async remove(id:string):Promise<void>{if(this.active.has(id))throw new Error('Cancel and finish the workflow first');const before=this.runs;this.runs=this.runs.filter(run=>run.id!==id);try{await this.save()}catch(error){this.runs=before;throw error}}
  template(id:string):WorkflowTemplate{const template=this.presets.templates.find(item=>item.id===id);if(!template)throw new Error('Workflow template not found');return structuredClone(template)}
 }

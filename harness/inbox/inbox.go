@@ -21,9 +21,10 @@ const (
 )
 
 type Input struct {
-	ID      ID
-	Kind    InputKind
-	Payload jsontext.Value `json:",omitzero"`
+	ID       ID
+	Kind     InputKind
+	Deferred bool           `json:",omitzero"`
+	Payload  jsontext.Value `json:",omitzero"`
 }
 
 func (input Input) Validate() error {

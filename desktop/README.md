@@ -10,6 +10,10 @@ Windows desktop application built on the [Unreal Agent](https://github.com/unrea
 4. Open a project folder and accept the native trust prompt. Only that folder and durable session storage are mounted in the container.
 5. Choose a provider in Settings. The default is an existing Codex subscription login from `CODEX_HOME/auth.json` or `~/.codex/auth.json`; Codex refresh remains external. Claude API, OpenAI API, OpenRouter, and Fireworks use API keys. Ollama and private-network OpenAI-compatible Chat Completions servers are supported with model discovery.
 
+Optional project memory is configured under **Settings → Memory**. Choose its provider and model directly, or use **Use chat model** to copy the saved chat selection. API keys for that provider can be entered on the same tab and are shared with chat. **Save, test & turn on** verifies the model and enables automatic memory for the open trusted project. Memory records remain available in the separate Memory workspace for review and correction.
+
+Settings → Recovery lists session volumes retained after an interrupted restore. A copy with a verified Docker ownership label can be exported as private session files for manual recovery. This export is not a full app backup or a direct import format. If the original project folder is accessible and has no existing session mapping, the app can reattach the volume after showing both the recorded and resolved paths for confirmation. Existing mappings are never replaced; older journals without an ownership token remain for manual review.
+
 The app stores provider keys using Electron `safeStorage` when available, otherwise in memory for the current run. It passes keys to the bridge over attached JSONL standard input, never Docker arguments, environment, project files, or persisted session settings. A Claude subscription is not an API credential and is not supported.
 
 Jev reads `TYPESAFE_API_KEY` from the Windows user environment in Electron's main process. Each project requires a separate native consent action before focused project text can be sent to TypeSafe. Laya and GLiNER are optional local workers installed on demand into the session volume. GLiNER extracts entities; it is not a Choice/Noul/Score decision engine. If the selected decision engine is unavailable, the main model can continue without a silent engine switch. Decision answers, probabilities, model version, source references, and measured usage are shown in activity.
@@ -43,7 +47,7 @@ On Windows systems with HTTPS inspection, use `$env:NODE_OPTIONS='--use-system-c
 - With the host Codex CLI and existing ChatGPT login, Usage reads actual subscription percentages and reset times through Codex app-server. It refreshes no more than once per minute. Without the CLI or login, the account card shows an unavailable state; session tokens remain visible.
 - Provider response headers show short-window rate-limit headroom separately from account totals. The Usage page reports measured input, output, cached, cache-write, reasoning, and decision tokens without estimated dollar costs. Context percentage appears only when a verified model limit is available.
 - The chat activity rail shows overlapping model and tool timings and can cancel one active operation without stopping the session. Telemetry is queued off the coordinator's critical path. The interface honors reduced motion and keeps terminal text stationary.
-- Hooks, plugins, specialist agents, and a Claude subscription session engine remain outside this release.
+- Hooks, an extension/plugin marketplace, and a Claude subscription session engine remain outside this release. Specialist agents are available through explicit task-level opt-in, with isolated worktrees and reviewed integration; see [the feature overview](../README.md).
 
 ## Connections and context (0.8)
 

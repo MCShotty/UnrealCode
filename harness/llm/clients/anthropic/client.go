@@ -73,6 +73,7 @@ type apiTool struct {
 }
 
 type apiRequest struct {
+	Speed     string       `json:"speed,omitempty"`
 	Model     string       `json:"model"`
 	MaxTokens int64        `json:"max_tokens"`
 	System    string       `json:"system,omitempty"`
@@ -91,10 +92,11 @@ type apiResponse struct {
 		Input json.RawMessage `json:"input"`
 	} `json:"content"`
 	Usage struct {
-		InputTokens              int64 `json:"input_tokens"`
-		OutputTokens             int64 `json:"output_tokens"`
-		CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
-		CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+		Speed                    string `json:"speed"`
+		InputTokens              int64  `json:"input_tokens"`
+		OutputTokens             int64  `json:"output_tokens"`
+		CacheReadInputTokens     int64  `json:"cache_read_input_tokens"`
+		CacheCreationInputTokens int64  `json:"cache_creation_input_tokens"`
 	} `json:"usage"`
 }
 
@@ -110,6 +112,11 @@ func buildRequest(request llm.Request) (apiRequest, error) {
 		return apiRequest{}, errors.New("max output tokens must be positive")
 	}
 	result := apiRequest{Model: request.Model.ID, MaxTokens: maxTokens}
+	if request.Model.ServiceTier == "priority" {
+		result.Speed = "fast"
+	} else if request.Model.ServiceTier != "" && request.Model.ServiceTier != "default" {
+		return apiRequest{}, errors.New("unsupported Claude speed")
+	}
 	responded := make(map[string]bool)
 	var systems []string
 	appendBlock := func(role string, block contentBlock) {
@@ -137,6 +144,13 @@ func buildRequest(request llm.Request) (apiRequest, error) {
 				systems = append(systems, value.Text)
 			} else if value.Role == llm.RoleUser || value.Role == llm.RoleAssistant {
 				appendBlock(string(value.Role), contentBlock{"type": "text", "text": value.Text})
+				for _, image := range value.Images {
+					source, err := imageSource(image)
+					if err != nil {
+						return apiRequest{}, err
+					}
+					appendBlock(string(value.Role), contentBlock{"type": "image", "source": source})
+				}
 			}
 		case llm.ToolCall:
 			delete(responded, value.CallID)
@@ -245,6 +259,12 @@ func (client *Client) send(ctx context.Context, body []byte) (llm.Response, bool
 	}
 	request.Header.Set("x-api-key", client.apiKey)
 	request.Header.Set("anthropic-version", "2023-06-01")
+	var options struct {
+		Speed string `json:"speed"`
+	}
+	if json.Unmarshal(body, &options) == nil && options.Speed == "fast" {
+		request.Header.Set("anthropic-beta", "fast-mode-2026-02-01")
+	}
 	request.Header.Set("Content-Type", "application/json")
 	response, err := client.httpClient.Do(request)
 	if err != nil {
@@ -277,6 +297,7 @@ func (client *Client) send(ctx context.Context, body []byte) (llm.Response, bool
 		return llm.Response{}, false, fmt.Errorf("decode Claude response: %w", err)
 	}
 	result := llm.Response{ID: decoded.ID, Stop: llm.StopComplete}
+	result.ServiceTier = decoded.Usage.Speed
 	switch decoded.StopReason {
 	case "max_tokens":
 		result.Stop = llm.StopMaxOutputTokens

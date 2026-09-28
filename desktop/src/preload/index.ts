@@ -1,13 +1,38 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { DesktopAPI } from '../shared/api'
 
-const invoke = (name: string, ...args: unknown[]): Promise<any> => ipcRenderer.invoke(name, ...args)
+const invoke = (name: string, ...args: unknown[]): Promise<any> => ipcRenderer.invoke(name,...args)
 const api: DesktopAPI = {
+  pickImages:max=>invoke('images:pick',max),discardImages:ids=>invoke('images:discard',ids),
+  claudeInstructionsPreview:()=>invoke('instructions:claude-preview'),claudeInstructionsImport:revision=>invoke('instructions:claude-import',revision),
+  hooks:()=>invoke('hooks:get'),hooksSave:value=>invoke('hooks:save',value),
+  browserState:id=>invoke('browser:state',id),browserInstall:id=>invoke('browser:install',id),browserConfigure:(id,grant)=>invoke('browser:configure',id,grant),browserAction:(id,action)=>invoke('browser:action',id,action),previewPorts:id=>invoke('browser:ports',id),
+  memoryStorage:()=>invoke('memory:storage'),memoryClearCache:()=>invoke('memory:clear-cache'),memoryStatus:limit=>invoke('memory:status',limit),memoryRecords:(before,limit)=>invoke('memory:records',before,limit),memoryRecord:id=>invoke('memory:record',id),memoryConfigure:profile=>invoke('memory:configure',profile),memoryVerify:()=>invoke('memory:verify'),memoryEnable:enabled=>invoke('memory:enable',enabled),memoryRetry:()=>invoke('memory:retry'),memoryRecall:query=>invoke('memory:recall',query),memoryReflect:query=>invoke('memory:reflect',query),memoryForget:id=>invoke('memory:forget',id),memoryCorrect:(id,content)=>invoke('memory:correct',id,content),memoryRebuild:()=>invoke('memory:rebuild'),memoryExport:()=>invoke('memory:export'),
+  backgroundJobs:id=>invoke('jobs:list',id),backgroundStart:(id,command,timeout)=>invoke('jobs:start',id,command,timeout),backgroundStop:(id,job)=>invoke('jobs:stop',id,job),
+  teamPreferences:()=>invoke('team:preferences'),teamPreferencesSave:value=>invoke('team:preferences-save',value),
+  command:request=>invoke('command:execute',request),
+  onCommand:callback=>{const listener=(_event:Electron.IpcRendererEvent,name:Parameters<typeof callback>[0])=>callback(name);ipcRenderer.on('app:command',listener);return()=>ipcRenderer.removeListener('app:command',listener)},
+  modelCapabilities:id=>invoke('model:capabilities',id),
+  planning:id=>invoke('planning:get',id),planSave:(id,plan)=>invoke('planning:save',id,plan),planImplement:(id,revision,mode)=>invoke('planning:implement',id,revision,mode),
+  goalSave:(id,goal)=>invoke('goal:save',id,goal),goalAction:(id,action)=>invoke('goal:action',id,action),
+  historyPage:(id,options)=>invoke('history:page',id,options),
+  workView:(id,range)=>invoke('work:view',id,range),
+  activityPage:(id,query)=>invoke('activity:page',id,query),
+  activityDetail:(id,call,offset)=>invoke('activity:detail',id,call,offset),
+  answerQuestion:submission=>invoke('question:answer',submission),
+  dismissQuestion:(id,question)=>invoke('question:dismiss',id,question),
+  retryResponse:(id,sequence,message)=>invoke('session:retry',id,sequence,message),
+  conversationUI:id=>invoke('conversation:ui',id),
+  saveConversationUI:(id,patch)=>invoke('conversation:ui-save',id,patch),
+  rebuildHistoryCache:()=>invoke('history:rebuild'),
+  recoveryAction:action=>invoke('recovery:action',action),
+  onFailure:callback=>{const listener=(_event:Electron.IpcRendererEvent,value:Parameters<typeof callback>[0])=>callback(value);ipcRenderer.on('app:failure',listener);return()=>ipcRenderer.removeListener('app:failure',listener)},
   workspaceArchive:id=>invoke('workspace:archive',id),workspaceRestore:id=>invoke('workspace:restore',id),
-  onMaintenance:(callback)=>{ipcRenderer.on('app:maintenance-finished',callback);return ()=>ipcRenderer.removeListener('app:maintenance-finished',callback)},
+  onMaintenance:(callback)=>{const listener=()=>callback();ipcRenderer.on('app:maintenance-finished',listener);return ()=>ipcRenderer.removeListener('app:maintenance-finished',listener)},
   latestEvents:(id)=>invoke('session:latest',id),
   recoveryStatus:()=>invoke('recovery:status'),recoveryRetry:()=>invoke('recovery:retry'),
   backupExport:()=>invoke('recovery:export'),backupPreview:()=>invoke('recovery:preview'),backupRestore:id=>invoke('recovery:restore',id),
+  retainedVolumes:()=>invoke('recovery:retained'),retainedVolumeExport:id=>invoke('recovery:retained-export',id),retainedVolumeAttach:id=>invoke('recovery:retained-attach',id),
   storageList:()=>invoke('storage:list'),storageRemove:ids=>invoke('storage:remove',ids),
   supportPreview:()=>invoke('support:preview'),supportExport:()=>invoke('support:export'),
   updateStatus:()=>invoke('updates:status'),updateCheck:channel=>invoke('updates:check',channel),updateDownload:()=>invoke('updates:download'),updateCancel:()=>invoke('updates:cancel'),updateInstall:()=>invoke('updates:install'),
@@ -132,14 +157,16 @@ const api: DesktopAPI = {
   workflowStart:(session,profile,repair,attempts)=>invoke('workflow:start',session,profile,repair,attempts),
   openSession: (sessionId) => invoke('session:open', sessionId),
   selectSession: (sessionId) => invoke('session:select', sessionId),
-  sendMessage: (sessionId, prompt, messageId) => invoke('session:send', sessionId, prompt, messageId),
+  sendMessage: (sessionId, prompt, messageId, imageIds) => invoke('session:send', sessionId, prompt, messageId, imageIds),
   stopSession: (sessionId) => invoke('session:stop', sessionId),
   forkSession: (sessionId) => invoke('session:fork', sessionId),
   getEvents: async (sessionId, after) => {
     const all: import('../shared/api').AgentEvent[] = []
     let cursor = after
     for (;;) {
-      const page = await invoke('session:events', sessionId, cursor) as import('../shared/api').AgentEvent[]
+      const response = await invoke('session:events', sessionId, cursor)
+      if(response?.unrealResult===true&&!response.ok)return response
+      const page = (response?.unrealResult===true?response.value:response) as import('../shared/api').AgentEvent[]
       if (page.length === 0) break
       all.push(...page)
       const next = page[page.length - 1].seq
@@ -180,4 +207,4 @@ const api: DesktopAPI = {
     return () => ipcRenderer.removeListener('terminal:exit', listener)
   }
 }
-contextBridge.exposeInMainWorld('unreal', api)
+contextBridge.exposeInMainWorld('unrealTransport', api)

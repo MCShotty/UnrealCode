@@ -105,7 +105,9 @@ description: Review code.
 		!strings.Contains(messages[0].Text, "<name>review</name>") ||
 		!strings.Contains(messages[0].Text, "<location>"+skillPath+"</location>") ||
 		!strings.HasSuffix(messages[0].Text, "\n\nbe concise") ||
-		!slices.Equal(messages[1:], wantMessages) {
+		!slices.EqualFunc(messages[1:], wantMessages, func(a, b llm.Message) bool {
+			return a.Role == b.Role && a.Text == b.Text && slices.Equal(a.Images, b.Images)
+		}) {
 		t.Fatalf("messages = %#v, want system preamble plus %#v", messages, wantMessages)
 	}
 	if len(request.Tools) != 3 || !containsTool(request.Tools, "Bash") || !containsTool(request.Tools, "ViewImage") || !containsTool(request.Tools, "SkillUse") {
@@ -431,6 +433,28 @@ func TestLoadDotEnvUsesScopedOverrides(t *testing.T) {
 	}
 	if got := os.Getenv("HTTPS_PROXY"); got != "outer-https" {
 		t.Fatalf("restored HTTPS proxy value = %q", got)
+	}
+}
+
+func TestLoadDotEnvRejectsOversizedAndLinkedFiles(t *testing.T) {
+	directory := t.TempDir()
+	oversized := filepath.Join(directory, "oversized")
+	if err := os.WriteFile(oversized, []byte("TEST="+strings.Repeat("x", 64*1024)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadDotEnv(oversized); err == nil || !strings.Contains(err.Error(), "limit") {
+		t.Fatalf("oversized .env error = %v", err)
+	}
+	linked := filepath.Join(directory, "linked")
+	target := filepath.Join(directory, "target")
+	if err := os.WriteFile(target, []byte("TEST=linked"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, linked); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := loadDotEnv(linked); err == nil {
+		t.Fatal("linked .env was accepted")
 	}
 }
 

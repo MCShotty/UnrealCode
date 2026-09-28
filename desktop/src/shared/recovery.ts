@@ -1,4 +1,6 @@
 export type BackupPreview = { id:string; createdAt:string; version:string; profile:string; files:number; bytes:number; volumes:number; warnings:string[] }
-export type StorageItem = { id:string; category:'checkpoints'|'index'|'worktrees'|'models'|'backups'; path:string; bytes:number; removable:boolean; reason:string }
-export type RecoveryStatus = { busy:boolean; message:string; migrationError?:string; lastBackup?:string }
+export type StorageItem = { id:string; category:'checkpoints'|'index'|'worktrees'|'models'|'backups'|'recovery-volume'; path:string; bytes:number; removable:boolean; reason:string }
+export type RetainedVolume = { id:string; volume:string; source:string; project?:string; resolvedProject?:string; isolated?:boolean; backupId:string; status:'planned'|'present'|'in-use'|'unavailable'|'owner-mismatch'; exportable:boolean; attachable:boolean; reason:string }
+export type RetainedVolumeReport = { items:RetainedVolume[]; additional:number }
+export type RecoveryStatus = { busy:boolean; message:string; migrationError?:string; waitingForDependency?:boolean; failure?:import('./failure').AppFailure; lastBackup?:string }
 export type UpdateState = { channel:'stable'|'preview'; state:'unavailable'|'idle'|'checking'|'available'|'downloading'|'ready'|'error'; message:string; version?:string; percent?:number }

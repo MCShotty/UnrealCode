@@ -118,3 +118,48 @@ func TestReportedReasoningTokensAndRateLimitsArePreserved(t *testing.T) {
 		t.Fatalf("lost limits: %+v", response.RateLimits)
 	}
 }
+
+func TestBuildRequestIncludesConfiguredReasoningEffort(t *testing.T) {
+	request, err := buildRequest(llm.Request{
+		Model: llm.Model{ID: "fixture", ReasoningEffort: llm.ReasoningEffortLow},
+		Input: []llm.Item{{Data: llm.Message{Role: llm.RoleUser, Text: "Reply with OK."}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"reasoning_effort":"low"`) {
+		t.Fatalf("reasoning effort missing from local request: %s", encoded)
+	}
+}
+
+func TestBuildRequestRejectsUnsupportedReasoningEffort(t *testing.T) {
+	_, err := buildRequest(llm.Request{Model: llm.Model{ID: "fixture", ReasoningEffort: "turbo"}})
+	if err == nil || !strings.Contains(err.Error(), `unsupported reasoning effort "turbo"`) {
+		t.Fatalf("unsupported reasoning effort error = %v", err)
+	}
+}
+
+func TestBuildRequestUsesBoundedDefaultOutputTokens(t *testing.T) {
+	request, err := buildRequest(llm.Request{Model: llm.Model{ID: "fixture"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.MaxTokens == nil || *request.MaxTokens != 2048 {
+		t.Fatalf("default max tokens = %v, want 2048", request.MaxTokens)
+	}
+}
+
+func TestBuildRequestPreservesExplicitOutputTokenLimit(t *testing.T) {
+	limit := int64(8192)
+	request, err := buildRequest(llm.Request{Model: llm.Model{ID: "fixture", MaxOutputTokens: &limit}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.MaxTokens == nil || *request.MaxTokens != limit {
+		t.Fatalf("explicit max tokens = %v, want %d", request.MaxTokens, limit)
+	}
+}

@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1.7
 FROM golang:1.27.1-trixie AS build
 WORKDIR /src
+RUN apt-get update && apt-get install -y --no-install-recommends bash \
+    && rm -rf /var/lib/apt/lists/*
 COPY go.mod go.sum ./
 RUN --mount=type=secret,id=host_ca,required=false \
     if [ -s /run/secrets/host_ca ]; then cp /run/secrets/host_ca /usr/local/share/ca-certificates/host.crt && update-ca-certificates; fi; \

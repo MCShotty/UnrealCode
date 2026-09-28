@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { themeColors } from './theme-colors'
 import * as monaco from 'monaco-editor/editor/editor.api.js'
 import 'monaco-editor/editor/browser/coreCommands.js'
 import 'monaco-editor/features/find/register.js'
@@ -18,8 +19,6 @@ import 'monaco-editor/languages/definitions/markdown/register.js'
 import EditorWorker from 'monaco-editor/editor/editor.worker.js?worker'
 
 self.MonacoEnvironment = { getWorker: () => new EditorWorker() }
-monaco.editor.defineTheme('unrealcode-dark', { base: 'vs-dark', inherit: true, rules: [], colors: { 'editor.background': '#101726', 'editor.foreground': '#f7f9ff', 'editor.lineHighlightBackground': '#172032', 'editor.selectionBackground': '#263968' } })
-monaco.editor.defineTheme('unrealcode-light', { base: 'vs', inherit: true, rules: [], colors: { 'editor.background': '#ffffff', 'editor.foreground': '#101a30', 'editor.selectionBackground': '#e1e8ff' } })
 const language = (path: string) => ({ ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript', py: 'python', go: 'go', cpp: 'cpp', h: 'cpp', css: 'css', html: 'html', md: 'markdown' }[path.split('.').at(-1)!] || 'plaintext')
 
 export default function CodeEditor({ path, content, base, diff, onChange, onSave, onSelect, onSelection }: { path: string; content: string; base: string; diff: boolean; onChange(value: string): void; onSave(): void; onSelect(value: string, line: number): void; onSelection(value: string, line: number): void }) {
@@ -36,7 +35,17 @@ export default function CodeEditor({ path, content, base, diff, onChange, onSave
     const current = outer ? outer.getModifiedEditor() : monaco.editor.create(node.current, { ...options, model })
     if (outer) outer.setModel({ original: original!, modified: model })
     editor.current = current
-    const theme = () => monaco.editor.setTheme(document.documentElement.dataset.theme === 'light' ? 'unrealcode-light' : 'unrealcode-dark')
+    const theme = () => {
+      const colors = themeColors(), light = document.documentElement.dataset.theme === 'light'
+      monaco.editor.defineTheme('unrealcode', { base: light ? 'vs' : 'vs-dark', inherit: true, rules: [], colors: {
+        'editor.background': colors.background, 'editor.foreground': colors.foreground,
+        'editor.lineHighlightBackground': colors.hover, 'editor.selectionBackground': colors.selection,
+        'editorCursor.foreground': colors.accent, 'editorWidget.background': colors.hover,
+        'editorWidget.border': colors.line, 'focusBorder': colors.accent,
+        'scrollbarSlider.background': colors.scrollbar, 'scrollbarSlider.hoverBackground': colors.accent, 'scrollbarSlider.activeBackground': colors.accent
+      } })
+      monaco.editor.setTheme('unrealcode')
+    }
     theme(); const observer = new MutationObserver(theme); observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
     const listener = model.onDidChangeContent(() => callbacks.current.onChange(model.getValue(undefined, true)))
     current.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => callbacks.current.onSave())

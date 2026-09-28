@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" fill="none">
+  <title>UnrealCode</title>
+  <rect width="320" height="320" rx="60" fill="#101726"/>
+  <path fill="#F5F7FA" d="M40 32h58v145c0 36 25 58 60 58 32 0 55-20 62-51h56c-6 60-53 104-118 104-70 0-118-46-118-112V32Z"/>
+  <path fill="#F5F7FA" d="M276 32h-74c-47 0-82 33-82 80v50c0 27 18 47 45 54 18-4 32-15 39-34-27-1-40-14-40-36v-26c0-23 17-36 40-36h72V32Z"/>
+  <rect x="248" y="114" width="42" height="42" rx="5" fill="#00B9DA"/>
+</svg>

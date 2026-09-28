@@ -5,6 +5,15 @@ import { join } from 'node:path'
 import { VerificationWorkflows } from './verification-workflows'
 import { defaultWorkflowPresets } from '../shared/verification'
 const profile={id:'unit',name:'Unit checks',command:'fixture command',timeoutSeconds:10}
+it('does not roll back saved verification settings when the renderer notification fails',async()=>{
+ const path=join(await mkdtemp(join(tmpdir(),'unrealcode-workflows-notify-')),'workflows.json')
+ const runner={verify:vi.fn(),repair:vi.fn()}
+ const service=new VerificationWorkflows(path,runner)
+ service.onChanged=()=>{throw Error('renderer closed')}
+ await service.update({...defaultWorkflowPresets,profiles:[profile]})
+ expect(service.settings().profiles[0].id).toBe('unit')
+ expect(new VerificationWorkflows(path,runner).settings().profiles[0].id).toBe('unit')
+})
 it('keeps the reviewed command fixed and stops after two unsuccessful repair attempts',async()=>{
  const path=join(await mkdtemp(join(tmpdir(),'unrealcode-workflows-')),'workflows.json')
  const verify=vi.fn(async(_session,selected,id)=>({id,command:selected.command,exitCode:1,output:'failure',durationMs:5,cancelled:false})),repair=vi.fn(async()=>{})

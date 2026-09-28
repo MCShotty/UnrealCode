@@ -27,12 +27,16 @@ const (
 
 const toolCallRunGracePeriod = time.Second
 
+const forkedToolCallResult = "This tool call belongs to the parent session and was not continued in this fork. Check the parent session for its final result."
+
 type coordinator struct {
-	dependencies Dependencies
-	state        loopState
-	stop         stopState
-	cancelModel  context.CancelFunc
-	idleInputs   []inbox.ID
+	dependencies   Dependencies
+	state          loopState
+	stop           stopState
+	cancelModel    context.CancelFunc
+	idleInputs     []inbox.ID
+	deferredInputs []inbox.Input
+	fatal          error
 }
 
 type stopState struct {
@@ -73,6 +77,9 @@ type modelResponseResult struct {
 	response llm.Response
 	err      error
 }
+type providerFailureError struct{ error }
+
+func (e *providerFailureError) Unwrap() error { return e.error }
 
 var _ Coordinator = (*coordinator)(nil)
 
@@ -90,6 +97,23 @@ func (current *coordinator) Run(ctx context.Context) error {
 	}
 	if err := current.restore(ctx); err != nil {
 		return err
+	}
+	if err := current.processInputs(ctx, current.dependencies.InitialInputs); err != nil {
+		return err
+	}
+	// Durable question receipts may have been queued before this explicit resume.
+	// Include them at the first model boundary, not after a retry has begun.
+	if current.dependencies.IncludeQueuedInputsOnStart {
+		initial, err := slurpChannel(ctx, current.dependencies.Inbox.Output())
+		if err != nil {
+			return err
+		}
+		if err = current.processInputs(ctx, initial); err != nil {
+			return err
+		}
+		if current.stop.request.Mode == inbox.StopHard {
+			return ctx.Err()
+		}
 	}
 
 	modelContext, cancelModels := context.WithCancel(ctx)
@@ -134,6 +158,8 @@ func (current *coordinator) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-current.dependencies.ModelReady:
+			// Recheck the gate and queued inputs without interrupting an active request.
 
 		case received, open := <-inboxOutput:
 			if !open {
@@ -164,7 +190,18 @@ func (current *coordinator) Run(ctx context.Context) error {
 				continue
 			}
 			if err := current.processModelResponse(ctx, received); err != nil {
-				return err
+				var providerFailure *providerFailureError
+				if !errors.As(err, &providerFailure) {
+					return err
+				}
+				if ctx.Err() != nil {
+					return err
+				}
+				current.fatal = err
+				if current.dependencies.OnFatal != nil {
+					current.dependencies.OnFatal(err)
+				}
+				current.acceptStop(inbox.ControlMessage{Mode: inbox.StopHard, Reason: "The model response failed. Cancel unfinished operations before retrying."})
 			}
 		}
 
@@ -178,7 +215,7 @@ func (current *coordinator) Run(ctx context.Context) error {
 				return err
 			}
 			if stopped {
-				return ctx.Err()
+				return errors.Join(current.fatal, ctx.Err())
 			}
 			continue
 		}
@@ -225,12 +262,18 @@ func (current *coordinator) processEvents(ctx context.Context) (bool, error) {
 }
 
 func (current *coordinator) processInputs(ctx context.Context, inputs []inbox.Input) error {
+	ready := make([]inbox.Input, 0, len(inputs))
 	for _, input := range inputs {
+		if input.Deferred && current.cancelModel != nil {
+			current.deferredInputs = append(current.deferredInputs, input)
+			continue
+		}
+		ready = append(ready, input)
 		if input.Kind == inbox.InputExternal {
 			current.idleInputs = append(current.idleInputs, input.ID)
 		}
 	}
-	return current.handleInboxInputs(ctx, inputs)
+	return current.handleInboxInputs(ctx, ready)
 }
 
 func (current *coordinator) processOperations(ctx context.Context, updates []operation.Operation) error {
@@ -248,7 +291,7 @@ func (current *coordinator) processModelResponse(ctx context.Context, modelRespo
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		return fmt.Errorf("call model for turn %q: %w", modelResponse.turnID, modelResponse.err)
+		return &providerFailureError{fmt.Errorf("call model for turn %q: %w", modelResponse.turnID, modelResponse.err)}
 	}
 	statuses, err := current.handleModelResponse(ctx, sessionstore.ModelResponse{
 		TurnID:   modelResponse.turnID,
@@ -270,7 +313,9 @@ func (current *coordinator) processModelResponse(ctx context.Context, modelRespo
 		}
 		current.state.grace = time.After(toolCallRunGracePeriod)
 	}
-	return nil
+	deferred := current.deferredInputs
+	current.deferredInputs = nil
+	return current.processInputs(ctx, deferred)
 }
 
 func (current *coordinator) clearToolGrace() {
@@ -367,6 +412,10 @@ func (current *coordinator) requestModelResponse(
 	ctx context.Context,
 	results chan<- modelResponseResult,
 ) error {
+	if current.dependencies.ModelBlocked != nil && current.dependencies.ModelBlocked() {
+		current.state.callModel = true
+		return nil
+	}
 	current.interruptModel()
 	built, err := current.dependencies.ContextBuilder.Build()
 	if err != nil {
@@ -487,6 +536,9 @@ func (current *coordinator) handleModelResponse(
 	if current.state.currentTurnType == session.TurnCompaction && response.TurnID == current.state.currentTurnID {
 		return nil, nil
 	}
+	if failure := response.Response.Failure; failure != nil {
+		return nil, &providerFailureError{fmt.Errorf("provider response failed (%s): %s", failure.Code, failure.Message)}
+	}
 	statuses, err := current.scheduleToolCalls(ctx)
 	if err != nil {
 		return nil, err
@@ -569,7 +621,23 @@ func (current *coordinator) addItemToLocalState(
 				item.Data,
 			)
 		}
-		// FIXME: Forks leave inherited calls without results and retain pending-input accounting.
+		// Inherited inputs are context, not new work for the child branch.
+		current.state.deliveredInputs = current.state.availableInputs
+		// Complete inherited calls in the child's model context. Their operations
+		// remain in the parent, and must never be dispatched by this branch.
+		keys := make([]toolCallKey, 0, len(current.state.toolCalls))
+		for key := range current.state.toolCalls {
+			keys = append(keys, key)
+		}
+		slices.SortFunc(keys, func(a, b toolCallKey) int {
+			if turn := cmp.Compare(a.turnID, b.turnID); turn != 0 {
+				return turn
+			}
+			return cmp.Compare(a.callID, b.callID)
+		})
+		for _, key := range keys {
+			current.dependencies.ContextBuilder.AddToolResult(key.callID, []llm.ToolResultOutput{{Kind: llm.ToolResultText, Value: forkedToolCallResult}}, false)
+		}
 		clear(current.state.toolCalls)
 		clear(current.state.operations)
 		current.clearToolGrace()
@@ -661,6 +729,9 @@ func (current *coordinator) addItemToLocalState(
 }
 
 func (current *coordinator) addToolCallsToLocalState(response sessionstore.ModelResponse) {
+	if response.Response.Failure != nil {
+		return
+	}
 	for _, output := range response.Response.Output {
 		if output.Type != llm.ItemToolCall {
 			continue

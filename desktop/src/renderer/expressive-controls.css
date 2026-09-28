@@ -1,0 +1,55 @@
+/* Shared controls keep text stationary; only deliberate transitions and small
+   progress glyphs move. These rules use the existing Material theme roles. */
+.expressive-progress { display:inline-flex; width:18px; height:18px; flex:0 0 18px; align-items:center; justify-content:center; vertical-align:middle; color:currentColor; }
+.progress-orbit { display:flex; align-items:center; justify-content:center; width:16px; height:16px; }
+.progress-shape { display:block; width:12px; height:12px; border-radius:35%; background:currentColor; }
+.expressive-progress.running { color:var(--accent); }
+.expressive-progress.waiting { color:var(--muted); }
+.expressive-progress.error { color:var(--md-sys-color-error); }
+.expressive-progress.success { color:var(--green); }
+.expressive-progress.idle { opacity:.5; }
+.expressive-progress[data-playing="true"] .progress-orbit { animation:progress-orbit 2.8s linear infinite; }
+.expressive-progress[data-playing="true"] .progress-shape { animation:progress-shape 2.8s ease-in-out infinite; }
+.expressive-progress.fresh-success>svg { animation:progress-success .45s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes progress-orbit { to { transform:rotate(360deg); } }
+@keyframes progress-shape { 0%,100%{border-radius:50%;transform:scale(.8)} 35%{border-radius:22%;transform:scale(1)} 70%{border-radius:50% 20% 50% 20%;transform:scale(.92)} }
+@keyframes progress-success { from{transform:scale(.5);opacity:0} 65%{transform:scale(1.15);opacity:1} to{transform:scale(1);opacity:1} }
+.primary-button .expressive-progress { color:inherit; }
+.work-pending { display:flex; align-items:center; gap:9px; min-height:36px; margin:16px 0; color:var(--muted); font-size:13px; }
+.composer-smart-action { min-width:122px; width:122px; min-height:44px; justify-content:center; flex-shrink:0; gap:9px; }
+.composer-smart-action.stop { background:var(--md-sys-color-secondary-container); color:var(--md-sys-color-on-secondary-container); }
+.composer-smart-action[aria-busy="true"] { opacity:1; }
+.composer-action-symbol { display:inline-flex; width:20px; height:20px; align-items:center; justify-content:center; flex:none; }
+.task-options-trigger { display:flex; align-items:center; gap:7px; min-height:36px; padding:8px 12px; background:transparent; border:0; border-radius:var(--md-sys-shape-full); font:inherit; color:var(--sub); cursor:pointer; }
+.task-options-trigger:hover,.task-options-trigger[aria-expanded="true"] { background:var(--md-sys-color-surface-container-high); color:var(--text); }
+.task-options-dialog { position:fixed; inset:auto; margin:0; padding:0; width:min(420px,calc(100dvw - 32px)); max-width:calc(100dvw - 32px); max-height:min(500px,calc(100dvh - 32px)); border:1px solid var(--line); border-radius:20px; color:var(--text); background:var(--md-sys-color-surface-container-low); box-shadow:var(--md-sys-elevation-2); overflow:hidden; }
+.task-options-dialog[open] { display:flex; flex-direction:column; }
+.task-options-dialog::backdrop { background:transparent; }
+.task-options-dialog.sheet[open] { inset:auto 0 0; margin:0 auto; width:100%; max-width:100%; max-height:85dvh; border-radius:24px 24px 0 0; }
+.task-options-dialog.sheet::backdrop { background:var(--md-sys-color-scrim); }
+.task-options-dialog>header { display:flex; align-items:center; justify-content:space-between; gap:12px; flex:none; padding:14px 16px 12px; border-bottom:1px solid var(--line-soft); }
+.task-options-dialog h2 { margin:0; font-size:18px; }.task-options-dialog h3 { margin:0 0 8px; font-size:13px; }
+.task-options-dialog header p { margin:5px 0 0; color:var(--muted); font-size:12px; }
+.task-options-dialog form { display:flex; flex:1 1 auto; flex-direction:column; min-height:0; overflow:hidden; }
+.task-options-body { flex:1 1 auto; padding:14px 16px; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; min-height:0; min-width:0; scrollbar-gutter:stable; font-size:12px; line-height:1.5; }
+.delegation-segments { display:flex; padding:4px; border-radius:18px; background:var(--md-sys-color-surface-container-high); gap:4px; }
+.delegation-segments button { position:relative; isolation:isolate; flex:1; min-width:0; border:0; background:none; color:var(--sub); padding:7px 5px; min-height:40px; border-radius:14px; font:inherit; font-weight:550; }
+.delegation-segments button[aria-pressed="true"] { color:var(--md-sys-color-on-secondary-container); }
+.policy-label { display:flex; align-items:center; justify-content:center; min-width:0; gap:4px; white-space:nowrap; }
+.selected-segment { position:absolute; inset:0; z-index:-1; border-radius:14px; background:var(--md-sys-color-secondary-container); }
+.task-option-hint { font-size:11px; line-height:1.5; color:var(--muted); margin:8px 0 12px; }
+.task-option-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.task-option-field { display:flex; flex-direction:column; min-width:0; gap:5px; font-size:11px; }
+.task-option-field input { width:100%; min-height:40px; padding:8px 10px; border:1px solid var(--line); border-radius:12px; background:var(--md-sys-color-surface-container); color:var(--text); font:inherit; font-size:13px; }
+.task-option-field:has(input:disabled) { opacity:.55; }
+.task-budget-section { border-top:1px solid var(--line-soft); }
+.task-limits-toggle { display:flex; justify-content:space-between; align-items:center; width:100%; padding:10px 0; border:0; background:transparent; color:var(--text); text-align:left; }
+.task-limits-toggle>span:first-child { display:flex; flex-direction:column; gap:4px; }.task-limits-toggle strong { font-size:14px; }.task-limits-toggle small { color:var(--muted); }
+.task-budget-fields { overflow:hidden; }
+.task-options-dialog footer { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:12px 16px; border-top:1px solid var(--line-soft); flex:none; }
+.task-options-footer-actions { display:flex; margin-left:auto; gap:8px; }
+.task-stop { display:flex; align-items:center; gap:6px; color:var(--md-sys-color-error); }
+.inherited-task-options { display:grid; grid-template-columns:1fr auto; gap:10px; }.inherited-task-options dd { margin:0; }
+@media(max-width:440px) { .task-option-grid{grid-template-columns:1fr}.task-options-dialog footer{padding:12px 16px}.task-options-body{padding:12px 16px}.composer-smart-action{width:114px;min-width:114px} }
+@media(prefers-reduced-motion:reduce) { .expressive-progress *{animation:none!important}.task-options-dialog,.tool-activity-surface{transform:none!important}.task-budget-fields{transition:none!important} }
+@media(forced-colors:active) { .progress-shape{background:CanvasText}.delegation-segments button[aria-pressed="true"]{outline:2px solid Highlight}.selected-segment{background:Highlight}.task-options-dialog{border:1px solid CanvasText} }

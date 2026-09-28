@@ -16,10 +16,11 @@ const sections = [
 ]
 
 for (const [location, metadata] of packages) {
+  const playwrightApache=location==='node_modules/playwright-core' && metadata.version==='1.63.0' && metadata.license==='Apache-2.0'
   const apacheElection = location === 'node_modules/dompurify' && metadata.license === '(MPL-2.0 OR Apache-2.0)'
   const argparsePython = location === 'node_modules/argparse' && metadata.version === '2.0.1' && metadata.license === 'Python-2.0'
   const saxBlueOak=location==='node_modules/sax' && metadata.version==='1.6.1' && metadata.license==='BlueOak-1.0.0'
-  if (!allowedLicenses.has(metadata.license) && !apacheElection && !argparsePython && !saxBlueOak) {
+  if (!allowedLicenses.has(metadata.license) && !playwrightApache && !apacheElection && !argparsePython && !saxBlueOak) {
     throw new Error(`Review the license for ${location}: ${metadata.license || 'missing'}`)
   }
   const directory = path.join(desktop, location)

@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 const root=mkdtempSync(join(tmpdir(),'unrealcode-verification-')),project=join(root,'project');mkdirSync(project);writeFileSync(join(project,'sample.txt'),'fixture\n')
 const git=args=>execFileSync('git',['-C',project,...args],{windowsHide:true,stdio:'ignore'});git(['init']);git(['add','.']);git(['-c','user.name=Fixture','-c','user.email=fixture@localhost','commit','-m','Base'])
 let requests=0;const model=createServer(async(req,res)=>{for await(const _part of req){}requests++;res.writeHead(200,{'content-type':'application/json'});res.write(JSON.stringify({id:randomUUID(),choices:[{index:0,finish_reason:'stop',message:{role:'assistant',content:'Fixture repair inspection complete; deliberate failure remains.'}}],usage:{prompt_tokens:20,completion_tokens:6}}));res.end()});await new Promise(resolve=>model.listen(0,'0.0.0.0',resolve))
-const packaged=process.argv.includes('--packaged'),app=await electron.launch({executablePath:resolve(packaged?'dist/win-unpacked/UnrealCode.exe':'node_modules/electron/dist/electron.exe'),args:packaged?[]:['.'],env:{...process.env,UNREAL_DESKTOP_USER_DATA:join(root,'data'),UNREAL_DESKTOP_BACKGROUND_CHECK:'1'}})
+const packaged=process.argv.includes('--packaged'),app=await electron.launch({executablePath:resolve(process.env.UNREALCODE_QA_EXECUTABLE||(packaged?'dist/win-unpacked/UnrealCode.exe':'node_modules/electron/dist/electron.exe')),args:packaged?[]:['.'],env:{...process.env,UNREAL_DESKTOP_USER_DATA:join(root,'data'),UNREAL_DESKTOP_BACKGROUND_CHECK:'1'}})
 const report={root,errors:[]};let page=await app.firstWindow()
 const wait=async(predicate,arg)=>{const end=Date.now()+90000;while(Date.now()<end){if(await page.evaluate(predicate,arg))return;await new Promise(resolve=>setTimeout(resolve,100))}throw Error('Verification fixture timed out')}
 try{
@@ -24,7 +24,20 @@ try{
  const events=await page.evaluate(id=>window.unreal.getEvents(id,0),sessionId);assert.equal(events.filter(event=>event.event==='verification.result').length,5);assert(events.some(event=>event.event==='operation.update'&&event.payload.Type==='verification'&&event.payload.Status==='canceled'))
  assert((await app.evaluate(()=>globalThis.verificationApprovals)).some(text=>text.includes("printf 'intentional failure'; exit 7")&&text.includes('2 model repair attempts')))
  await app.evaluate(({BrowserWindow},target)=>BrowserWindow.getAllWindows()[0].webContents.send('app:navigate',target),{project,sessionId});await page.getByLabel('Message UnrealCode').waitFor();await page.getByRole('button',{name:'Workflow',exact:true}).click();await page.getByRole('tab',{name:'Saved workflows'}).click();await page.getByRole('heading',{name:'Saved workflows',exact:true}).waitFor();await page.screenshot({path:join(root,'verification-dark.png'),animations:'disabled'})
- await page.evaluate(()=>window.unreal.updateSettings({executionMode:'plan'}));const plan=(await page.evaluate(()=>window.unreal.createSession({}))).sessionId;await assert.rejects(page.evaluate(id=>window.unreal.workflowStart(id,'pass',undefined,0),plan),/does not grant/)
+ await page.evaluate(()=>window.unreal.updateSettings({executionMode:'plan'}));const plan=(await page.evaluate(()=>window.unreal.createSession({}))).sessionId
+ const planDenial=await page.evaluate(async id=>{
+   const deadline=Date.now()+30000
+   while(Date.now()<deadline){
+     try{await window.unreal.workflowStart(id,'pass',undefined,0);return ''}
+     catch(error){
+       const details=error.failure?.details||''
+       if(!details.includes('Finish or stop project operations'))return details
+     }
+     await new Promise(resolve=>setTimeout(resolve,100))
+   }
+   return 'Timed out waiting for project operations to settle'
+ },plan)
+ assert.match(planDenial,/does not grant/)
  assert.deepEqual(report.errors,[]);Object.assign(report,{repairAttempts:2,failedChecks:3,nativePreview:true,cancellation:true,planBlocked:true,requests});console.log(JSON.stringify(report))
 }catch(error){report.failure=String(error);report.runs=await page.evaluate(()=>window.unreal.workflowRuns()).catch(()=>[]);writeFileSync(join(root,'report.json'),JSON.stringify(report,null,2));await page.screenshot({path:join(root,'failure.png')}).catch(()=>{});console.log(JSON.stringify(report));throw error}
 finally{await app.close().catch(()=>{});model.closeAllConnections();model.close()}

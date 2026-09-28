@@ -54,6 +54,20 @@ func TestRetriedMessageDoesNotAnswerPendingQuestion(t *testing.T) {
 		t.Fatal("duplicate message answered a pending question")
 	}
 	send(uuid.New().String(), "Use Alpha")
+	if client.calls.Load() != 1 {
+		t.Fatal("ordinary steering resumed required question")
+	}
+	questions, err := a.questions.list(id, "")
+	if err != nil || len(questions) != 1 {
+		t.Fatalf("questions: %v %v", questions, err)
+	}
+	if questions[0].State != "pending" {
+		t.Fatal("ordinary steering answered question")
+	}
+	_, err = a.dispatch(request{Version: 1, Method: "question.answer", Params: mustJSON(t, answerQuestionParams{SessionID: string(id), ID: questions[0].ID, Revision: 1, SubmissionID: uuid.New().String(), Answers: []questionAnswer{{QuestionID: "q1", Text: "Use Alpha"}}})})
+	if err != nil {
+		t.Fatal(err)
+	}
 	waitFor(t, func() bool {
 		run.workflow.mu.Lock()
 		defer run.workflow.mu.Unlock()

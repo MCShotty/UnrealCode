@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+	"uuid"
 
 	"github.com/unreallabsai/unreal-agent/harness/llm"
 	"github.com/unreallabsai/unreal-agent/harness/session"
@@ -25,6 +27,7 @@ type eventLog struct {
 	dir       string
 	output    *output
 	state     map[session.ID]*eventState
+	outcomes  map[session.ID]*lifecycle
 	queueMu   sync.Mutex
 	queueCond *sync.Cond
 	queue     []queuedEvent
@@ -95,7 +98,63 @@ func (l *eventLog) path(id session.ID) string {
 	return filepath.Join(l.dir, string(id)+".jsonl")
 }
 
+// A crash can leave only the final JSONL record incomplete. Preserve those
+// bytes privately before removing that one fragment; complete records and the
+// canonical session store remain untouched.
+func (l *eventLog) repairTailLocked(id session.ID) error {
+	path := l.path(id)
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.Size() == 0 {
+		return err
+	}
+	last := []byte{0}
+	if _, err := f.ReadAt(last, info.Size()-1); err != nil {
+		return err
+	}
+	if last[0] == '\n' {
+		return nil
+	}
+	const maxTail = 16 * 1024 * 1024
+	start := max(int64(0), info.Size()-maxTail)
+	part := make([]byte, info.Size()-start)
+	if _, err := f.ReadAt(part, start); err != nil {
+		return err
+	}
+	boundary := bytes.LastIndexByte(part, '\n')
+	if boundary < 0 && start > 0 {
+		return errors.New("activity log tail exceeds recovery limit")
+	}
+	tailStart := start + int64(boundary+1)
+	tail := part[boundary+1:]
+	var entry event
+	if json.Unmarshal(tail, &entry) == nil && entry.Version == protocolVersion && entry.SessionID == string(id) && entry.Sequence > 0 {
+		if _, err := f.WriteAt([]byte{'\n'}, info.Size()); err != nil {
+			return err
+		}
+		return f.Sync()
+	}
+	backup := path + ".partial-" + uuid.New().String()
+	if err := os.WriteFile(backup, tail, 0o600); err != nil {
+		return err
+	}
+	if err := f.Truncate(tailStart); err != nil {
+		return err
+	}
+	return f.Sync()
+}
+
 func (l *eventLog) readLocked(id session.ID) ([]event, error) {
+	if err := l.repairTailLocked(id); err != nil {
+		return nil, err
+	}
 	f, err := os.Open(l.path(id))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -128,6 +187,10 @@ func (l *eventLog) appendAt(id session.ID, kind string, payload any, sourceSeque
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	life, err := l.lifecycleLocked(id)
+	if err != nil {
+		return err
+	}
 	state := l.state[id]
 	if state == nil {
 		entries, err := l.readLocked(id)
@@ -153,6 +216,20 @@ func (l *eventLog) appendAt(id session.ID, kind string, payload any, sourceSeque
 			return nil
 		}
 	}
+	var projected map[string]any
+	if err := json.Unmarshal(encodedPayload, &projected); err != nil {
+		return err
+	}
+	// Apply only after the write commits; retries must not advance the projection.
+	nextLife := life
+	if kind == "session.idle" || kind == "session.status" || kind == "verification.result" {
+		copyBytes, _ := json.Marshal(life)
+		nextLife = new(lifecycle)
+		_ = json.Unmarshal(copyBytes, nextLife)
+		nextLife.consume(kind, projected, at)
+		projected["outcome"] = nextLife.Outcome
+		encodedPayload, _ = json.Marshal(projected)
+	}
 	entry := event{Version: protocolVersion, Event: kind, SessionID: string(id), Sequence: state.next, SourceSequence: sourceSequence, RecordedAt: at, Payload: jsontext.Value(encodedPayload)}
 	line, err := json.Marshal(entry)
 	if err != nil {
@@ -168,12 +245,23 @@ func (l *eventLog) appendAt(id session.ID, kind string, payload any, sourceSeque
 	}
 	closeErr := f.Close()
 	if writeErr != nil {
+		delete(l.state, id)
+		delete(l.outcomes, id)
 		return writeErr
 	}
 	if closeErr != nil {
+		delete(l.state, id)
+		delete(l.outcomes, id)
 		return closeErr
 	}
 	state.next++
+	if kind != "session.idle" && kind != "session.status" && kind != "verification.result" {
+		nextLife.consume(kind, projected, at)
+	}
+	l.outcomes[id] = nextLife
+	if kind == "session.idle" || kind == "session.status" || kind == "verification.result" {
+		l.saveLifecycleLocked(id, nextLife)
+	}
 	if sourceSequence != 0 {
 		state.source[sourceSequence] = struct{}{}
 		for {
@@ -278,6 +366,9 @@ func (l *eventLog) latest(id session.ID, limit int) ([]event, error) {
 	defer l.mu.Unlock()
 	if limit < 1 || limit > 3000 {
 		limit = 3000
+	}
+	if err := l.repairTailLocked(id); err != nil {
+		return nil, err
 	}
 	f, err := os.Open(l.path(id))
 	if errors.Is(err, fs.ErrNotExist) {

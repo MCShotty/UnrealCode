@@ -17,6 +17,7 @@ import (
 	"uuid"
 
 	"github.com/unreallabsai/unreal-agent/harness/inbox"
+	"github.com/unreallabsai/unreal-agent/harness/llm"
 	"github.com/unreallabsai/unreal-agent/harness/operation"
 	"github.com/unreallabsai/unreal-agent/harness/session"
 	"github.com/unreallabsai/unreal-agent/harness/sessionstore"
@@ -30,14 +31,16 @@ type cancelOperationParams struct {
 	OperationID string `json:"operationId"`
 }
 type createParams struct {
-	Config     sessionConfig `json:"config"`
-	Credential credential    `json:"credential"`
+	Config      sessionConfig `json:"config"`
+	Credential  credential    `json:"credential"`
+	QueueTaskID string        `json:"queueTaskId,omitempty"`
 }
 type openParams struct {
 	SessionID  string     `json:"sessionId"`
 	Credential credential `json:"credential"`
 }
 type sendParams struct {
+	Images     []string   `json:"images,omitempty"`
 	SessionID  string     `json:"sessionId"`
 	MessageID  string     `json:"messageId"`
 	Prompt     string     `json:"prompt"`
@@ -166,16 +169,41 @@ func (a *app) dispatch(req request) (any, error) {
 			return nil, err
 		}
 		defer release()
-		config, err := a.loadConfig(id)
+		return nil, a.updateConfig(id, func(config *sessionConfig) error {
+			if config.Specialist {
+				return errors.New("Specialists cannot change delegation permissions")
+			}
+			config.TeamEnabled = p.Enabled
+			config.TeamManaged = p.Managed || p.Enabled
+			return nil
+		})
+	case "hooks.configure":
+		p, err := decodeParams[struct {
+			Enabled bool `json:"enabled"`
+		}](req.Params)
 		if err != nil {
 			return nil, err
 		}
-		if config.Specialist {
-			return nil, errors.New("Specialists cannot change delegation permissions")
+		a.mu.Lock()
+		ids := []session.ID{}
+		for id, run := range a.running {
+			if run.busy.Load() {
+				a.mu.Unlock()
+				return nil, errors.New("Settle active work before changing hooks")
+			}
+			ids = append(ids, id)
 		}
-		config.TeamEnabled = p.Enabled
-		config.TeamManaged = p.Managed || p.Enabled
-		return nil, a.saveConfig(id, config)
+		a.mu.Unlock()
+		if a.hooksEnabled.Load() != p.Enabled {
+			for _, id := range ids {
+				params, _ := json.Marshal(sessionIDParams{SessionID: string(id)})
+				if _, err := a.dispatch(request{Version: protocolVersion, Method: "session.stop", Params: params}); err != nil {
+					return nil, err
+				}
+			}
+		}
+		a.hooksEnabled.Store(p.Enabled)
+		return nil, nil
 	case "session.mode":
 		p, err := decodeParams[struct {
 			SessionID string `json:"sessionId"`
@@ -202,15 +230,114 @@ func (a *app) dispatch(req request) (any, error) {
 		if _, err := a.dispatch(request{Version: protocolVersion, Method: "session.stop", Params: stopParams}); err != nil {
 			return nil, err
 		}
-		config, err := a.loadConfig(id)
+		return nil, a.updateConfig(id, func(config *sessionConfig) error {
+			if config.Specialist {
+				return errors.New("Specialist execution mode is inherited and cannot be broadened")
+			}
+			config.Mode = p.Mode
+			return nil
+		})
+	case "session.goal":
+		p, err := decodeParams[struct {
+			SessionID string `json:"sessionId"`
+			Enabled   bool   `json:"enabled"`
+		}](req.Params)
 		if err != nil {
 			return nil, err
 		}
-		if config.Specialist {
-			return nil, errors.New("Specialist execution mode is inherited and cannot be broadened")
+		id, err := requiredID(p.SessionID)
+		if err != nil {
+			return nil, err
 		}
-		config.Mode = p.Mode
-		return nil, a.saveConfig(id, config)
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return nil, a.updateConfig(id, func(config *sessionConfig) error {
+			if config.Specialist {
+				return errors.New("Specialists cannot change the parent goal")
+			}
+			config.GoalManaged = p.Enabled
+			return nil
+		})
+	case "inference.generate":
+		p, err := decodeParams[struct {
+			Config     sessionConfig `json:"config"`
+			Credential credential    `json:"credential"`
+			Request    llm.Request   `json:"request"`
+		}](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		p.Config.MaxAttempts = 1
+		client, model, err := a.makeClient(p.Config, p.Credential)
+		if err != nil {
+			return nil, err
+		}
+		defer client.Close()
+		p.Request.Model.ID = model
+		p.Request.Model.ReasoningEffort = llm.ReasoningEffort(p.Config.ThinkingLevel)
+		ctx, cancel := context.WithTimeout(a.ctx, 120*time.Second)
+		defer cancel()
+		response, err := client.Respond(ctx, p.Request, llm.RequestOptions{})
+		if err != nil {
+			return nil, err
+		}
+		response.Usage.Raw = nil
+		return response, nil
+	case "session.modelOptions":
+		p, err := decodeParams[struct {
+			SessionID     string  `json:"sessionId"`
+			ServiceTier   *string `json:"serviceTier"`
+			ThinkingLevel *string `json:"thinkingLevel"`
+		}](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		id, err := requiredID(p.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return nil, a.updateConfig(id, func(config *sessionConfig) error {
+			if config.Specialist {
+				return errors.New("Specialist model options belong to its role profile")
+			}
+			if p.ServiceTier != nil {
+				if *p.ServiceTier != "default" && *p.ServiceTier != "priority" {
+					return errors.New("Unsupported speed tier")
+				}
+				if config.Provider != "openai" && config.Provider != "openai-codex" && config.Provider != "anthropic" {
+					return errors.New("Provider does not support speed tiers")
+				}
+				config.ServiceTier = *p.ServiceTier
+			}
+			if p.ThinkingLevel != nil {
+				if !llm.ReasoningEffort(*p.ThinkingLevel).Valid() {
+					return errors.New("Unsupported reasoning effort")
+				}
+				config.ThinkingLevel = *p.ThinkingLevel
+			}
+			return nil
+		})
+	case "session.rename":
+		p, err := decodeParams[struct {
+			SessionID string `json:"sessionId"`
+			Title     string `json:"title"`
+		}](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		id, err := requiredID(p.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		if len(strings.TrimSpace(p.Title)) == 0 || len(p.Title) > 300 {
+			return nil, errors.New("Title must contain 1–300 bytes")
+		}
+		if _, err := a.loadConfig(id); err != nil {
+			return nil, err
+		}
+		return nil, a.rename(id, strings.TrimSpace(p.Title))
 	case "context.configure":
 		p, err := decodeParams[struct {
 			Excluded []string `json:"excluded"`
@@ -250,7 +377,7 @@ func (a *app) dispatch(req request) (any, error) {
 	case "decision.idle":
 		return a.decisionPending.Load() == 0, nil
 	case "health":
-		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion, "capabilities": []string{"permissions.v1", "files.v1", "sessions.v1", "mcp.v1", "context.v1", "teams.v1", "verification.v1", "history.latest.v1"}}, nil
+		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion, "capabilities": []string{"permissions.v1", "files.v1", "sessions.v1", "mcp.v1", "context.v1", "teams.v1", "verification.v1", "history.latest.v1", "lifecycle.v1", "controls.v1", "inference.v1", "hooks.v1", "goal.usage.v1", "questions.v2"}}, nil
 	case "decision.configure":
 		config, err := decodeParams[decisionConfig](req.Params)
 		if err != nil {
@@ -311,6 +438,19 @@ func (a *app) dispatch(req request) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Only the dedicated create parameter can establish the queue identity.
+		// A copied session config must not inherit another task's identity.
+		p.Config.QueueTaskID = ""
+		id := session.ID(uuid.New().String())
+		if p.QueueTaskID != "" {
+			id, err = requiredID(p.QueueTaskID)
+			if err != nil {
+				return nil, errors.New("invalid queued task identity")
+			}
+			p.Config.QueueTaskID = p.QueueTaskID
+			a.createMu.Lock()
+			defer a.createMu.Unlock()
+		}
 		if p.Config.Mode == "" {
 			p.Config.Mode = "ask"
 		}
@@ -322,12 +462,41 @@ func (a *app) dispatch(req request) (any, error) {
 			return nil, err
 		}
 		_ = probe.Close()
-		id := session.ID(uuid.New().String())
+		if p.QueueTaskID != "" {
+			_, inspectErr := a.store.Inspect(a.ctx, id)
+			if inspectErr == nil {
+				saved, loadErr := a.loadConfig(id)
+				if loadErr != nil {
+					return nil, fmt.Errorf("queued session exists but its config cannot be read: %w", loadErr)
+				}
+				if saved.QueueTaskID != p.QueueTaskID || saved.WorkspaceID != p.Config.WorkspaceID || saved.Provider != p.Config.Provider || saved.Model != p.Config.Model {
+					return nil, errors.New("queued session identity belongs to a different task configuration")
+				}
+				if _, err := a.start(id, p.Credential); err != nil {
+					return nil, err
+				}
+				return map[string]string{"sessionId": string(id)}, nil
+			}
+			if !errors.Is(inspectErr, os.ErrNotExist) {
+				return nil, inspectErr
+			}
+			if saved, loadErr := a.loadConfig(id); loadErr == nil {
+				if saved.QueueTaskID != p.QueueTaskID || saved.WorkspaceID != p.Config.WorkspaceID || saved.Provider != p.Config.Provider || saved.Model != p.Config.Model {
+					return nil, errors.New("queued session config belongs to a different task configuration")
+				}
+			} else if !errors.Is(loadErr, os.ErrNotExist) {
+				return nil, loadErr
+			} else if err := a.saveConfig(id, p.Config); err != nil {
+				return nil, err
+			}
+		}
 		if _, err := a.store.Create(a.ctx, id); err != nil {
 			return nil, err
 		}
-		if err := a.saveConfig(id, p.Config); err != nil {
-			return nil, err
+		if p.QueueTaskID == "" {
+			if err := a.saveConfig(id, p.Config); err != nil {
+				return nil, err
+			}
 		}
 		if _, err := a.start(id, p.Credential); err != nil {
 			return nil, err
@@ -342,7 +511,7 @@ func (a *app) dispatch(req request) (any, error) {
 		for _, info := range infos {
 			a.mu.Lock()
 			_, active := a.running[info.ID]
-			state := "stopped"
+			state := "idle"
 			if run := a.running[info.ID]; run != nil {
 				state = "idle"
 				if run.busy.Load() {
@@ -353,8 +522,15 @@ func (a *app) dispatch(req request) (any, error) {
 				}
 			}
 			a.mu.Unlock()
+			outcome, outcomeErr := a.events.outcome(info.ID, active)
+			if outcomeErr != nil {
+				return nil, outcomeErr
+			}
+			if state != "running" && state != "cancelling" {
+				state = outcome.State
+			}
 			config, _ := a.loadConfig(info.ID)
-			result = append(result, map[string]any{"id": string(info.ID), "lastUpdatedAt": info.LastUpdatedAt, "title": a.title(info.ID), "active": active, "state": state, "parentSessionId": config.ParentSessionID})
+			result = append(result, map[string]any{"id": string(info.ID), "lastUpdatedAt": info.LastUpdatedAt, "title": a.title(info.ID), "active": active, "state": state, "outcome": outcome, "parentSessionId": config.ParentSessionID})
 		}
 		sort.Slice(result, func(i, j int) bool {
 			return result[i]["lastUpdatedAt"].(time.Time).After(result[j]["lastUpdatedAt"].(time.Time))
@@ -383,6 +559,10 @@ func (a *app) dispatch(req request) (any, error) {
 			return nil, err
 		}
 		return a.loadConfig(id)
+	case "question.list", "question.answer", "question.dismiss":
+		return a.questionRequest(req)
+	case "session.retry":
+		return a.retryResponse(req)
 	case "session.send":
 		p, err := decodeParams[sendParams](req.Params)
 		if err != nil {
@@ -395,6 +575,22 @@ func (a *app) dispatch(req request) (any, error) {
 		input, err := externalInput(p.Prompt, p.MessageID)
 		if err != nil {
 			return nil, err
+		}
+		if len(p.Images) > 3 {
+			return nil, errors.New("At most three images can be attached")
+		}
+		total := 0
+		for _, image := range p.Images {
+			total += len(image)
+			if !strings.HasPrefix(image, "data:image/png;base64,") && !strings.HasPrefix(image, "data:image/jpeg;base64,") && !strings.HasPrefix(image, "data:image/webp;base64,") {
+				return nil, errors.New("Unsupported image attachment")
+			}
+		}
+		if total > 8*1024*1024 {
+			return nil, errors.New("Image attachments exceed 8 MiB")
+		}
+		if len(p.Images) > 0 {
+			input.Payload, _ = json.Marshal(map[string]any{"prompt": p.Prompt, "images": p.Images})
 		}
 		if err := a.submit(id, input, p.Credential); err != nil {
 			return nil, err
@@ -410,6 +606,9 @@ func (a *app) dispatch(req request) (any, error) {
 			return nil, err
 		}
 		a.verification.stopSession(id)
+		if err := a.questions.cancel(id, "", true); err != nil {
+			return nil, err
+		}
 		a.mu.Lock()
 		run := a.running[id]
 		a.mu.Unlock()
@@ -480,6 +679,7 @@ func (a *app) dispatch(req request) (any, error) {
 		}
 		config.TeamEnabled = false
 		config.TeamManaged = false
+		config.QueueTaskID = ""
 		probe, _, err := a.makeClient(config, p.Credential)
 		if err != nil {
 			return nil, err
@@ -529,6 +729,9 @@ func (a *app) dispatch(req request) (any, error) {
 }
 
 func (a *app) title(id session.ID) string {
+	if config, err := a.loadConfig(id); err == nil && config.Title != "" {
+		return config.Title
+	}
 	page, err := a.store.Items(a.ctx, id, 0, 1000)
 	if err != nil {
 		return "New session"
@@ -571,6 +774,13 @@ func (a *app) title(id session.ID) string {
 	return "New session"
 }
 
+func (a *app) rename(id session.ID, title string) error {
+	return a.updateConfig(id, func(config *sessionConfig) error {
+		config.Title = title
+		return nil
+	})
+}
+
 func (a *app) lastCompletedTurn(id session.ID) (session.TurnID, error) {
 	var after sessionstore.Sequence
 	var latest session.TurnID
@@ -595,6 +805,30 @@ func (a *app) lastCompletedTurn(id session.ID) (session.TurnID, error) {
 	return latest, nil
 }
 
+func serveRequests(input *os.File, out *output, cancel context.CancelFunc, dispatch func(request) (any, error)) error {
+	var requests sync.WaitGroup
+	err := readRequests(input, func(req request) {
+		requests.Add(1)
+		go func() {
+			defer requests.Done()
+			result, dispatchErr := dispatch(req)
+			response := reply{Version: protocolVersion, ID: req.ID, OK: dispatchErr == nil, Result: result}
+			if dispatchErr != nil {
+				response.Error = dispatchErr.Error()
+				response.Result = nil
+			}
+			if err := out.write(response); err != nil {
+				fmt.Fprintln(os.Stderr, "write reply:", err)
+			}
+		}()
+	})
+	// EOF means the owning desktop process has gone away. Release pending
+	// approvals and host requests before waiting for their dispatch goroutines.
+	cancel()
+	requests.Wait()
+	return err
+}
+
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
@@ -607,33 +841,22 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	lease, err := acquireBridgeLease(state)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	defer lease.Close()
 	out := &output{w: os.Stdout}
 	a, err := newApp(ctx, state, out)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	var requests sync.WaitGroup
-	err = readRequests(os.Stdin, func(req request) {
-		requests.Add(1)
-		go func() {
-			defer requests.Done()
-			result, dispatchErr := a.dispatch(req)
-			response := reply{Version: protocolVersion, ID: req.ID, OK: dispatchErr == nil, Result: result}
-			if dispatchErr != nil {
-				response.Error = dispatchErr.Error()
-				response.Result = nil
-			}
-			if err := out.write(response); err != nil {
-				fmt.Fprintln(os.Stderr, "write reply:", err)
-			}
-		}()
-	})
+	err = serveRequests(os.Stdin, out, cancel, a.dispatch)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "read requests:", err)
 	}
-	requests.Wait()
-	cancel()
 	a.runs.Wait()
 	a.events.flush()
 }

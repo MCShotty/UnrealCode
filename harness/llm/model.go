@@ -26,9 +26,10 @@ type Item struct {
 }
 
 type Message struct {
-	Role  Role
-	Text  string
-	Phase string
+	Role   Role
+	Text   string
+	Phase  string
+	Images []string `json:",omitempty"`
 }
 
 type ToolCall struct {
@@ -78,6 +79,7 @@ type Tool struct {
 
 type Model struct {
 	ID              string
+	ServiceTier     string `json:",omitempty"`
 	MaxOutputTokens *int64
 	ReasoningEffort ReasoningEffort
 }
@@ -116,12 +118,13 @@ const (
 )
 
 type Response struct {
-	ID         string
-	Stop       StopReason
-	Output     []Item `json:",omitzero"`
-	Usage      Usage
-	RateLimits map[string]string `json:",omitempty"`
-	Failure    *Failure
+	ID          string
+	ServiceTier string `json:",omitempty"`
+	Stop        StopReason
+	Output      []Item `json:",omitzero"`
+	Usage       Usage
+	RateLimits  map[string]string `json:",omitempty"`
+	Failure     *Failure
 }
 
 // InputTokens includes CachedInputTokens and CacheWriteInputTokens.

@@ -8,7 +8,7 @@ function field(value: unknown, ...names: string[]): unknown { const row = record
 function number(value: unknown): number { const result = Number(value); return Number.isFinite(result) && result >= 0 ? result : 0 }
 function text(value: unknown): string { return typeof value === 'string' ? value : '' }
 
-type Stored = { seq: number; totals: UsageTotals; events: AgentEvent[]; provider: Provider; model: string; rateLimits?: Record<string, string> }
+type Stored = { seq: number; totals: UsageTotals; events: AgentEvent[]; provider: Provider; model: string; rateLimits?: Record<string, string>;requestedTier?:string;actualTier?:string }
 export function consumeUsage(totals: UsageTotals, event: AgentEvent): void {
   if (event.event === 'decision.result') {
     const usage = field(event.payload, 'usage')
@@ -57,6 +57,14 @@ export function executionFromEvents(sessionId: string, events: AgentEvent[], now
   const dispatches = new Map<string, string>()
   const approvalOperations = new Set<string>()
   const approvalWaits = new Map<string, { start: number; end?: number }>()
+  const hostWaits = new Map<string, { start: number; end?: number }>()
+  const calls = new Map<string,{tool:string;callId:string;turnId:string}>()
+  const identities = new Map<string,{tool:string;callId:string;turnId:string}>()
+  // Call status records can arrive after operation telemetry. Resolve identities
+  // independently of arrival order, using the turn as well as provider call ID.
+  for(const event of events){if(event.event!=='session.item')continue;const data=field(event.payload,'Data','data'),kind=field(event.payload,'Kind','kind'),turnId=text(field(data,'TurnID','turnId'))
+    if(kind==='model_response'){const outputs=field(field(data,'Response','response'),'Output','output');if(Array.isArray(outputs))for(const out of outputs)if(field(out,'Type','type')==='tool_call'){const call=field(out,'Data','data'),callId=text(field(call,'CallID','callId'));calls.set(`${turnId}:${callId}`,{turnId,callId,tool:text(field(call,'Name','name'))})}}}
+  for(const event of events){if(event.event!=='session.item'||field(event.payload,'Kind','kind')!=='tool_call_status')continue;const data=field(event.payload,'Data','data'),key=`${text(field(data,'TurnID','turnId'))}:${text(field(data,'CallID','callId'))}`,ids=field(field(data,'Status','status'),'WaitingFor','waitingFor');if(Array.isArray(ids)&&calls.has(key))for(const id of ids)identities.set(text(id),calls.get(key)!)}
   for (const event of events) {
     const at = milliseconds(event.recordedAt)
     if (event.event === 'operation.dispatched' && event.recordedAt) dispatches.set(text(field(event.payload, 'ID', 'id')), event.recordedAt)
@@ -65,6 +73,8 @@ export function executionFromEvents(sessionId: string, events: AgentEvent[], now
       approvalWaits.set(text(field(event.payload, 'id', 'requestId')), { start: at })
     }
     if ((event.event === 'permission.resolved' || event.event === 'host.resolved') && at !== undefined) { const wait = approvalWaits.get(text(field(event.payload, 'id','requestId'))); if (wait && wait.end === undefined) wait.end = at }
+    if(['host.read','host.team','host.model'].includes(event.event)&&at!==undefined)hostWaits.set(text(field(event.payload,'requestId')),{start:at})
+    if(event.event==='host.resolved'&&at!==undefined){const wait=hostWaits.get(text(field(event.payload,'requestId')));if(wait&&wait.end===undefined)wait.end=at}
     if (event.event === 'session.status' && ['stopped', 'error'].includes(text(field(event.payload, 'status'))) && at !== undefined) for (const wait of approvalWaits.values()) if (wait.end === undefined) wait.end = at
     if (event.event === 'model.request.started') {
       const id = text(field(event.payload, 'id'))
@@ -80,10 +90,12 @@ export function executionFromEvents(sessionId: string, events: AgentEvent[], now
       const prior = operations.get(id)
       const status = event.event === 'operation.add.failed' ? 'failed' : text(field(event.payload, 'Status', 'status')) || 'ready'
       const terminal = ['completed', 'failed', 'canceled'].includes(status)
-      const startedAt = prior?.startedAt || event.recordedAt
+      if(prior&&['completed','failed','canceled'].includes(prior.status))continue
+      const startedAt = prior?.startedAt || (event.event==='operation.started'?event.recordedAt:undefined)
       const endedAt = terminal ? event.recordedAt : prior?.endedAt
       const start = milliseconds(startedAt), end = milliseconds(endedAt)
-      operations.set(id, { id, sessionId, type: text(field(event.payload, 'Type', 'type')) || prior?.type || 'operation', status,
+      const remote=field(field(field(event.payload,'State','state'),'Plan','plan'),'Data','data')
+      operations.set(id, { id, sessionId, type: text(field(event.payload, 'Type', 'type')) || prior?.type || 'operation', tool:text(field(remote,'tool'))||prior?.tool, ...identities.get(id), status,
         startedAt, endedAt, durationMs: start === undefined ? undefined : Math.max(0, (end ?? now) - start) })
     }
   }
@@ -100,9 +112,9 @@ export function executionFromEvents(sessionId: string, events: AgentEvent[], now
   })
   const sum = toolIntervals.reduce((total, [start, end]) => total + Math.max(0, end - start), 0)
   return { operations: lanes.sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || '')),
-    modelMs: modelIntervals.reduce((total, [start, end]) => total + end - start, 0),
+    modelMs: unionLength(modelIntervals),
     modelCalls: modelIntervals.length, toolWallMs: unionLength(toolIntervals), toolOverlapMs: Math.max(0, sum - unionLength(toolIntervals)),
-    approvalWaitMs: unionLength([...approvalWaits.values()].map(wait => [wait.start, wait.end ?? now])) }
+    approvalWaitMs: unionLength([...approvalWaits.values()].map(wait => [wait.start, wait.end ?? now])),hostWaitMs:unionLength([...hostWaits.values()].map(wait=>[wait.start,wait.end??now])) }
 }
 
 export class SessionUsageService {
@@ -136,11 +148,17 @@ export class SessionUsageService {
       for (const event of page) {
         if (event.seq <= current.seq) continue
         consumeUsage(current.totals, event)
+        if(event.event==='model.request.completed'){current.requestedTier=text(field(event.payload,'requestedTier'));current.actualTier=text(field(event.payload,'actualTier'))}
         if (event.event === 'session.item' && field(event.payload, 'Kind', 'kind') === 'model_response') {
           const headers = field(field(field(event.payload, 'Data', 'data'), 'Response', 'response'), 'RateLimits', 'rateLimits')
           if (Object.keys(record(headers)).length) current.rateLimits = record(headers) as Record<string, string>
         }
         if (event.event.startsWith('model.request.') || event.event.startsWith('operation.') || event.event.startsWith('permission.') || event.event.startsWith('host.') || event.event === 'session.status') current.events.push(event)
+        else if(event.event==='session.item'){
+          const kind=field(event.payload,'Kind','kind'),data=record(field(event.payload,'Data','data'))
+          if(kind==='tool_call_status')current.events.push({...event,payload:{Kind:kind,Data:{TurnID:field(data,'TurnID','turnId'),CallID:field(data,'CallID','callId'),Status:field(data,'Status','status')}}})
+          if(kind==='model_response'){const outputs=field(field(data,'Response','response'),'Output','output');current.events.push({...event,payload:{Kind:kind,Data:{TurnID:field(data,'TurnID','turnId'),Response:{Output:Array.isArray(outputs)?outputs.filter(out=>field(out,'Type','type')==='tool_call').map(out=>({Type:'tool_call',Data:{CallID:field(field(out,'Data','data'),'CallID','callId'),Name:field(field(out,'Data','data'),'Name','name')}})):[]}}}})}
+        }
         current.seq = event.seq
       }
       if (page.length < 1000) break
@@ -155,7 +173,7 @@ export class SessionUsageService {
       const stored = await this.load(session)
       const context = await this.contextLimits.read(stored.provider, stored.model)
       return { sessionId: session.id, title: session.title, provider: stored.provider, model: stored.model, totals: { ...stored.totals },
-        contextLimit: context?.limit, contextSource: context?.source, rateLimits: stored.rateLimits }
+        contextLimit: context?.limit, contextSource: context?.source, rateLimits: stored.rateLimits,requestedTier:stored.requestedTier,actualTier:stored.actualTier }
     }))
   }
 

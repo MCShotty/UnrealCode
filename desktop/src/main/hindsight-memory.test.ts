@@ -1,0 +1,171 @@
+import {afterEach,expect,it,vi} from 'vitest'
+import {mkdtemp,rm,writeFile} from 'node:fs/promises'
+import {createHash} from 'node:crypto'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
+vi.mock('./hindsight-runtime',()=>({HindsightRuntime:class{state='ready';message='Fixture';request=vi.fn(async()=>({results:[]}));start=vi.fn(async()=>{this.state='ready'});stop=vi.fn(async()=>{});snapshot=vi.fn(async()=>{})}}))
+vi.mock('./memory-inference',()=>({MemoryInference:class{token='fixture-token';start=vi.fn(async()=> 'http://127.0.0.1:1234/v1');close=vi.fn(()=>{})}}))
+vi.mock('./docker',()=>({DockerBridge:class{}}))
+vi.mock('./settings',()=>({credentialFor:()=>({})}))
+import {HindsightMemory} from './hindsight-memory'
+const roots:string[]=[]
+afterEach(async()=>{for(const root of roots.splice(0))await rm(root,{recursive:true,force:true})})
+async function setup(){const root=await mkdtemp(join(tmpdir(),'unrealcode-memory-unit-'));roots.push(root);const memory=new HindsightMemory(root);await memory.status('project');(memory as any).value.settings={version:1,enabled:true,projects:['project']};return memory}
+const record={sessionId:'session',turnId:'turn',workspace:'project',content:'Verified test report',sourceRefs:['event:4'],createdAt:new Date().toISOString()}
+const profile={provider:'ollama' as const,model:'fixture',baseUrl:'',thinkingLevel:'low',requestLimit:20,tokenLimit:10000}
+it('rejects corrections to forgotten sources even while remote deletion is pending',async()=>{
+ const memory=await setup(),value=(memory as any).value
+ value.records.project=[{...record,id:'forgotten',content:'',state:'forgotten',attempts:3,deletionPending:true,revision:2}]
+ await expect(memory.correct('project','forgotten','Restore removed content')).rejects.toThrow('Forgotten memory')
+ expect((await memory.readRecord('project','forgotten'))).toMatchObject({content:'',state:'forgotten',deletionPending:true,revision:2})
+ expect(memory.runtime.request).not.toHaveBeenCalled()
+})
+it('requires each project to enable a replacement memory profile independently',async()=>{
+ const memory=await setup();(memory as any).value.settings.projects=['project','other']
+ vi.spyOn(memory,'stop').mockResolvedValue();vi.spyOn(memory,'start').mockResolvedValue()
+ await memory.configure(profile);(memory as any).value.settings.verifiedProfile=(memory as any).fingerprint(profile)
+ await memory.enable('project',true)
+ expect((await memory.status('other')).settings.projects).toEqual(['project'])
+})
+it('reflects only over a fresh bank of eligible source contents and removes that bank afterwards',async()=>{
+ const memory=await setup(),value=(memory as any).value;value.settings.profile=profile
+ value.records.project=[{...record,id:'safe',state:'retained',attempts:0},{...record,id:'forgotten',content:'PRIVATE_DELETED',state:'forgotten',attempts:3,deletionPending:true},{...record,id:'worker',content:'PRIVATE_WORKER',workspace:'worker',state:'retained',attempts:0}]
+ vi.mocked(memory.runtime.request).mockImplementation(async(_method,_bank,suffix)=>suffix==='/memories/recall'?{results:[{document_id:'safe'},{document_id:'forgotten'},{document_id:'worker'}]}:suffix==='/reflect'?{text:'Safe result'}:{})
+ const result=await memory.reflect('project','Summarize','project')
+ const retain=vi.mocked(memory.runtime.request).mock.calls.find(call=>call[2]==='/memories')!
+ expect(JSON.stringify(retain[3])).toContain('Verified test report');expect(JSON.stringify(retain[3])).not.toContain('PRIVATE')
+ expect(retain[1]).toMatch(/-reflect-[a-f0-9]{32}$/)
+ expect(vi.mocked(memory.runtime.request).mock.calls.at(-1)).toEqual(['DELETE',retain[1],''])
+ expect(result.text).toBe('Safe result')
+})
+it('discards reflection if a source is forgotten during generation',async()=>{
+ const memory=await setup(),value=(memory as any).value;value.settings.profile=profile;value.records.project=[{...record,id:'safe',state:'retained',attempts:0}]
+ vi.mocked(memory.runtime.request).mockImplementation(async(_method,_bank,suffix)=>{if(suffix==='/memories/recall')return {results:[{document_id:'safe'}]};if(suffix==='/reflect'){value.records.project[0].state='forgotten';return {text:'stale'}};return {}})
+ await expect(memory.reflect('project','Summarize')).rejects.toThrow('discarded')
+ expect(vi.mocked(memory.runtime.request).mock.calls.at(-1)?.[0]).toBe('DELETE')
+})
+it('reconciles a reflection bank already removed before its cleanup journal was saved',async()=>{
+ const memory=await setup(),value=(memory as any).value;value.settings.profile=profile;value.reflectionBanks=['project-test-reflect-'+'a'.repeat(32)]
+ vi.mocked(memory.runtime.request).mockImplementation(async(method)=>{if(method==='DELETE')throw Error('Hindsight HTTP 404');return {results:[]}})
+ await memory.reflect('project','Check cleanup')
+ expect(value.reflectionBanks).toEqual([])
+})
+it('deduplicates canonical turns and never recalls forgotten, foreign or unregistered sources',async()=>{
+ const memory=await setup();const scoped={...record,workspace:'worker-workspace'};await memory.record('project',scoped);await vi.waitFor(async()=>expect((await memory.status('project')).records[0].state).toBe('retained'))
+ await memory.record('project',scoped);const id=(await memory.status('project')).records[0].id
+ vi.mocked(memory.runtime.request).mockResolvedValue({results:[{document_id:id,text:'retained'},{document_id:'foreign',text:'reject'}]})
+ expect((await memory.recall('project','test','worker-workspace') as any).results).toHaveLength(1)
+ expect((await memory.recall('project','test','other-workspace') as any).results).toHaveLength(0)
+ await memory.forget('project',id)
+ expect((await memory.recall('project','test','project') as any).results).toHaveLength(0)
+ expect((await memory.status('project')).records).toHaveLength(1)
+})
+it('does not reject committed memory when its renderer notification fails',async()=>{
+ const memory=await setup()
+ memory.onChanged=()=>{throw Error('renderer closed')}
+ await memory.record('project',record)
+ await vi.waitFor(async()=>expect((await memory.status('project')).records[0].state).toBe('retained'))
+ expect((await memory.status('project')).records).toHaveLength(1)
+})
+it('reconciles a deletion made while retention is in flight',async()=>{
+ const memory=await setup();let release!:()=>void
+ vi.mocked(memory.runtime.request).mockImplementation(async(method)=>{if(method==='POST')await new Promise<void>(resolve=>release=resolve);return {}})
+ await memory.record('project',record);await vi.waitFor(()=>expect(release).toBeTypeOf('function'))
+ const id=(await memory.status('project')).records[0].id;await memory.forget('project',id);release()
+ await vi.waitFor(async()=>expect((await memory.status('project')).records[0]).toMatchObject({state:'forgotten',deletionPending:false,content:''}))
+ expect(vi.mocked(memory.runtime.request).mock.calls.map(call=>call[0])).toEqual(['POST','DELETE'])
+})
+it('retains the latest correction when an older request finishes afterwards',async()=>{
+ const memory=await setup();let release!:()=>void
+ vi.mocked(memory.runtime.request).mockImplementationOnce(async()=>{await new Promise<void>(resolve=>release=resolve);return {}})
+ await memory.record('project',record);await vi.waitFor(()=>expect(release).toBeTypeOf('function'));const id=(await memory.status('project')).records[0].id
+ await memory.correct('project',id,'Corrected evidence');release()
+ await vi.waitFor(async()=>expect((await memory.status('project')).records[0]).toMatchObject({state:'retained',content:'Corrected evidence',revision:1}))
+ expect((vi.mocked(memory.runtime.request).mock.calls.at(-1)![3] as any).items[0].content).toBe('Corrected evidence')
+})
+it('marks recalled evidence stale when its captured source file changes',async()=>{
+ const memory=await setup(),workspace=roots.at(-1)!,path=join(workspace,'source.txt');await writeFile(path,'before')
+ await memory.record('project',{...record,workspace,sourceFiles:[{path:'source.txt',sha256:createHash('sha256').update('before').digest('hex')}]})
+ await vi.waitFor(async()=>expect((await memory.status('project')).records[0].state).toBe('retained'));const id=(await memory.status('project')).records[0].id
+ vi.mocked(memory.runtime.request).mockResolvedValue({results:[{document_id:id,text:'Historical evidence'}]})
+ expect((await memory.recall('project','evidence',workspace) as any).results[0].freshness).toBe('captured-files-unchanged')
+ await writeFile(path,'later edit');expect((await memory.recall('project','evidence',workspace) as any).results[0]).toMatchObject({freshness:'stale',changedSources:['source.txt']})
+})
+it('retries only an enabled, verified project without resetting its records',async()=>{
+ const memory=await setup(),profile={provider:'ollama',model:'fixture-model',baseUrl:'',thinkingLevel:'low',requestLimit:10,tokenLimit:1000}
+ const value=(memory as any).value;value.settings.profile=profile;value.settings.verifiedProfile=(memory as any).fingerprint(profile)
+ const start=vi.spyOn(memory,'start').mockResolvedValue()
+ await expect(memory.retry('other-project')).rejects.toThrow('Enable memory for this project')
+ expect(start).not.toHaveBeenCalled()
+ await memory.retry('project')
+ expect(start).toHaveBeenCalledTimes(1)
+ expect(value.settings.projects).toEqual(['project'])
+})
+it('does not let a failed deletion block retention of a later turn',async()=>{
+ const memory=await setup()
+ await memory.record('project',record)
+ await vi.waitFor(async()=>expect((await memory.status('project')).records[0].state).toBe('retained'))
+ const id=(await memory.status('project')).records[0].id
+ vi.mocked(memory.runtime.request).mockImplementation(async(method)=>{if(method==='DELETE')throw Error('Hindsight HTTP 404');return {}})
+ await memory.forget('project',id)
+ await vi.waitFor(async()=>expect((await memory.status('project')).records[0].attempts).toBeGreaterThan(0))
+ await memory.record('project',{...record,turnId:'later-turn'})
+ await vi.waitFor(async()=>expect((await memory.status('project')).records.find(row=>row.turnId==='later-turn')?.state).toBe('retained'))
+ const forgotten=(await memory.status('project')).records.find(row=>row.id===id)!
+ expect(forgotten).toMatchObject({state:'forgotten',deletionPending:true})
+ expect(forgotten.error).toContain('HTTP 404')
+ expect(forgotten.attempts).toBeLessThanOrEqual(3)
+})
+it('leaves an exhausted tombstone visible while processing new records',async()=>{
+ const memory=await setup(),value=(memory as any).value
+ value.records.project=[{...record,id:'turn-old',state:'forgotten',content:'',attempts:3,deletionPending:true,revision:1,error:'Previous delete failed'}]
+ await memory.record('project',{...record,turnId:'new-turn'})
+ await vi.waitFor(async()=>expect((await memory.status('project')).records.find(row=>row.turnId==='new-turn')?.state).toBe('retained'))
+ expect(vi.mocked(memory.runtime.request).mock.calls.some(call=>call[0]==='DELETE')).toBe(false)
+ expect((await memory.status('project')).records[0].deletionPending).toBe(true)
+})
+it('drains a persisted outbox after automatic runtime startup',async()=>{
+ const memory=await setup(),profile={provider:'ollama',model:'fixture-model',baseUrl:'',thinkingLevel:'low',requestLimit:10,tokenLimit:1000}
+ const value=(memory as any).value;value.settings.profile=profile;value.settings.verifiedProfile=(memory as any).fingerprint(profile)
+ memory.runtime.state='disabled'
+ await memory.record('project',record)
+ expect((await memory.status('project')).records[0].state).toBe('pending')
+ await memory.start()
+ await vi.waitFor(async()=>expect((await memory.status('project')).records[0].state).toBe('retained'))
+})
+it('waits for an in-flight outbox write before stopping',async()=>{
+ const memory=await setup();let release!:()=>void
+ vi.mocked(memory.runtime.request).mockImplementationOnce(async()=>{await new Promise<void>(resolve=>release=resolve);return {}})
+ await memory.record('project',record)
+ await vi.waitFor(()=>expect(release).toBeTypeOf('function'))
+ let settled=false;const stopped=memory.stop().then(()=>{settled=true})
+ await Promise.resolve();expect(settled).toBe(false)
+ release();await stopped
+ expect((await memory.status('project')).records[0].state).toBe('retained')
+})
+it('keeps an outbox item retryable when the memory runtime stops mid-request',async()=>{
+ const memory=await setup()
+ vi.mocked(memory.runtime.request).mockImplementationOnce(async()=>{memory.runtime.state='disabled';throw Error('Memory runtime stopped before the request completed')})
+ await memory.record('project',record)
+ await (memory as any).drainTask
+ expect((await memory.status('project')).records[0]).toMatchObject({state:'pending',attempts:0})
+})
+it('bounds status payloads while paging every older project record by stable ID',async()=>{
+ const memory=await setup(),rows=Array.from({length:125},(_,index)=>({...record,id:`turn-${index}`,turnId:`turn-${index}`,content:'x'.repeat(1000),state:'retained' as const,attempts:0}))
+ ;(memory as any).value.records.project=rows
+ const status=await memory.status('project')
+ expect(status.totalRecords).toBe(125)
+ expect(status.records).toHaveLength(50)
+ expect(status.records[0].id).toBe('turn-75')
+ expect((await memory.status('project',0)).records).toEqual([])
+ const middle=await memory.recordsPage('project',status.records[0].id)
+ expect(middle.records.map(row=>row.id)).toEqual(rows.slice(25,75).map(row=>row.id))
+ expect(middle.olderCursor).toBe('turn-25')
+ const oldest=await memory.recordsPage('project',middle.olderCursor)
+ expect(oldest.records.map(row=>row.id)).toEqual(rows.slice(0,25).map(row=>row.id))
+ expect(oldest.olderCursor).toBeUndefined()
+ expect((await memory.readRecord('project','turn-0')).content).toHaveLength(1000)
+ await expect(memory.readRecord('other-project','turn-0')).rejects.toThrow('unavailable in this project')
+ await expect(memory.recordsPage('project','missing')).rejects.toThrow('cursor is stale')
+ await expect(memory.status('project',101)).rejects.toThrow('0 to 100')
+})

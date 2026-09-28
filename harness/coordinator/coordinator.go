@@ -18,8 +18,15 @@ import (
 type Dependencies struct {
 	// OnIdle observes completed external-input work after all model and tool work
 	// has drained. It must return immediately; observers may enqueue telemetry.
-	OnIdle                func([]inbox.ID)
-	OnActivity            func(bool)
+	OnIdle     func([]inbox.ID)
+	OnActivity func(bool)
+	OnFatal    func(error)
+	// InitialInputs are accepted by the host before starting a resumed loop.
+	InitialInputs              []inbox.Input
+	IncludeQueuedInputsOnStart bool
+	// ModelBlocked pauses model requests while independent operations progress.
+	ModelBlocked          func() bool
+	ModelReady            <-chan struct{}
 	ToolHeartbeatInterval time.Duration
 	SessionID             session.ID
 	Inbox                 *inbox.Inbox

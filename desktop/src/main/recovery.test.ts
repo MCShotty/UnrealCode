@@ -1,16 +1,25 @@
-import { afterEach,expect,it } from 'vitest'
+import { storageLocation } from './storage-locations'
+import { afterEach,expect,it,vi } from 'vitest'
 import { promises as fs } from 'node:fs'
-import { join } from 'node:path'
+import { dirname,join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { randomUUID } from 'node:crypto'
+import { createHash,randomUUID } from 'node:crypto'
 import { Recovery } from './recovery'
 import { Storage } from './storage'
 import { copyTree,exists } from './recovery-files'
-import { defaultVolume } from './state-volumes'
+import { defaultVolume,volumeRecords } from './state-volumes'
 import { supportDocument,recordFailure } from './support'
 let root=''
-afterEach(async()=>{if(root)await fs.rm(root,{recursive:true,force:true})})
-async function fixture(){root=await fs.mkdtemp(join(tmpdir(),'unrealcode-recovery-test-'));const data=join(root,'profile');await fs.mkdir(data);const volumes=new Map<string,string>(),adapter={existing:async(names:string[])=>names.filter(name=>volumes.has(name)),export:async(name:string,path:string)=>copyTree(volumes.get(name)!,path),import:async(path:string)=>{const name=`unrealcode-restore-${randomUUID()}`,target=join(root,name);await copyTree(path,target);volumes.set(name,target);return name}};return {data,volumes,service:new Recovery(data,'1.0.0-rc.1',adapter)}}
+afterEach(async()=>{vi.restoreAllMocks();if(root)await fs.rm(root,{recursive:true,force:true})})
+async function fixture(){root=await fs.mkdtemp(join(tmpdir(),'unrealcode-recovery-test-'));const data=join(root,'profile');await fs.mkdir(data);const volumes=new Map<string,string>(),owners=new Map<string,string|undefined>(),adapter={existing:async(names:string[])=>names.filter(name=>volumes.has(name)),inspect:async(name:string)=>({owner:owners.get(name),inUse:false}),export:async(name:string,path:string)=>copyTree(volumes.get(name)!,path),import:async(path:string,requestedVolume?:string,owner?:string)=>{const name=requestedVolume||`unrealcode-restore-${randomUUID()}`,target=join(root,name);await copyTree(path,target);volumes.set(name,target);owners.set(name,owner);return name}};return {data,volumes,owners,adapter,service:new Recovery(data,'1.0.0-rc.1',adapter)}}
+it('rejects an export whose committed directory lost files during finalization',async()=>{
+ const {data,service}=await fixture(),backup=join(root,'backup');await fs.writeFile(join(data,'settings.json'),'{}')
+ const rename=fs.rename.bind(fs)
+ vi.spyOn(fs,'rename').mockImplementationOnce(async(from,to)=>{await rename(from,to);await fs.unlink(join(String(to),'metadata','settings.json'))})
+ await expect(service.export(backup)).rejects.toThrow(`incomplete copy retained at ${backup}`)
+ expect(await fs.readFile(join(data,'settings.json'),'utf8')).toBe('{}')
+ expect(await exists(join(backup,'manifest.json'))).toBe(true)
+})
 it('backs up settings and durable sessions, excludes credential stores, and resets restored authority',async()=>{
  const {data,volumes,service}=await fixture(),project=join(root,'project'),volume=defaultVolume(project,false),source=join(root,'volume');await fs.mkdir(join(source,'sessions'),{recursive:true});await fs.writeFile(join(source,'sessions','message.json'),'saved history');volumes.set(volume,source)
  await fs.writeFile(join(data,'settings.json'),JSON.stringify({recentProjects:[project],trustedProjects:[project],theme:'light',decisionCloudProjects:[project],executionMode:'agent'}));await fs.writeFile(join(data,'secrets.json'),'private vault');await fs.writeFile(join(data,'connection-secrets.json'),'other private vault')
@@ -21,20 +30,290 @@ it('backs up settings and durable sessions, excludes credential stores, and rese
  const saved=JSON.parse(await fs.readFile(join(data,'state-volumes.json'),'utf8'));expect(saved[0].volume).not.toBe(volume);expect(await fs.readFile(join(volumes.get(saved[0].volume)!,'sessions','message.json'),'utf8')).toBe('saved history');expect(await fs.readFile(join(source,'sessions','message.json'),'utf8')).toBe('saved history')
  const connections=JSON.parse(await fs.readFile(join(data,'connections.json'),'utf8'));expect(connections.grants).toEqual([]);expect(connections.connections[0].id).not.toBe('old-server')
 })
+it('excludes unrecognized settings fields from a normal private backup while preserving the live file',async()=>{
+ const {data,service}=await fixture(),backup=join(root,'backup'),extra='fixture-private-legacy-field'
+ const original=JSON.stringify({provider:'ollama',model:'fixture',legacyCredential:extra})
+ await fs.writeFile(join(data,'settings.json'),original)
+ await service.export(backup)
+ const saved=await fs.readFile(join(backup,'metadata','settings.json'),'utf8')
+ expect(saved).toContain('fixture')
+ expect(saved).not.toContain(extra)
+ expect(await fs.readFile(join(data,'settings.json'),'utf8')).toBe(original)
+})
+it('excludes unknown nested layout fields from a normal backup',async()=>{
+ const {data,service}=await fixture(),backup=join(root,'backup'),extra='fixture-private-layout-field'
+ await fs.writeFile(join(data,'settings.json'),JSON.stringify({layout:{sessionWidth:246,legacyCredential:extra}}))
+ await service.export(backup)
+ expect(await fs.readFile(join(backup,'metadata','settings.json'),'utf8')).not.toContain(extra)
+ expect(await fs.readFile(join(data,'settings.json'),'utf8')).toContain(extra)
+})
+it('omits a legacy provider URL containing embedded credentials from a normal backup',async()=>{
+ const {data,service}=await fixture(),backup=join(root,'backup'),extra='fixture-private-url-token'
+ const original=JSON.stringify({provider:'openai-compatible',baseUrl:`http://localhost:1234/v1?api_key=${extra}`})
+ await fs.writeFile(join(data,'settings.json'),original)
+ await service.export(backup)
+ const saved=JSON.parse(await fs.readFile(join(backup,'metadata','settings.json'),'utf8'))
+ expect(saved.provider).toBe('openai-compatible')
+ expect(saved.baseUrl).toBeUndefined()
+ expect(await fs.readFile(join(data,'settings.json'),'utf8')).toBe(original)
+})
+it('preserves unknown legacy settings byte for byte in the private before-restore copy',async()=>{
+ const {data,service}=await fixture(),backup=join(root,'backup')
+ await fs.writeFile(join(data,'settings.json'),JSON.stringify({theme:'light'}))
+ await service.export(backup)
+ const original='{"theme":"dark","legacyCredential":"fixture-private-legacy-field"}'
+ await fs.writeFile(join(data,'settings.json'),original)
+ const prior=await service.restore(backup)
+ expect(await fs.readFile(join(prior,'metadata','settings.json'),'utf8')).toBe(original)
+ expect(JSON.parse(await fs.readFile(join(data,'settings.json'),'utf8')).theme).toBe('light')
+})
+it('preserves unknown legacy settings in the private pre-migration backup',async()=>{
+ const {data,service}=await fixture()
+ const original='{"theme":"dark","legacyCredential":"fixture-private-legacy-field"}'
+ await fs.writeFile(join(data,'settings.json'),original)
+ const backup=await service.migrate()
+ expect(backup).toBeTruthy()
+ expect(await fs.readFile(join(backup!,'metadata','settings.json'),'utf8')).toBe(original)
+ expect(await fs.readFile(join(data,'settings.json'),'utf8')).toBe(original)
+})
+it('rejects unreadable settings in a normal backup instead of retaining them as a successful export',async()=>{
+ const {data,service}=await fixture(),backup=join(root,'backup')
+ await fs.writeFile(join(data,'settings.json'),'[]')
+ await expect(service.export(backup)).rejects.toThrow('invalid structure')
+ expect(await fs.readFile(join(data,'settings.json'),'utf8')).toBe('[]')
+})
+it('backs up valid settings larger than the old 16 MiB volume-discovery cap',async()=>{
+ const {data,service}=await fixture(),backup=join(root,'backup')
+ const instructions=Object.fromEntries(Array.from({length:5},(_,index)=>[`project-${index}`,'x'.repeat(3_500_000)]))
+ await fs.writeFile(join(data,'settings.json'),JSON.stringify({projectInstructions:instructions}))
+ expect((await fs.stat(join(data,'settings.json'))).size).toBeGreaterThan(16*1024*1024)
+ await service.export(backup)
+ expect((await fs.stat(join(backup,'metadata','settings.json'))).size).toBeGreaterThan(16*1024*1024)
+})
 it('refuses modified, unlisted, and traversal backup data before replacing anything',async()=>{
  const {data,service}=await fixture();await fs.writeFile(join(data,'settings.json'),'{}');const backup=join(root,'backup');await service.export(backup)
  await fs.writeFile(join(backup,'metadata','settings.json'),'changed');await expect(service.preview(backup)).rejects.toThrow('integrity');expect(await fs.readFile(join(data,'settings.json'),'utf8')).toBe('{}')
  await fs.writeFile(join(backup,'metadata','settings.json'),'{}');await fs.writeFile(join(backup,'extra'),'unlisted');await expect(service.preview(backup)).rejects.toThrow('unlisted');await fs.unlink(join(backup,'extra'))
  const manifest=JSON.parse(await fs.readFile(join(backup,'manifest.json'),'utf8'));manifest.files[0].path='metadata/../../outside';await fs.writeFile(join(backup,'manifest.json'),JSON.stringify(manifest));await expect(service.preview(backup)).rejects.toThrow('Unsafe')
 })
+it('rejects duplicate volume entries and malformed file records in a backup manifest',async()=>{
+ const {data,volumes,service}=await fixture(),project=join(root,'project'),volume=defaultVolume(project,false),source=join(root,'volume'),backup=join(root,'backup')
+ await fs.mkdir(join(source,'sessions'),{recursive:true});await fs.writeFile(join(source,'sessions','event.json'),'event');volumes.set(volume,source)
+ await fs.writeFile(join(data,'settings.json'),'{}');await service.export(backup)
+ const path=join(backup,'manifest.json'),manifest=JSON.parse(await fs.readFile(path,'utf8'))
+ manifest.volumes.push({...manifest.volumes[0]});await fs.writeFile(path,JSON.stringify(manifest))
+ await expect(service.preview(backup)).rejects.toThrow('Invalid or duplicate backup volume')
+ manifest.volumes.pop();manifest.files.push(null);await fs.writeFile(path,JSON.stringify(manifest))
+ await expect(service.preview(backup)).rejects.toThrow('Invalid backup file record')
+ expect(await fs.readFile(join(data,'settings.json'),'utf8')).toBe('{}')
+})
+it('recognizes a backup from the same profile through an alternate filesystem path',async()=>{
+ const {data,service}=await fixture(),backup=join(root,'backup'),alias=join(root,'profile-alias')
+ await fs.writeFile(join(data,'settings.json'),'{}');await service.export(backup)
+ await fs.symlink(data,alias,'junction')
+ const path=join(backup,'manifest.json'),manifest=JSON.parse(await fs.readFile(path,'utf8'))
+ manifest.profile=alias;await fs.writeFile(path,JSON.stringify(manifest))
+ expect((await service.preview(backup)).profile).toBe(alias)
+ manifest.profile=join(root,'unrelated');await fs.writeFile(path,JSON.stringify(manifest))
+ await expect(service.preview(backup)).rejects.toThrow('different Windows profile')
+})
+
+it('remaps retained evaluation volumes even when their worktree was already removed',async()=>{
+ const {data,volumes,service}=await fixture(),id='dddddddd-dddd-dddd-dddd-dddddddddddd',workspace=join(data,'evaluations','worktrees',id,'0'),volume=defaultVolume(workspace,true),source=join(root,'evaluation-volume')
+ await fs.mkdir(join(source,'sessions'),{recursive:true});await fs.writeFile(join(source,'sessions','events.json'),'retained evaluation history');volumes.set(volume,source)
+ await fs.mkdir(join(data,'evaluations'));await fs.writeFile(join(data,'evaluations',`${id}.json`),JSON.stringify({id,arms:[{task:0,retainedVolume:volume}]}))
+ // Pre-registry installs can retain a volume after the checkout was removed.
+ const backup=join(root,'evaluation-backup');expect((await service.export(backup)).volumes).toBe(1)
+ await service.restore(backup)
+ const records=JSON.parse(await fs.readFile(join(data,'state-volumes.json'),'utf8')),report=JSON.parse(await fs.readFile(join(data,'evaluations',`${id}.json`),'utf8'))
+ expect(report.arms[0].retainedVolume).toBe(records[0].volume);expect(report.arms[0].retainedVolume).not.toBe(volume)
+ expect(await fs.readFile(join(source,'sessions','events.json'),'utf8')).toBe('retained evaluation history')
+})
+it('journals imported volume identities when later restore metadata fails',async()=>{
+ const {data,volumes,owners,service}=await fixture(),project=join(root,'project'),sourceVolume=defaultVolume(project,false),source=join(root,'source-volume'),backup=join(root,'backup'),reportId=randomUUID()
+ await fs.mkdir(join(source,'sessions'),{recursive:true});await fs.writeFile(join(source,'sessions','event.json'),'retained fixture');volumes.set(sourceVolume,source)
+ await fs.writeFile(join(data,'settings.json'),JSON.stringify({recentProjects:[project],theme:'dark'}))
+ await fs.mkdir(join(data,'evaluations'));await fs.writeFile(join(data,'evaluations',`${reportId}.json`),JSON.stringify({id:reportId,arms:'malformed'}))
+ await service.export(backup)
+ await expect(service.restore(backup)).rejects.toThrow('Invalid evaluation recovery metadata')
+ expect(JSON.parse(await fs.readFile(join(data,'settings.json'),'utf8')).theme).toBe('dark')
+ const areas=await fs.readdir(join(data,'recovery'))
+ const journals=(await Promise.all(areas.map(async name=>{const path=join(data,'recovery',name,'volume-imports.json');return await exists(path)?path:undefined}))).filter((path):path is string=>!!path)
+ expect(journals).toHaveLength(1)
+ const journal=JSON.parse(await fs.readFile(journals[0],'utf8'))
+ expect(journal.volumes).toHaveLength(1)
+ expect(journal.volumes[0].source).toBe(sourceVolume)
+ expect(journal.volumes[0]).toMatchObject({project,isolated:false})
+ expect(journal.volumes[0].owner).toMatch(/^[a-f0-9-]{36}$/)
+ expect(owners.get(journal.volumes[0].restored)).toBe(journal.volumes[0].owner)
+ expect(await fs.readFile(join(volumes.get(journal.volumes[0].restored)!,'sessions','event.json'),'utf8')).toBe('retained fixture')
+ expect((await new Storage(data).list()).some(row=>row.category==='recovery-volume'&&row.path===journal.volumes[0].restored&&!row.removable)).toBe(true)
+ const area=dirname(journals[0]),later=join(data,'recovery','later-completed')
+ await fs.writeFile(join(area,'complete.json'),'{}');await fs.mkdir(later);await fs.writeFile(join(later,'complete.json'),'{}')
+ await fs.utimes(area,new Date(0),new Date(0))
+ expect((await new Storage(data).list()).find(row=>row.path===area)?.removable).toBe(false)
+})
+it('rejects a backup that assigns two volumes to the same project',async()=>{
+ const {data,volumes,service}=await fixture(),project=join(root,'project'),volume=defaultVolume(project,false),source=join(root,'source-volume'),backup=join(root,'backup')
+ await fs.mkdir(join(source,'sessions'),{recursive:true});await fs.writeFile(join(source,'sessions','event.json'),'fixture');volumes.set(volume,source)
+ await fs.writeFile(join(data,'state-volumes.json'),JSON.stringify([{project,isolated:false,volume}]))
+ await service.export(backup)
+ const path=join(backup,'manifest.json'),manifest=JSON.parse(await fs.readFile(path,'utf8'))
+ manifest.volumes.push({project:project.toUpperCase(),isolated:false,volume:`unrealcode-restore-${randomUUID()}`})
+ await fs.writeFile(path,JSON.stringify(manifest))
+ await expect(service.preview(backup)).rejects.toThrow('duplicate backup volume')
+})
+it('exports a verified retained session copy and reattaches it only to an unmapped project',async()=>{
+ const {data,volumes,owners,service}=await fixture(),rawProject=join(root,'project'),source=join(root,'source-volume'),backup=join(root,'backup'),reportId=randomUUID()
+ await fs.mkdir(rawProject);const project=await fs.realpath(rawProject),sourceVolume=defaultVolume(project,false)
+ await fs.mkdir(join(source,'sessions'),{recursive:true});await fs.writeFile(join(source,'sessions','event.json'),'recoverable history');volumes.set(sourceVolume,source)
+ await fs.writeFile(join(data,'settings.json'),JSON.stringify({recentProjects:[project]}))
+ await fs.mkdir(join(data,'evaluations'));await fs.writeFile(join(data,'evaluations',`${reportId}.json`),JSON.stringify({id:reportId,arms:'malformed'}))
+ await service.export(backup)
+ await expect(service.restore(backup)).rejects.toThrow('Invalid evaluation recovery metadata')
+ const report=await service.retainedVolumes()
+ expect(report.additional).toBe(0)
+ expect(report.items).toHaveLength(1)
+ const retained=report.items[0]
+ expect(retained).toMatchObject({source:sourceVolume,project,status:'present',exportable:true,attachable:true})
+ const destination=join(root,'private-retained-copy')
+ expect(await service.exportRetainedVolume(retained.id,destination)).toBe(destination)
+ expect(await fs.readFile(join(destination,'volume','sessions','event.json'),'utf8')).toBe('recoverable history')
+ expect(JSON.parse(await fs.readFile(join(destination,'retained-volume.json'),'utf8'))).toMatchObject({backupId:retained.backupId,volume:retained.volume,project})
+ await expect(service.attachRetainedVolume(retained.id,{volume:retained.volume,project,resolvedProject:join(root,'other')})).rejects.toThrow('preview changed')
+ expect(await service.attachRetainedVolume(retained.id,{volume:retained.volume,project,resolvedProject:retained.resolvedProject!})).toBe(retained.volume)
+ expect(volumeRecords(data)).toEqual([{project,isolated:false,volume:retained.volume}])
+ expect((await service.retainedVolumes()).items).toEqual([])
+ expect(owners.get(retained.volume)).toMatch(/^[a-f0-9-]{36}$/)
+})
+it('preserves a retained volume whose owner changed or whose project already has sessions',async()=>{
+ const {data,volumes,owners,service}=await fixture(),rawProject=join(root,'project'),source=join(root,'source-volume'),backup=join(root,'backup'),reportId=randomUUID()
+ await fs.mkdir(rawProject);const project=await fs.realpath(rawProject),sourceVolume=defaultVolume(project,false)
+ await fs.mkdir(join(source,'sessions'),{recursive:true});await fs.writeFile(join(source,'sessions','event.json'),'keep');volumes.set(sourceVolume,source)
+ await fs.writeFile(join(data,'settings.json'),JSON.stringify({recentProjects:[project]}))
+ await fs.mkdir(join(data,'evaluations'));await fs.writeFile(join(data,'evaluations',`${reportId}.json`),JSON.stringify({id:reportId,arms:'malformed'}))
+ await service.export(backup);await expect(service.restore(backup)).rejects.toThrow()
+ const retained=(await service.retainedVolumes()).items[0]
+ const recordedOwner=owners.get(retained.volume)
+ owners.set(retained.volume,randomUUID())
+ expect((await service.retainedVolumes()).items[0].status).toBe('owner-mismatch')
+ await expect(service.exportRetainedVolume(retained.id,join(root,'unsafe-copy'))).rejects.toThrow('ownership')
+ owners.set(retained.volume,recordedOwner)
+ await fs.writeFile(join(data,'state-volumes.json'),JSON.stringify([{project,isolated:false,volume:sourceVolume}]))
+ expect((await service.retainedVolumes()).items[0].attachable).toBe(false)
+ await expect(service.attachRetainedVolume(retained.id,{volume:retained.volume,project,resolvedProject:retained.resolvedProject!})).rejects.toThrow('unmapped')
+ expect(volumeRecords(data)[0].volume).toBe(sourceVolume)
+})
+it('does not choose between conflicting retained restore journals',async()=>{
+ const {data,service}=await fixture(),volume=`unrealcode-restore-${randomUUID()}`,record={source:`unrealcode-${'a'.repeat(20)}`,restored:volume,owner:randomUUID(),project:join(root,'project'),isolated:false}
+ for(const name of ['first','second']){const area=join(data,'recovery',name);await fs.mkdir(area,{recursive:true});await fs.writeFile(join(area,'volume-imports.json'),JSON.stringify({format:1,backupId:randomUUID(),volumes:[record]}))}
+ await expect(service.retainedVolumes()).rejects.toThrow('same volume')
+})
+it('undoes a new mapping when the retained Docker volume changes during reattachment',async()=>{
+ const {data,volumes,owners,adapter,service}=await fixture(),rawProject=join(root,'project'),volume=`unrealcode-restore-${randomUUID()}`,owner=randomUUID(),area=join(data,'recovery','interrupted'),source=join(root,'source')
+ await fs.mkdir(rawProject);const project=await fs.realpath(rawProject)
+ await fs.mkdir(join(source,'sessions'),{recursive:true});volumes.set(volume,source);owners.set(volume,owner)
+ await fs.mkdir(area,{recursive:true});await fs.writeFile(join(area,'volume-imports.json'),JSON.stringify({format:1,backupId:randomUUID(),volumes:[{source:`unrealcode-${'a'.repeat(20)}`,restored:volume,owner,project,isolated:false}]}))
+ const item=(await service.retainedVolumes()).items[0],original=adapter.inspect,changedOwner=randomUUID()
+ let calls=0
+ vi.spyOn(adapter,'inspect').mockImplementation(async name=>++calls===4?{owner:changedOwner,inUse:false}:original(name))
+ await expect(service.attachRetainedVolume(item.id,{volume,project,resolvedProject:item.resolvedProject!})).rejects.toThrow('changed during reattachment')
+ expect(volumeRecords(data)).toEqual([])
+ expect(owners.get(volume)).toBe(owner)
+})
 it('rolls back an interrupted replacement without deleting either copy',async()=>{
  const {data,service}=await fixture(),id=randomUUID(),prior=join(data,'recovery',id,'prior');await fs.mkdir(prior,{recursive:true});await fs.writeFile(join(prior,'settings.json'),'old');await fs.writeFile(join(data,'settings.json'),'new');await fs.writeFile(join(data,'recovery-transaction.json'),JSON.stringify({id,roots:[{root:'settings.json',hadOld:true}]}));await service.rollback();expect(await fs.readFile(join(data,'settings.json'),'utf8')).toBe('old');expect(await fs.readFile(join(data,'recovery',id,'failed','settings.json'),'utf8')).toBe('new')
+})
+it('refuses rollback through a junctioned recovery folder before moving live metadata',async()=>{
+ const {data,service}=await fixture(),id=randomUUID(),area=join(data,'recovery',id),prior=join(area,'prior'),outside=join(root,'outside')
+ await fs.mkdir(prior,{recursive:true});await fs.mkdir(outside)
+ await fs.writeFile(join(prior,'settings.json'),'old');await fs.writeFile(join(data,'settings.json'),'new')
+ await fs.symlink(outside,join(area,'failed'),'junction')
+ const journal=join(data,'recovery-transaction.json');await fs.writeFile(journal,JSON.stringify({id,roots:[{root:'settings.json',hadOld:true}]}))
+ await expect(service.rollback()).rejects.toThrow('link')
+ expect(await fs.readFile(join(data,'settings.json'),'utf8')).toBe('new')
+ expect(await fs.readFile(join(prior,'settings.json'),'utf8')).toBe('old')
+ expect(await fs.readdir(outside)).toEqual([])
+ expect(await exists(journal)).toBe(true)
+})
+it('preserves an ambiguous duplicate-root recovery journal',async()=>{
+ const {data,service}=await fixture(),id=randomUUID(),journal=join(data,'recovery-transaction.json')
+ await fs.writeFile(join(data,'settings.json'),'unchanged')
+ await fs.writeFile(journal,JSON.stringify({id,roots:[{root:'settings.json',hadOld:true},{root:'settings.json',hadOld:false}]}))
+ await expect(service.rollback()).rejects.toThrow('manual inspection')
+ expect(await fs.readFile(join(data,'settings.json'),'utf8')).toBe('unchanged')
+ expect(await exists(journal)).toBe(true)
 })
 it('backs up before migration and does not accept future schema versions',async()=>{
  const {data,service}=await fixture();await fs.writeFile(join(data,'settings.json'),'{}');const backup=await service.migrate();expect(backup).toBeTruthy();expect(await exists(join(backup!,'manifest.json'))).toBe(true);expect(await service.migrate()).toBeUndefined();await fs.writeFile(join(data,'data-version.json'),'{"schema":2}');await expect(service.migrate()).rejects.toThrow('older')
 })
 it('restores valid settings while preserving a damaged current settings file',async()=>{const {data,service}=await fixture();await fs.writeFile(join(data,'settings.json'),'{"theme":"light"}');const backup=join(root,'backup');await service.export(backup);await fs.writeFile(join(data,'settings.json'),'{damaged');await expect(service.migrate()).rejects.toThrow();const prior=await service.restore(backup);expect(await fs.readFile(join(prior,'metadata','settings.json'),'utf8')).toBe('{damaged');expect(JSON.parse(await fs.readFile(join(data,'settings.json'),'utf8')).theme).toBe('light')})
+it('halts restore before replacing settings when a memory dump is missing',async()=>{
+ const {data,service}=await fixture(),directory=join(data,'memory','2026-09-28_00-00-00.000Z'),backup=join(root,'backup')
+ await fs.mkdir(directory,{recursive:true});await fs.writeFile(join(data,'settings.json'),'{"theme":"light"}')
+ await fs.writeFile(join(directory,'runtime.json'),JSON.stringify({version:1,image:'pinned',postgres:'pinned',volume:'unrealcode-memory-0123456789abcdef',cache:'unrealcode-memory-models-0123456789abcdef',backup:{sha256:'a'.repeat(64)}}))
+ await service.export(backup);await fs.writeFile(join(data,'settings.json'),'{"theme":"dark"}')
+ await expect(service.restore(backup)).rejects.toThrow('verified database dump')
+ expect(await fs.readFile(join(data,'settings.json'),'utf8')).toBe('{"theme":"dark"}')
+})
+it('restores memory metadata without a dump when Docker verified no database volume existed',async()=>{
+ const {data,service}=await fixture(),directory=join(data,'memory','2026-09-28_00-00-00.000Z'),backup=join(root,'backup'),project=join(root,'project')
+ await fs.mkdir(directory,{recursive:true});await fs.writeFile(join(data,'settings.json'),'{"theme":"light"}')
+ await fs.writeFile(join(directory,'runtime.json'),JSON.stringify({version:1,image:'pinned',postgres:'pinned',volume:'unrealcode-memory-0123456789abcdef',cache:'unrealcode-memory-models-0123456789abcdef',backup:{empty:true}}))
+ await fs.writeFile(join(directory,'memory.json'),JSON.stringify({version:1,settings:{version:1,enabled:true,projects:[project]},records:{[project]:[{id:'turn-a',state:'retained',attempts:0,content:'fixture'},{id:'turn-forgotten',state:'forgotten',attempts:0,content:'',deletionPending:false}]}}))
+ await service.export(backup);await fs.writeFile(join(data,'settings.json'),'{"theme":"dark"}')
+ await service.restore(backup)
+ const runtime=JSON.parse(await fs.readFile(join(directory,'runtime.json'),'utf8')),memory=JSON.parse(await fs.readFile(join(directory,'memory.json'),'utf8'))
+ expect(runtime.restoreRequired).toBe(true);expect(runtime.generation).toMatch(/^[a-f0-9-]{36}$/)
+ expect(memory.settings).toMatchObject({enabled:false,projects:[]})
+ expect(memory.records[project][0]).toMatchObject({state:'pending',attempts:0})
+ expect(memory.records[project][1]).toMatchObject({state:'forgotten',deletionPending:false,content:''})
+})
+it('rejects a contradictory empty-memory marker before replacing settings',async()=>{
+ const {data,service}=await fixture(),directory=join(data,'memory','2026-09-28_00-00-00.000Z'),backup=join(root,'backup'),dump='verified but contradictory dump'
+ await fs.mkdir(directory,{recursive:true});await fs.writeFile(join(data,'settings.json'),'{"theme":"light"}')
+ await fs.writeFile(join(directory,'database.dump'),dump)
+ await fs.writeFile(join(directory,'runtime.json'),JSON.stringify({version:1,image:'pinned',postgres:'pinned',volume:'unrealcode-memory-0123456789abcdef',cache:'unrealcode-memory-models-0123456789abcdef',backup:{empty:true,sha256:createHash('sha256').update(dump).digest('hex')}}))
+ await service.export(backup);await fs.writeFile(join(data,'settings.json'),'{"theme":"dark"}')
+ await expect(service.restore(backup)).rejects.toThrow('verified database dump')
+ expect(await fs.readFile(join(data,'settings.json'),'utf8')).toBe('{"theme":"dark"}')
+})
+it('halts restore before replacing settings when backed-up memory metadata is unsupported',async()=>{
+ const {data,service}=await fixture(),directory=join(data,'memory','2026-09-28_00-00-00.000Z'),backup=join(root,'backup')
+ await fs.mkdir(directory,{recursive:true});await fs.writeFile(join(data,'settings.json'),'{"theme":"light"}')
+ await fs.writeFile(join(directory,'memory.json'),JSON.stringify({version:2,settings:{},records:{}}))
+ await service.export(backup);await fs.writeFile(join(data,'settings.json'),'{"theme":"dark"}')
+ await expect(service.restore(backup)).rejects.toThrow('Invalid memory recovery metadata')
+ expect(await fs.readFile(join(data,'settings.json'),'utf8')).toBe('{"theme":"dark"}')
+})
+it('restores a verified memory dump into a new, disabled runtime identity',async()=>{
+ const {data,service}=await fixture(),directory=join(data,'memory','2026-09-28_00-00-00.000Z'),backup=join(root,'backup'),project=join(root,'project'),dump='synthetic verified dump'
+ await fs.mkdir(directory,{recursive:true});await fs.writeFile(join(data,'settings.json'),'{"theme":"light"}')
+ await fs.writeFile(join(directory,'database.dump'),dump)
+ await fs.writeFile(join(directory,'runtime.json'),JSON.stringify({version:1,image:'pinned',postgres:'pinned',volume:'unrealcode-memory-0123456789abcdef',cache:'unrealcode-memory-models-0123456789abcdef',generation:'',backup:{sha256:createHash('sha256').update(dump).digest('hex')}}))
+ await fs.writeFile(join(directory,'memory.json'),JSON.stringify({version:1,settings:{version:1,enabled:true,projects:[project],verifiedProfile:'prior'},records:{[project]:[{id:'turn-a',state:'retained',attempts:0,content:'fixture'},{id:'turn-forgotten',state:'forgotten',attempts:0,content:'',deletionPending:false}]}}))
+ await service.export(backup);await fs.writeFile(join(data,'settings.json'),'{"theme":"dark"}')
+ await service.restore(backup)
+ const runtime=JSON.parse(await fs.readFile(join(directory,'runtime.json'),'utf8')),memory=JSON.parse(await fs.readFile(join(directory,'memory.json'),'utf8'))
+ expect(runtime.restoreRequired).toBe(true);expect(runtime.generation).toMatch(/^[a-f0-9-]{36}$/)
+ expect(memory.settings).toMatchObject({enabled:false,projects:[]})
+ expect(memory.settings.verifiedProfile).toBeUndefined()
+ expect(memory.records[project][0]).toMatchObject({state:'pending',attempts:0,content:'fixture'})
+ expect(memory.records[project][1]).toMatchObject({state:'forgotten',deletionPending:true,attempts:0,content:''})
+})
 it('blocks stale cleanup previews and never makes unfinished work removable',async()=>{
  const {data}=await fixture(),index=join(data,'workspaces','p','search');await fs.mkdir(index,{recursive:true});await fs.writeFile(join(index,'a.jsonl'),'old');await fs.mkdir(join(data,'workspaces','p','tasks','worktrees','unfinished'),{recursive:true});const store=new Storage(data),rows=await store.list(),row=rows.find(item=>item.category==='index')!;expect(rows.find(item=>item.category==='worktrees')?.removable).toBe(false);await fs.writeFile(join(index,'a.jsonl'),'later change');await expect(store.remove([row.id])).rejects.toThrow('changed');await store.remove([(await store.list()).find(item=>item.category==='index')!.id]);expect(await exists(index)).toBe(false)
 })
 it('support output contains failure categories without raw errors or secrets',()=>{recordFailure('provider:connect',new Error('Bearer pretend-secret /private/project'));const document=supportDocument('test',{backendReady:false,openProjects:1,migrationBlocked:false,updateState:'unavailable'});expect(document).toContain('provider:connect');expect(document).not.toContain('pretend-secret');expect(document).not.toContain('/private/project')})
+
+it('remaps retained evaluation volumes with timestamp storage after restoration',async()=>{
+  const {data,volumes,service}=await fixture(),id=randomUUID(),directory=join(data,'evaluations')
+  const workspace=storageLocation(directory,'worktrees',`${id}:0`),volume=defaultVolume(workspace,true),source=join(root,'timestamp-evaluation-volume')
+  await fs.mkdir(join(source,'sessions'),{recursive:true});await fs.writeFile(join(source,'sessions','events.json'),'history');volumes.set(volume,source)
+  await fs.writeFile(join(data,'state-volumes.json'),JSON.stringify([{project:workspace,isolated:true,volume}]))
+  await fs.writeFile(join(directory,`${id}.json`),JSON.stringify({id,arms:[{task:0,retainedVolume:volume}]}))
+  const backup=join(root,'timestamp-backup');await service.export(backup);await service.restore(backup)
+  const records=JSON.parse(await fs.readFile(join(data,'state-volumes.json'),'utf8')),report=JSON.parse(await fs.readFile(join(directory,`${id}.json`),'utf8'))
+  expect(report.arms[0].retainedVolume).toBe(records[0].volume)
+  expect(report.arms[0].retainedVolume).not.toBe(volume)
+})

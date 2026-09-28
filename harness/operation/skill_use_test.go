@@ -2,7 +2,6 @@ package operation_test
 
 import (
 	"encoding/json/v2"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,7 +47,7 @@ func TestSkillUseOperationResumesPartialRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := oneDispatchData[primitives.IOReadRequest](t, step, primitives.PrimitiveDispatchIORead)
-	if request.Path != path || request.Offset != int64(len("complete ")) || request.Count != math.MaxInt64 {
+	if request.Path != path || request.Offset != int64(len("complete ")) || request.Count != operation.MaxSkillContentBytes-int64(len("complete "))+1 {
 		t.Fatalf("read request = %#v", request)
 	}
 
@@ -79,6 +78,26 @@ func TestSkillUseOperationReportsReadFailure(t *testing.T) {
 	}
 	if failed.Status != operation.StatusFailed || !strings.Contains(state.TerminalError, "open") {
 		t.Fatalf("operation = %#v, state = %#v", failed, state)
+	}
+}
+
+func TestSkillUseRejectsOversizedContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SKILL.md")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", 512*1024+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	current := newSkillUseOperation(t, "oversized-skill", path)
+	manager := operation.NewLocalOperationManager(t.Context())
+	if err := manager.Add(current); err != nil {
+		t.Fatal(err)
+	}
+	completed := receiveTerminalOperation(t, manager.Updates(), current.ID)
+	state, err := operation.DecodeSkillUse(completed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.Status != operation.StatusFailed || !strings.Contains(state.TerminalError, "size limit") {
+		t.Fatalf("oversized skill status = %q, content bytes = %d, error = %q", completed.Status, len(state.Content), state.TerminalError)
 	}
 }
 

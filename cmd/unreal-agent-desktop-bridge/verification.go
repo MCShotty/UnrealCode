@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/unreallabsai/unreal-agent/harness/operation"
 	"github.com/unreallabsai/unreal-agent/harness/session"
 	"os/exec"
 	"slices"
@@ -149,6 +150,13 @@ func (a *app) verifyCommand(p verificationParams) (verificationResult, error) {
 		}
 	}
 	result.Output = output.text()
+	if ctx.Err() == nil {
+		if hookErr := a.runHooks(ctx, id, config.WorkspaceID, "verification", "Bash", operation.ID(p.ID)); hookErr != nil {
+			result.ExitCode = -1
+			err = hookErr
+			result.Output += "\nVerification hook failed: " + hookErr.Error()
+		}
+	}
 	result.DurationMS = time.Since(start).Milliseconds()
 	result.Cancelled = ctx.Err() != nil
 	status := "completed"

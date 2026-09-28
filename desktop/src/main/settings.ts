@@ -1,10 +1,11 @@
 import { app, safeStorage } from 'electron'
-import { existsSync, readFileSync, mkdirSync, writeFileSync, copyFileSync, renameSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync, copyFileSync, renameSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { Provider, Settings } from '../shared/api'
+import { isCredentialFreeProviderURL, knownSettings, type Provider, type Settings } from '../shared/api'
 import { parseCodexAuth } from './codex-auth'
+import { readBoundedJSONSync } from './bounded-file-read'
 
 const defaults: Settings = {
   recentProjects: [], trustedProjects: [], provider: 'openai-codex', model: 'gpt-6-astra',
@@ -12,6 +13,41 @@ const defaults: Settings = {
   layout: { sessionWidth: 246, activityWidth: 340, sessions: true, activity: true, focus: false },
   notifications: false, executionMode: 'ask', taskIsolation: true, autoCompaction: false,
   decisionEngine: 'off', decisionSetupSeen: false, decisionModel: 'jev-latest', decisionCloudProjects: [], decisionCloudDeclinedProjects: [], glinerEnabled: false
+}
+
+const providers: Provider[] = ['openai','openai-codex','anthropic','openrouter','fireworks','ollama','openai-compatible']
+function validateSettingsPatch(patch: Partial<Settings>): void {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('Invalid settings update')
+  const has = (key: keyof Settings) => Object.hasOwn(patch, key)
+  const bounded = (value: unknown, limit: number): boolean => typeof value === 'string' && Buffer.byteLength(value) <= limit
+  const paths = (value: unknown): boolean => Array.isArray(value) && value.length <= 10000 && value.every(item => bounded(item, 32768))
+  for (const key of ['recentProjects','trustedProjects','decisionCloudProjects','decisionCloudDeclinedProjects'] as const) if (has(key) && !paths(patch[key])) throw new Error('Invalid saved project paths')
+  if (has('provider') && !providers.includes(patch.provider as Provider)) throw new Error('Invalid provider')
+  if (has('model') && !bounded(patch.model, 1024)) throw new Error('Invalid model ID')
+  if (has('thinkingLevel') && !['low','medium','high','xhigh','max'].includes(patch.thinkingLevel as string)) throw new Error('Invalid reasoning level')
+  if (has('systemPrompt') && !bounded(patch.systemPrompt, 4 * 1024 * 1024)) throw new Error('Invalid agent instructions')
+  if (has('projectInstructions')) {
+    const value = patch.projectInstructions
+    if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length > 1000 ||
+      Object.entries(value).some(([key, text]) => !key || key.length > 32768 || ['__proto__','constructor','prototype'].includes(key) || !bounded(text, 4 * 1024 * 1024)) ||
+      Buffer.byteLength(JSON.stringify(value)) > 32 * 1024 * 1024) throw new Error('Invalid project instructions')
+  }
+  if (has('disallowedTools') && (!Array.isArray(patch.disallowedTools) || patch.disallowedTools.length > 1000 || patch.disallowedTools.some(value => !bounded(value, 256) || !value))) throw new Error('Invalid tool restrictions')
+  if (has('baseUrl') && !isCredentialFreeProviderURL(patch.baseUrl)) throw new Error('Invalid provider URL')
+  if (has('decisionEngine') && !['off','jev','laya'].includes(patch.decisionEngine as string)) throw new Error('Invalid decision engine')
+  if (has('decisionSetupSeen') && typeof patch.decisionSetupSeen !== 'boolean') throw new Error('Invalid decision setup preference')
+  if (has('decisionModel') && !bounded(patch.decisionModel, 1024)) throw new Error('Invalid decision model')
+  if (has('glinerEnabled') && typeof patch.glinerEnabled !== 'boolean') throw new Error('Invalid GLiNER preference')
+  if (has('theme') && !['dark','light','system'].includes(patch.theme as string)) throw new Error('Invalid theme')
+  if (has('executionMode') && !['plan','ask','agent'].includes(patch.executionMode as string)) throw new Error('Invalid execution mode')
+  for (const key of ['notifications','taskIsolation','autoCompaction'] as const) if (has(key) && typeof patch[key] !== 'boolean') throw new Error('Invalid saved app preference')
+  if (has('layout')) {
+    const layout = patch.layout
+    if (!layout || typeof layout !== 'object' || Array.isArray(layout) ||
+      (Object.hasOwn(layout,'sessionWidth') && !Number.isFinite(layout.sessionWidth)) ||
+      (Object.hasOwn(layout,'activityWidth') && !Number.isFinite(layout.activityWidth)) ||
+      (['sessions','activity','focus'] as const).some(key => Object.hasOwn(layout,key) && typeof layout[key] !== 'boolean')) throw new Error('Invalid saved layout')
+  }
 }
 
 type SecretFile = Record<string, string>
@@ -26,29 +62,37 @@ export function migrateLegacySettings(): void {
   const previous = join(legacy, 'settings.json')
   if (!existsSync(previous)) return
   const current = readJSON<Partial<Settings>>(previous, {})
+  validateSettingsPatch(current)
   writeJSON(settingsPath(), { ...defaults, ...current })
   const oldSecrets = join(legacy, 'secrets.json')
   if (existsSync(oldSecrets) && !existsSync(secretsPath())) copyFileSync(oldSecrets, secretsPath())
 }
 
-function readJSON<T>(path: string, fallback: T): T {
+function readJSON<T>(path: string, fallback: T, limit=64*1024*1024): T {
   if (!existsSync(path)) return fallback
-  try { return JSON.parse(readFileSync(path, 'utf8')) as T } catch { throw new Error('Saved app data is unreadable. Restore a recovery backup; the original file has been preserved.') }
+  try { return readBoundedJSONSync<T>(path,limit) }
+  catch (error) { if (error instanceof SyntaxError) throw new Error('Saved app data is unreadable. Restore a recovery backup; the original file has been preserved.', { cause:error }); throw error }
 }
 function writeJSON(path: string, data: unknown): void {
   mkdirSync(dirname(path), { recursive: true })
+  const encoded=JSON.stringify(data,null,2)
+  if(Buffer.byteLength(encoded)>64*1024*1024)throw Error('Saved metadata exceeds its safe size limit; the original file is preserved')
   const temporary=`${path}.${randomUUID()}.tmp`
-  writeFileSync(temporary, JSON.stringify(data, null, 2), { mode: 0o600 })
+  writeFileSync(temporary, encoded, { mode: 0o600 })
   renameSync(temporary,path)
 }
 
+function storedSettings():Record<string,unknown>{const value=readJSON<unknown>(settingsPath(),{});validateSettingsPatch(value as Partial<Settings>);return value as Record<string,unknown>}
+function writeSettings(value:Settings):void{writeJSON(settingsPath(),{...storedSettings(),...value})}
 export function getSettings(): Settings {
-  const stored = readJSON<Partial<Settings>>(settingsPath(), {})
-  return { ...defaults, ...stored, layout: { ...defaults.layout, ...stored.layout } }
+  const stored=storedSettings()
+  const recognized=knownSettings(stored)
+  return { ...defaults, ...recognized, layout: { ...defaults.layout, ...recognized.layout } }
 }
 export function defaultSettings():Settings{return structuredClone(defaults)}
 
 export function updateSettings(patch: Partial<Settings>): Settings {
+  validateSettingsPatch(patch)
   const allowed: (keyof Settings)[] = ['provider', 'model', 'thinkingLevel', 'systemPrompt', 'projectInstructions', 'theme', 'disallowedTools', 'baseUrl', 'decisionEngine', 'decisionSetupSeen', 'decisionModel', 'glinerEnabled']
   const next = getSettings()
   if(patch.autoCompaction!==undefined){if(typeof patch.autoCompaction!=='boolean')throw new Error('Invalid compaction preference');next.autoCompaction=patch.autoCompaction}
@@ -65,7 +109,7 @@ export function updateSettings(patch: Partial<Settings>): Settings {
   for (const key of allowed) {
     if (Object.hasOwn(patch, key)) (next as unknown as Record<string, unknown>)[key] = patch[key]
   }
-  writeJSON(settingsPath(), next)
+  writeSettings(next)
   return next
 }
 
@@ -73,21 +117,27 @@ export function rememberProject(path: string): void {
   const current = getSettings()
   current.trustedProjects = [...new Set([...current.trustedProjects, path])]
   current.recentProjects = [path, ...current.recentProjects.filter((item) => item !== path)].slice(0, 10)
-  writeJSON(settingsPath(), current)
+  writeSettings(current)
 }
 
 export function setDecisionConsent(path: string, allowed: boolean): void {
   const current = getSettings()
   current.decisionCloudProjects = allowed ? [...new Set([...current.decisionCloudProjects, path])] : current.decisionCloudProjects.filter((item) => item !== path)
   current.decisionCloudDeclinedProjects = allowed ? current.decisionCloudDeclinedProjects.filter((item) => item !== path) : [...new Set([...current.decisionCloudDeclinedProjects, path])]
-  writeJSON(settingsPath(), current)
+  writeSettings(current)
+}
+
+function readSecrets():SecretFile {
+  const value=readJSON<unknown>(secretsPath(),{},1024*1024)
+  if(!value||typeof value!=='object'||Array.isArray(value)||Object.entries(value).some(([name,encoded])=>!name||name.length>100||typeof encoded!=='string'||encoded.length>65536))throw Error('Saved credential store is unreadable. The original file was preserved; inspect a recovery backup before changing credentials.')
+  return value as SecretFile
 }
 
 export function saveKey(provider: string, key: string): void {
   if (!['openai', 'anthropic', 'openrouter', 'fireworks', 'openai-compatible'].includes(provider)) throw new Error('Unsupported API-key provider')
-  if (!key.trim()) throw new Error('API key is empty')
+  if (!validSecret(key)) throw new Error('Invalid API key; enter a single-line key below 16 KiB')
   if (safeStorage.isEncryptionAvailable()) {
-    const secrets = readJSON<SecretFile>(secretsPath(), {})
+    const secrets = readSecrets()
     secrets[provider] = safeStorage.encryptString(key.trim()).toString('base64')
     writeJSON(secretsPath(), secrets)
   } else {
@@ -97,7 +147,7 @@ export function saveKey(provider: string, key: string): void {
 
 export function getKey(provider: string): string {
   if (sessionKeys.has(provider)) return sessionKeys.get(provider) ?? ''
-  const encoded = readJSON<SecretFile>(secretsPath(), {})[provider]
+  const encoded = readSecrets()[provider]
   if (!encoded || !safeStorage.isEncryptionAvailable()) return ''
   try { return safeStorage.decryptString(Buffer.from(encoded, 'base64')) } catch { return '' }
 }
@@ -109,11 +159,15 @@ function adminName(provider: 'openai' | 'anthropic'): string {
   return `admin:${provider}`
 }
 
+function validSecret(value: unknown): value is string {
+  return typeof value === 'string' && !!value.trim() && Buffer.byteLength(value.trim()) <= 16384 && !/[\r\n\0]/.test(value)
+}
+
 export function saveAdminKey(provider: 'openai' | 'anthropic', key: string): void {
-  if (!key.trim()) throw new Error('Admin key is empty')
+  if (!validSecret(key)) throw new Error('Invalid admin key; enter a single-line key below 16 KiB')
   const name = adminName(provider)
   if (safeStorage.isEncryptionAvailable()) {
-    const secrets = readJSON<SecretFile>(secretsPath(), {})
+    const secrets = readSecrets()
     secrets[name] = safeStorage.encryptString(key.trim()).toString('base64')
     writeJSON(secretsPath(), secrets)
   } else sessionKeys.set(name, key.trim())
@@ -122,7 +176,7 @@ export function saveAdminKey(provider: 'openai' | 'anthropic', key: string): voi
 export function getAdminKey(provider: 'openai' | 'anthropic'): string {
   const name = adminName(provider)
   if (sessionKeys.has(name)) return sessionKeys.get(name) || ''
-  const encoded = readJSON<SecretFile>(secretsPath(), {})[name]
+  const encoded = readSecrets()[name]
   if (!encoded || !safeStorage.isEncryptionAvailable()) return ''
   try { return safeStorage.decryptString(Buffer.from(encoded, 'base64')) } catch { return '' }
 }
@@ -132,7 +186,7 @@ export function hasAdminKey(provider: 'openai' | 'anthropic'): boolean { return 
 export function clearAdminKey(provider: 'openai' | 'anthropic'): void {
   const name = adminName(provider)
   sessionKeys.delete(name)
-  const secrets = readJSON<SecretFile>(secretsPath(), {})
+  const secrets = readSecrets()
   if (Object.hasOwn(secrets, name)) { delete secrets[name]; writeJSON(secretsPath(), secrets) }
 }
 

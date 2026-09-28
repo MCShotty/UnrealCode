@@ -9,7 +9,10 @@ import (
 	"github.com/unreallabsai/unreal-agent/harness/session"
 )
 
-var credentialPattern = regexp.MustCompile(`(?i)(bearer\s+|sk-[a-z0-9_-]{8,}|gh[pousr]_[a-z0-9_]{8,}|(?:api[_-]?key|password|token|secret)\s*[:=]\s*)[^\s]*`)
+// Credential values can contain spaces, quotes, escapes, and newlines. A
+// best-effort replacement may leave part of a value behind, so decision
+// preflight withholds the whole evidence field when it finds a credential.
+var credentialPattern = regexp.MustCompile(`(?i)(bearer\s+|sk-[a-z0-9_-]{8,}|gh[pousr]_[a-z0-9_]{8,}|(?:api[\s_-]*key|password|token|secret|authorization|(?:database|db)[_-]?url|connection[\s_-]*string)\s*(?:[:=]|\bis\b))`)
 var taskHintPattern = regexp.MustCompile(`(?i)\b(fix|implement|add|change|refactor|review|audit|debug|investigate|test|build|create|migrate|deploy|delete)\b`)
 
 func shouldPreflight(prompt string) bool {
@@ -17,15 +20,20 @@ func shouldPreflight(prompt string) bool {
 	return len(trimmed) >= 24 && taskHintPattern.MatchString(trimmed)
 }
 
+func decisionEvidenceSafe(text string) bool {
+	return !credentialPattern.MatchString(text) &&
+		!(strings.Contains(text, "-----BEGIN ") && strings.Contains(text, "PRIVATE KEY-----"))
+}
+
 func (a *app) preflight(id session.ID, prompt string) string {
 	if !shouldPreflight(prompt) || !a.decision.available() {
 		return ""
 	}
-	if strings.Contains(prompt, "-----BEGIN ") && strings.Contains(prompt, "PRIVATE KEY-----") {
-		_ = a.events.append(id, "decision.error", map[string]string{"message": "Decision preflight withheld text containing a private key."}, 0)
+	if !decisionEvidenceSafe(prompt) {
+		_ = a.events.append(id, "decision.error", map[string]string{"message": "Decision preflight withheld credential-bearing text."}, 0)
 		return ""
 	}
-	focused := credentialPattern.ReplaceAllString(prompt, "[credential redacted]")
+	focused := prompt
 	if len(focused) > 12000 {
 		focused = focused[:12000]
 	}

@@ -72,6 +72,48 @@ func TestDecisionBatchUsesConfiguredJevAndPreservesProbabilities(t *testing.T) {
 	}
 }
 
+func TestNoulProseCriteriaBecomesInstructions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Questions map[string]decisionQuestion `json:"questions"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		question := body.Questions["coverage"]
+		if question.Criteria != nil {
+			t.Errorf("invalid Noul criteria sent to TypeSafe: %#v", question.Criteria)
+		}
+		instructions, ok := question.Instructions.([]any)
+		if !ok || len(instructions) != 2 || instructions[0] != "Does this omit a requirement?" {
+			t.Errorf("Noul question lost its instructions: %#v", question.Instructions)
+		} else if guidance, ok := instructions[1].(map[string]any); !ok || guidance["guidance"] != "Compare against the README requirements." {
+			t.Errorf("Noul question lost its guidance: %#v", question.Instructions)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"jev-1.13.0","answers":{"coverage":{"type":"noul","noul":0.13}},"usage":{"input_tokens":20,"output_tokens":4}}`))
+	}))
+	defer server.Close()
+	runtime := newDecisionRuntime()
+	runtime.endpoint = server.URL
+	if err := runtime.configure(decisionConfig{Engine: "jev", APIKey: "fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	batch := decisionBatch{State: "implementation summary", Questions: map[string]decisionQuestion{
+		"coverage": {Type: "noul", Instructions: "Does this omit a requirement?", Criteria: "Compare against the README requirements."},
+	}}
+	result, err := runtime.evaluate(context.Background(), batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Model != "jev-1.13.0" || len(result.Answers) != 1 {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	if batch.Questions["coverage"].Criteria != "Compare against the README requirements." {
+		t.Fatal("normalization mutated the original batch")
+	}
+}
+
 func TestDecisionToolIsRegisteredWithoutChangingBuiltins(t *testing.T) {
 	definitions := decisionTools()
 	if len(definitions) != 2 || definitions[0].Definition.Tool.Name != decisionToolName {
@@ -138,11 +180,26 @@ func TestInFlightDecisionKeepsOriginalEngineAfterGlobalSwitch(t *testing.T) {
 	}
 }
 
-func TestPreflightCredentialRedaction(t *testing.T) {
-	input := "Review Bearer private-token-value and sk-long-secret-value in this request"
-	redacted := credentialPattern.ReplaceAllString(input, "[credential redacted]")
-	if strings.Contains(redacted, "private-token-value") || strings.Contains(redacted, "sk-long-secret-value") {
-		t.Fatalf("credential remained in decision state: %s", redacted)
+func TestDecisionEvidenceWithholdsCredentialBearingText(t *testing.T) {
+	for _, input := range []string{
+		"Review Bearer private-token-value in this request",
+		"Review sk-long-secret-value in this request",
+		"Review password: \"alpha beta gamma\" in this request",
+		"Review api_key='alpha beta gamma' in this request",
+		"Review secret = \"alpha\\\" beta gamma\" in this request",
+		"Review token: \"alpha\nbeta gamma\" in this request",
+		"Review API key: \"alpha beta gamma\" in this request",
+		"Review password is \"alpha beta gamma\" in this request",
+		"Review Authorization: Basic alpha-beta in this request",
+		"Review DATABASE_URL=postgres://name:secret@example.test/db in this request",
+		"Review -----BEGIN PRIVATE KEY-----\nprivate material\n-----END PRIVATE KEY-----",
+	} {
+		if decisionEvidenceSafe(input) {
+			t.Fatalf("credential-bearing evidence was accepted: %q", input)
+		}
+	}
+	if !decisionEvidenceSafe("Fix the parser and add a focused regression test.") {
+		t.Fatal("safe task evidence was withheld")
 	}
 }
 

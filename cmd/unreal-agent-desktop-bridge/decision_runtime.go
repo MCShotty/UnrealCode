@@ -135,7 +135,27 @@ func validateDecisionBatch(batch decisionBatch) error {
 	return nil
 }
 
+// Models sometimes supply prose as Noul criteria. TypeSafe only accepts an
+// optional {true, false} object there, so keep that prose as question guidance.
+func normalizeDecisionBatch(batch decisionBatch) decisionBatch {
+	normalized := batch
+	normalized.Questions = make(map[string]decisionQuestion, len(batch.Questions))
+	for name, question := range batch.Questions {
+		if question.Type == "noul" {
+			if guidance, ok := question.Criteria.(string); ok {
+				if strings.TrimSpace(guidance) != "" {
+					question.Instructions = []any{question.Instructions, map[string]any{"guidance": guidance}}
+				}
+				question.Criteria = nil
+			}
+		}
+		normalized.Questions[name] = question
+	}
+	return normalized
+}
+
 func (runtime *decisionRuntime) evaluate(ctx context.Context, batch decisionBatch) (decisionResult, error) {
+	batch = normalizeDecisionBatch(batch)
 	if err := validateDecisionBatch(batch); err != nil {
 		return decisionResult{}, err
 	}

@@ -116,13 +116,13 @@ func (a *app) verifyPostflight(id session.ID, candidate postflightCandidate) {
 	if delta == "" {
 		return
 	}
-	if strings.Contains(delta, "-----BEGIN ") && strings.Contains(delta, "PRIVATE KEY-----") {
-		_ = a.events.append(id, "decision.error", map[string]string{"message": "Post-change decision withheld text containing a private key."}, 0)
+	if !decisionEvidenceSafe(candidate.prompt) || !decisionEvidenceSafe(delta) {
+		_ = a.events.append(id, "decision.error", map[string]string{"message": "Post-change decision withheld credential-bearing text."}, 0)
 		return
 	}
 	state := map[string]string{
-		"request":      credentialPattern.ReplaceAllString(candidate.prompt, "[credential redacted]"),
-		"change_delta": credentialPattern.ReplaceAllString(delta, "[credential redacted]"),
+		"request":      candidate.prompt,
+		"change_delta": delta,
 	}
 	batch := decisionBatch{State: state, SourceRefs: []string{"user-message", "git-change-delta"}, Questions: map[string]decisionQuestion{
 		"requirement_alignment": {Type: "noul", Instructions: "Does change_delta provide concrete evidence that code or files changed toward request? Answer uncertain when only a filename is visible."},

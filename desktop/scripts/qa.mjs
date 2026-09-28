@@ -1,34 +1,36 @@
 import { _electron as electron } from 'playwright'
-import { resolve, join, sep } from 'node:path'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { resolve, join, sep, dirname } from 'node:path'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 
 const desktop = resolve(import.meta.dirname, '..')
 const packaged = process.argv.includes('--packaged')
-const executablePath = packaged ? resolve(desktop, 'dist/win-unpacked/UnrealCode.exe') : resolve(desktop, 'node_modules/electron/dist/electron.exe')
+const executablePath = packaged ? resolve(process.env.UNREALCODE_QA_EXECUTABLE || resolve(desktop, 'dist/win-unpacked/UnrealCode.exe')) : resolve(desktop, 'node_modules/electron/dist/electron.exe')
 const qaData = mkdtempSync(join(tmpdir(), 'unrealcode-qa-'))
+const screenshots = join(qaData, 'screens')
+mkdirSync(screenshots)
 const qaWorkspace = process.argv.includes('--skills') || process.argv.includes('--temp-workspace') || process.argv.includes('--github-actions') ? mkdtempSync(join(tmpdir(), 'unrealcode-workspace-qa-')) : null
-const launchEnv = { ...process.env, UNREAL_DESKTOP_USER_DATA: qaData, ELECTRON_DISABLE_SECURITY_WARNINGS: 'true' }
+const launchEnv = { ...process.env, UNREAL_DESKTOP_USER_DATA: qaData, UNREAL_DESKTOP_BACKGROUND_CHECK: '1', ELECTRON_DISABLE_SECURITY_WARNINGS: 'true' }
 if (process.argv.includes('--no-docker')) launchEnv.PATH = `${process.env.SystemRoot || 'C:\\Windows'}\\System32;${process.env.SystemRoot || 'C:\\Windows'}`
-const instance = await electron.launch({ executablePath, args: packaged ? [] : ['.'], cwd: packaged ? resolve(desktop, 'dist/win-unpacked') : desktop, env: launchEnv })
+const instance = await electron.launch({ executablePath, args: packaged ? [] : ['.'], cwd: packaged ? dirname(executablePath) : desktop, env: launchEnv })
 let qaContainer = ''
 try {
   const page = await instance.firstWindow()
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))
   await page.getByRole('heading', { name: 'Choose a decision engine' }).waitFor({ timeout: 15000 })
-  await page.screenshot({ path: resolve(desktop, 'design/desktop-onboarding-current.png') })
+  await page.screenshot({ path: join(screenshots, 'desktop-onboarding-current.png') })
   if (process.argv.includes('--decision')) await page.locator('.engine-options button').first().click()
   else await page.getByRole('button', { name: 'Set up later' }).click()
   await page.getByRole('heading', { name: 'Open a workspace' }).waitFor({ timeout: 15000 })
-  await page.screenshot({ path: resolve(desktop, 'design/desktop-current.png') })
+  await page.screenshot({ path: join(screenshots, 'desktop-current.png') })
   const result = { title: await page.title(), heading: await page.getByRole('heading', { name: 'Open a workspace' }).innerText(), errors }
   result.userData = await instance.evaluate(({ app }) => app.getPath('userData'))
   if (process.argv.includes('--no-docker')) {
     result.dockerStatus = await page.evaluate(() => window.unreal.dockerStatus())
-    if (!result.dockerStatus.message.includes('Start Docker Desktop')) throw new Error('Missing actionable Docker guidance')
+    if (result.dockerStatus.failure?.code !== 'DOCKER_MISSING' || !result.dockerStatus.failure.actions.includes('docker-help')) throw new Error(`Missing actionable Docker guidance: ${result.dockerStatus.failure?.code || 'no failure'}`)
   }
   if (process.argv.includes('--credentials')) {
     await page.evaluate(() => window.unreal.saveKey('openai', 'qa-only-value-not-a-real-key'))
@@ -53,7 +55,7 @@ try {
     qaContainer = result.workspace.container || ''
     await page.reload()
     await page.getByRole('button', { name: 'Chat' }).waitFor({ timeout: 120000 })
-    await page.screenshot({ path: resolve(desktop, 'design/desktop-workspace-current.png') })
+    await page.screenshot({ path: join(screenshots, 'desktop-workspace-current.png') })
     result.navigation = await page.locator('nav button').allTextContents()
     if (process.argv.includes('--github-actions')) {
       result.githubBranch = await page.evaluate(() => window.unreal.githubBranch())
@@ -66,7 +68,7 @@ try {
       await page.evaluate(() => window.unreal.updateSettings({ theme: 'light' }))
       await page.reload()
       await page.getByRole('button', { name: 'Chat', exact: true }).waitFor()
-      await page.screenshot({ path: resolve(desktop, 'design/desktop-light-current.png') })
+      await page.screenshot({ path: join(screenshots, 'desktop-light-current.png') })
       result.lightTheme = await page.evaluate(() => document.documentElement.dataset.theme)
       await page.evaluate(() => window.unreal.updateSettings({ theme: 'dark' }))
       await page.reload()
@@ -130,7 +132,7 @@ try {
       result.codex = await page.evaluate(() => window.unreal.codexStatus())
       result.github = await page.evaluate(() => window.unreal.githubStatus())
       await page.getByRole('button', { name: 'GitHub', exact: true }).click()
-      await page.getByRole('heading', { name: 'GitHub' }).waitFor()
+      await page.getByRole('heading', { name: 'GitHub', exact: true }).waitFor()
       result.githubPage = await page.locator('.github-connection').innerText()
       await page.getByRole('button', { name: 'Settings', exact: true }).click()
       await page.getByPlaceholder('Optional instructions for this workspace').fill('QA project instructions')
@@ -149,7 +151,7 @@ try {
       await page.keyboard.press('Enter')
       await page.waitForFunction(() => ((document.querySelector('.xterm-screen')?.textContent || '').match(/QA_TERMINAL_OK/g) || []).length >= 2, null, { timeout: 10000 })
       result.terminalOutput = (await page.locator('.xterm-screen').innerText()).slice(-200)
-      await page.screenshot({ path: resolve(desktop, 'design/desktop-terminal-current.png') })
+      await page.screenshot({ path: join(screenshots, 'desktop-terminal-current.png') })
       result.terminalError = await page.locator('.terminal-page .error-inline').allTextContents()
       await page.getByRole('button', { name: 'Chat', exact: true }).click()
     }
@@ -173,7 +175,7 @@ try {
         await page.locator('.markdown').first().waitFor({ timeout: 30000 })
         result.replayedReply = await page.locator('.markdown').first().innerText()
         result.replayedToolCards = await page.locator('.tool-card').count()
-        await page.screenshot({ path: resolve(desktop, 'design/desktop-tool-current.png') })
+        await page.screenshot({ path: join(screenshots, 'desktop-tool-current.png') })
         if (!process.argv.includes('--replay-only')) {
         await page.getByRole('button', { name: 'Usage', exact: true }).click()
         await page.getByRole('heading', { name: 'Usage' }).waitFor()
@@ -199,7 +201,7 @@ try {
       if (process.argv.includes('--decision') && process.argv.includes('--implementation') && process.argv.includes('--github-actions')) await page.locator('.decision-card').nth(1).waitFor({ timeout: 30000 })
       if (process.argv.includes('--decision')) result.decisionCards = await page.locator('.decision-card').count()
       if (process.argv.includes('--implementation') && qaWorkspace) result.implementationFile = existsSync(join(qaWorkspace, 'checkpoint.txt')) ? readFileSync(join(qaWorkspace, 'checkpoint.txt'), 'utf8').trim() : null
-      await page.screenshot({ path: resolve(desktop, 'design/desktop-live-current.png') })
+      await page.screenshot({ path: join(screenshots, 'desktop-live-current.png') })
     }
   }
   console.log(JSON.stringify(result))

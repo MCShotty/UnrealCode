@@ -28,20 +28,41 @@ export type Settings = {
   decisionCloudDeclinedProjects: string[]
   glinerEnabled: boolean
 }
-export type SessionInfo = { id: string; title: string; lastUpdatedAt: string; active: boolean; state?: string; parentSessionId?: string }
-export type AgentEvent = { v: number; event: string; sessionId: string; seq: number; sourceSequence?: number; recordedAt?: string; payload: unknown }
+export const settingsFields = [
+  'recentProjects','trustedProjects','provider','model','thinkingLevel','systemPrompt','projectInstructions','theme',
+  'layout','notifications','executionMode','taskIsolation','autoCompaction','disallowedTools','baseUrl',
+  'decisionEngine','decisionSetupSeen','decisionModel','decisionCloudProjects','decisionCloudDeclinedProjects','glinerEnabled'
+] as const satisfies readonly (keyof Settings)[]
+export const settingsLayoutFields = ['sessionWidth','activityWidth','sessions','activity','focus'] as const satisfies readonly (keyof Settings['layout'])[]
+export function isCredentialFreeProviderURL(value:unknown):value is string{
+  if(typeof value!=='string'||value.length>4096||new TextEncoder().encode(value).length>4096||/[\u0000-\u001f\u007f]/.test(value))return false
+  if(!value)return true
+  try{const endpoint=new URL(value);return ['http:','https:'].includes(endpoint.protocol)&&!endpoint.username&&!endpoint.password&&!endpoint.search&&!endpoint.hash}
+  catch{return false}
+}
+export function knownSettings(value:Record<string,unknown>):Partial<Settings>{
+  const selected=Object.fromEntries(settingsFields.filter(key=>Object.hasOwn(value,key)).map(key=>[key,value[key]])) as Partial<Settings>
+  if(selected.baseUrl!==undefined&&!isCredentialFreeProviderURL(selected.baseUrl))delete selected.baseUrl
+  if(selected.layout&&typeof selected.layout==='object'&&!Array.isArray(selected.layout)){
+    const layout=selected.layout
+    selected.layout=Object.fromEntries(settingsLayoutFields.filter(key=>Object.hasOwn(layout,key)).map(key=>[key,layout[key]])) as Settings['layout']
+  }
+  return selected
+}
+export type SessionInfo = { id: string; title: string; lastUpdatedAt: string; active: boolean; state?: string; parentSessionId?: string; outcome?: import('./lifecycle').TurnOutcome }
+export type AgentEvent = { v: number; event: string; sessionId: string; seq: number; sourceSequence?: number; recordedAt?: string; failure?: import('./failure').AppFailure; payload: unknown }
 export type UsageTotals = { input: number; output: number; cached: number; cacheWrite: number; reasoning: number; calls: number; decisionInput: number; decisionOutput: number; decisionCalls: number; latestInput: number }
-export type SessionUsage = { sessionId: string; title: string; provider: Provider; model: string; totals: UsageTotals; contextLimit?: number; contextSource?: string; rateLimits?: Record<string, string> }
+export type SessionUsage = { sessionId: string; title: string; provider: Provider; model: string; totals: UsageTotals; contextLimit?: number; contextSource?: string; rateLimits?: Record<string, string>;requestedTier?:string;actualTier?:string }
 export type UsageWindow = { id: string; label: string; usedPercent: number; windowDurationMins: number | null; resetsAt: number | null }
 export type AccountUsage = { source: 'codex' | 'openai' | 'anthropic'; scope: string; status: 'fresh' | 'stale' | 'unavailable'; observedAt?: string; message?: string; totals?: UsageTotals; windows?: UsageWindow[] }
 export type UsageSnapshot = { accounts: AccountUsage[]; sessions: SessionUsage[] }
-export type OperationLane = { id: string; sessionId: string; type: string; status: string; startedAt?: string; endedAt?: string; durationMs?: number }
-export type ExecutionSummary = { operations: OperationLane[]; modelMs: number; toolWallMs: number; toolOverlapMs: number; modelCalls: number; approvalWaitMs?: number }
+export type OperationLane = { id: string; sessionId: string; type: string; tool?: string; callId?: string; turnId?: string; workspaceId?: string; status: string; startedAt?: string; endedAt?: string; durationMs?: number }
+export type ExecutionSummary = { operations: OperationLane[]; modelMs: number; toolWallMs: number; toolOverlapMs: number; modelCalls: number; approvalWaitMs?: number; hostWaitMs?: number }
 export type FileEntry = { name: string; path: string; directory: boolean; size: number }
 export type EditableFile = { path: string; revision: string; content: string; workspace: string }
 export type SkillEntry = { name: string; description: string; content: string }
-export type DockerStatus = { ready: boolean; message: string; container?: string }
-export type BridgeSessionConfig = { provider: Provider; model: string; baseUrl: string; thinkingLevel: string; systemPrompt: string; disallowedTools: string[]; parentSessionId?: string; mode?: ExecutionMode; workspaceId?: string; workspace?: 'project' | 'isolated'; teamEnabled?:boolean; teamManaged?:boolean; specialist?:boolean }
+export type DockerStatus = { ready: boolean; message: string; container?: string; phase?: 'checking'|'available'|'building'|'running'|'unavailable'; failure?: import('./failure').AppFailure }
+export type BridgeSessionConfig = { provider: Provider; model: string; baseUrl: string; thinkingLevel: string; serviceTier?:string; systemPrompt: string; disallowedTools: string[]; parentSessionId?: string; mode?: ExecutionMode; pendingMode?:ExecutionMode; workspaceId?: string; workspace?: 'project' | 'isolated'; queueTaskId?: string; teamEnabled?:boolean; teamManaged?:boolean; goalManaged?:boolean; specialist?:boolean }
 export type GitHubStatus = { installed: boolean; authenticated: boolean; account?: string; message: string }
 export type GitHubRepository = { nameWithOwner: string; description: string; isPrivate: boolean; url: string }
 export type GitHubWorktree = { path: string; branch: string; head: string; current: boolean }
@@ -52,6 +73,57 @@ export type DecisionResult = { engine: 'jev' | 'laya'; model: string; answers: R
 export type DecisionStatus = { engine: DecisionEngine; available: boolean; message: string; glinerAvailable: boolean }
 
 export interface DesktopAPI {
+  pickImages(max?:number):Promise<Array<{id:string;name:string;width:number;height:number}>>
+  discardImages(ids:string[]):Promise<void>
+  claudeInstructionsPreview():Promise<{content:string;revision:string}>
+  claudeInstructionsImport(revision:string):Promise<void>
+  hooks():Promise<import('./hooks').HookSettings>
+  hooksSave(hooks:import('./hooks').ProjectHook[]):Promise<import('./hooks').HookSettings>
+  browserState(sessionId:string):Promise<import('./browser').BrowserState>
+  browserInstall(sessionId:string):Promise<void>
+  browserConfigure(sessionId:string,grant:import('./browser').BrowserGrant):Promise<void>
+  browserAction(sessionId:string,action:import('./browser').BrowserAction):Promise<any>
+  previewPorts(sessionId:string):Promise<Record<string,string>>
+  memoryStatus(recordLimit?:number):Promise<import('./memory').MemoryStatus>
+  memoryRecords(beforeId?:string,limit?:number):Promise<import('./memory').MemoryRecordPage>
+  memoryRecord(id:string):Promise<import('./memory').MemoryRecord>
+  memoryStorage():Promise<{databaseBytes:number;modelCacheBytes:number}>
+  memoryClearCache():Promise<void>
+  memoryConfigure(profile:import('./memory').MemoryProfile):Promise<void>
+  memoryVerify():Promise<void>
+  memoryEnable(enabled:boolean):Promise<void>
+  memoryRetry():Promise<void>
+  memoryRecall(query:string):Promise<unknown>
+  memoryReflect(query:string):Promise<unknown>
+  memoryForget(id:string):Promise<void>
+  memoryCorrect(id:string,content:string):Promise<void>
+  memoryRebuild():Promise<void>
+  memoryExport():Promise<string|null>
+  backgroundJobs(sessionId:string):Promise<import('./background-jobs').BackgroundJob[]>
+  backgroundStart(sessionId:string,command:string,timeoutMs:number):Promise<import('./background-jobs').BackgroundJob>
+  backgroundStop(sessionId:string,id:string):Promise<void>
+  teamPreferences():Promise<import('./teams').TeamPreferences>
+  teamPreferencesSave(value:import('./teams').TeamPreferences):Promise<import('./teams').TeamPreferences>
+  command(request:{name:import('./commands').CommandName;args:string;sessionId?:string}):Promise<import('./commands').CommandResult>
+  onCommand(callback:(name:import('./commands').CommandName)=>void):()=>void
+  modelCapabilities(sessionId?:string):Promise<import('./model-capabilities').ModelCapabilities>
+  planning(sessionId:string):Promise<import('./planning').PlanningState>
+  planSave(sessionId:string,plan:Pick<import('./planning').TaskPlan,'objective'|'body'|'acceptance'|'milestones'>):Promise<import('./planning').TaskPlan>
+  planImplement(sessionId:string,revision:number,mode:'ask'|'agent'):Promise<void>
+  goalSave(sessionId:string,goal:Pick<import('./planning').Goal,'objective'|'requestLimit'|'tokenLimit'|'elapsedMinutes'>):Promise<import('./planning').Goal>
+  goalAction(sessionId:string,action:'resume'|'pause'|'complete'):Promise<import('./planning').Goal>
+  historyPage(sessionId:string, options?:{before?:number;around?:number;limit?:number}):Promise<import('./history').HistoryPage>
+  workView(sessionId:string,range?:{from?:number;to?:number}):Promise<import('./activity').WorkView>
+  activityPage(sessionId:string,query?:import('./activity').ActivityQuery):Promise<import('./activity').ActivityPage>
+  activityDetail(sessionId:string,id:string,offset?:number):Promise<import('./activity').ActivityDetail>
+  answerQuestion(submission:import('./activity').QuestionSubmission):Promise<void>
+  dismissQuestion(sessionId:string,id:string):Promise<void>
+  retryResponse(sessionId:string,failureSequence:number,messageId:string):Promise<void>
+  conversationUI(sessionId:string):Promise<import('./activity').ConversationUI>
+  saveConversationUI(sessionId:string,patch:Partial<import('./activity').ConversationUI>):Promise<void>
+  rebuildHistoryCache():Promise<void>
+  recoveryAction(action:import('./failure').RecoveryAction):Promise<void>
+  onFailure(callback:(failure:import('./failure').AppFailure)=>void):()=>void
   onMaintenance(callback:()=>void):()=>void
   latestEvents(sessionId:string):Promise<AgentEvent[]>
   recoveryStatus():Promise<import('./recovery').RecoveryStatus>
@@ -59,6 +131,9 @@ export interface DesktopAPI {
   backupExport():Promise<string|null>
   backupPreview():Promise<import('./recovery').BackupPreview|null>
   backupRestore(id:string):Promise<void>
+  retainedVolumes():Promise<import('./recovery').RetainedVolumeReport>
+  retainedVolumeExport(id:string):Promise<string|null>
+  retainedVolumeAttach(id:string):Promise<string|null>
   storageList():Promise<import('./recovery').StorageItem[]>
   storageRemove(ids:string[]):Promise<void>
   supportPreview():Promise<string>
@@ -81,7 +156,7 @@ export interface DesktopAPI {
   teamDispatch(parent:string,assignment:import('./teams').WorkerAssignment):Promise<import('./teams').SpecialistWorker>
   teamResume(parent:string):Promise<void>
   teamStop(parent:string):Promise<void>
-  teamWorkerAction(parent:string,id:string,action:'cancel'|'resume'|'steer'|'retain',prompt?:string):Promise<void>
+  teamWorkerAction(parent:string,id:string,action:'cancel'|'resume'|'steer'|'followup'|'retain',prompt?:string):Promise<void>
   teamPreview(parent:string,id:string):Promise<import('./task-workspaces').WorkspacePreview>
   teamIntegrate(parent:string,id:string,paths:string[]):Promise<string>
   repositorySearch(query:string,filesOnly?:boolean):Promise<import('./repository-context').RepositorySearch>
@@ -191,7 +266,7 @@ export interface DesktopAPI {
   createSession(config: BridgeSessionConfig,options?:import('./teams').TeamOptions): Promise<{ sessionId: string }>
   openSession(sessionId: string): Promise<void>
   selectSession(sessionId: string): Promise<void>
-  sendMessage(sessionId: string, prompt: string, messageId: string): Promise<void>
+  sendMessage(sessionId: string, prompt: string, messageId: string, imageIds?:string[]): Promise<void>
   stopSession(sessionId: string): Promise<void>
   forkSession(sessionId: string): Promise<{ sessionId: string }>
   getEvents(sessionId: string, after: number): Promise<AgentEvent[]>

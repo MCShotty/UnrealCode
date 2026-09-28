@@ -3,13 +3,13 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
-const state = vi.hoisted(() => ({ calls: [] as Array<{ method: string; params: any }>, finish: true, binary: false }))
+const state = vi.hoisted(() => ({ calls: [] as Array<{ method: string; params: any }>, docker: [] as string[][], finish: true, binary: false }))
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>()
   const { promisify } = await import('node:util')
   const realExec = promisify(actual.execFile)
   // Unit fixtures have no Docker volumes. Real cleanup is checked by packaged QA.
-  const execFile = Object.assign(() => {}, { [promisify.custom]: async (file: string, args: string[], options: object) => file === 'docker' ? { stdout: '', stderr: '' } : realExec(file, args, options) })
+  const execFile = Object.assign(() => {}, { [promisify.custom]: async (file: string, args: string[], options: object) => { if(/(?:^|[\\/])docker(?:\.exe)?$/i.test(file)){state.docker.push(args);return {stdout:'',stderr:''}}return realExec(file,args,options) } })
   return { ...actual, execFile }
 })
 vi.mock('./settings', () => ({ credentialFor: () => ({ apiKey: 'fixture-credential' }) }))
@@ -29,11 +29,12 @@ vi.mock('./docker', () => ({ DockerBridge: class {
   }
 } }))
 import { Evaluations, validateEvaluation } from './evaluations'
+import { defaultVolume } from './state-volumes'
 let root: string, project: string
 const config = { provider: 'openai-compatible' as const, model: 'fixture', baseUrl: 'http://localhost:1/v1', thinkingLevel: 'low', systemPrompt: 'instructions', disallowedTools: [] }
 const request = { tasks: [{ prompt: 'Implement the selected change', criteria: 'The behavior matches the task', testCommand: '' }], runLimit: 2, timeoutMinutes: 1 }
 beforeEach(async () => {
-  state.calls = []; state.finish = true; state.binary = false
+  state.calls = []; state.docker = []; state.finish = true; state.binary = false
   root = await mkdtemp(join(tmpdir(), 'unrealcode-eval-test-')); project = join(root, 'project'); await mkdir(project)
   execFileSync('git', ['init', project], { windowsHide: true, stdio: 'ignore' })
   await writeFile(join(project, 'sample.txt'), 'original')
@@ -99,4 +100,19 @@ it('retains modified tracked binary files that textual diff cannot recover', asy
     expect(arm.worktree).toBeTruthy()
     expect(await readFile(join(arm.worktree!, 'asset.bin'))).toEqual(Buffer.from([0, 9, 2]))
   }
+})
+
+it('cleans only registered restored evaluation storage and rejects stale volume identities',async()=>{
+ const directory=join(root,'reports');await mkdir(directory)
+ const canonical=await import('node:fs/promises').then(fs=>fs.realpath(project)),id='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',workspace=join(directory,'worktrees',id,'0')
+ const original=defaultVolume(workspace,true),restored='unrealcode-restore-cccccccc-cccc-cccc-cccc-cccccccccccc'
+ const report={id,project:canonical,createdAt:new Date().toISOString(),revision:'fixture',config,engine:'jev',model:'jev-latest',request,state:'completed',arms:[{task:0,decisions:false,state:'completed',retainedVolume:original}]}
+ await writeFile(join(root,'state-volumes.json'),JSON.stringify([{project:workspace,isolated:true,volume:restored}]))
+ await writeFile(join(directory,`${id}.json`),JSON.stringify(report))
+ const service=new Evaluations(directory)
+ await expect(service.cleanup(project,id)).rejects.toThrow('identity');expect(state.docker).toEqual([])
+ report.arms[0].retainedVolume=restored;await writeFile(join(directory,`${id}.json`),JSON.stringify(report))
+ await service.cleanup(project,id)
+ expect(state.docker).toEqual([['volume','rm',restored]])
+ expect((await service.list(project))[0].arms[0].retainedVolume).toBeUndefined()
 })

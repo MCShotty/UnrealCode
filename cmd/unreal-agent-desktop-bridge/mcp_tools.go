@@ -381,6 +381,9 @@ func (h *mcpHandler) AddRemoteJob(current operation.Operation) error {
 				h.exchange.mu.Unlock()
 				defer func() { h.exchange.mu.Lock(); delete(h.exchange.pending, requestID); h.exchange.mu.Unlock() }()
 				kind := "host.request"
+				if h.kind == controlPlan {
+					kind = "host.control"
+				}
 				if h.kind == repositoryPlan {
 					kind = "host.read"
 				}

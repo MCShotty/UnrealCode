@@ -19,7 +19,7 @@ const model=createServer(async(req,res)=>{
  requested++;res.writeHead(200,{'content-type':'application/json'});res.write(JSON.stringify({id:randomUUID(),choices:[{index:0,finish_reason:message.tool_calls?'tool_calls':'stop',message}],usage:{prompt_tokens:22,completion_tokens:7}}));res.end()
 })
 await new Promise(resolve=>model.listen(0,'0.0.0.0',resolve))
-const packaged=process.argv.includes('--packaged'),app=await electron.launch({executablePath:resolve(packaged?'dist/win-unpacked/UnrealCode.exe':'node_modules/electron/dist/electron.exe'),args:packaged?[]:['.'],env:{...process.env,UNREAL_DESKTOP_USER_DATA:join(root,'data')}}),report={root,errors:[],kinds:[]}
+const packaged=process.argv.includes('--packaged'),app=await electron.launch({executablePath:resolve(process.env.UNREALCODE_QA_EXECUTABLE||(packaged?'dist/win-unpacked/UnrealCode.exe':'node_modules/electron/dist/electron.exe')),args:packaged?[]:['.'],env:{...process.env,UNREAL_DESKTOP_USER_DATA:join(root,'data')}}),report={root,errors:[],kinds:[]}
 try{
  const page=await app.firstWindow();page.on('pageerror',error=>report.errors.push(error.message));await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:0,checkboxChecked:false})})
  await page.getByRole('button',{name:'Set up later'}).click();await page.evaluate(baseUrl=>window.unreal.updateSettings({provider:'openai-compatible',baseUrl,model:'fixture',executionMode:'ask',taskIsolation:false,theme:'dark'}),`http://localhost:${model.address().port}/v1`)
@@ -27,9 +27,23 @@ try{
  const wait=async(predicate,arg)=>{const end=Date.now()+30000;while(Date.now()<end){if(await page.evaluate(predicate,arg))return;await new Promise(resolve=>setTimeout(resolve,100))}throw Error('MCP workflow timed out')}
  for(const kind of ['host','container','remote']){
   const id=randomUUID(),config={id,name:`${kind} fixture`,kind,command:kind==='host'?process.execPath:'python3',args:kind==='host'?[resolve('scripts/fixture-mcp.mjs')]:['-u','/workspace/fixture.py'],auth:kind==='remote'?'bearer':'none',url:kind==='remote'?`http://127.0.0.1:${remote.address().port}/mcp`:undefined,timeoutMs:15000}
-  await page.evaluate(async config=>{await window.unreal.connectionSave(config);await window.unreal.connectionCredential(config.id,config.kind==='remote'?'fixture-secret-not-real':'',config.kind==='remote'?{}:{FIXTURE_SECRET:'fixture-secret-not-real'});await window.unreal.connectionGrant({connectionId:config.id,hostTrusted:config.kind==='host',tools:['echo'],resources:false,prompts:false});await window.unreal.connectionConnect(config.id,false)},config)
+  await page.evaluate(async config=>{
+   const step=async(name,work)=>{try{return await work()}catch(error){throw Error(`${config.kind} ${name}: ${error?.failure?.details||error?.message||error}`)}}
+   await step('save',()=>window.unreal.connectionSave(config))
+   await step('credential',()=>window.unreal.connectionCredential(config.id,config.kind==='remote'?'fixture-secret-not-real':'',config.kind==='remote'?{}:{FIXTURE_SECRET:'fixture-secret-not-real'}))
+   await step('project access',()=>window.unreal.connectionGrant({connectionId:config.id,hostTrusted:config.kind==='host',tools:[],resources:false,prompts:false}))
+   await step('connect',()=>window.unreal.connectionConnect(config.id,false))
+   const item=(await step('catalog',()=>window.unreal.connections())).find(value=>value.id===config.id),tool=item?.tools.find(value=>value.current&&value.remoteName==='echo')
+   if(!tool)throw Error(`${config.kind} echo definition was not advertised`)
+   await step('select echo',()=>window.unreal.connectionGrant({connectionId:config.id,hostTrusted:config.kind==='host',tools:['echo'],toolRevisions:{echo:tool.revision},resources:false,prompts:false}))
+  },config)
   await page.getByRole('button',{name:'Connections',exact:true}).click();await page.getByRole('heading',{name:'Connections',exact:true}).waitFor()
   assert((await page.locator('.connection-card').allTextContents()).some(text=>text.includes('connected')))
+  const card=page.locator('.connection-card').filter({hasText:`${kind} fixture`})
+  await card.getByText('Tools, resources and prompts',{exact:true}).click()
+  const echo=card.locator('label.connection-tool').filter({hasText:'echo'}).getByRole('checkbox')
+  await echo.click();await wait(async id=>!((await window.unreal.connections()).find(item=>item.id===id)?.grant?.tools.includes('echo')),id)
+  await echo.click();await wait(async id=>{const item=(await window.unreal.connections()).find(value=>value.id===id),tool=item?.tools.find(value=>value.current&&value.remoteName==='echo');return !!tool&&item?.grant?.toolRevisions?.echo===tool.revision},id)
   await page.screenshot({path:join(root,`${kind}-connections.png`)})
   const {sessionId}=await page.evaluate(()=>window.unreal.createSession({}));lastSession=sessionId;await page.evaluate(async id=>{await window.unreal.selectSession(id);await window.unreal.sendMessage(id,'Call the fixture echo MCP tool',crypto.randomUUID())},sessionId)
   await wait(async id=>(await window.unreal.hostApprovals(id)).length===1,sessionId)

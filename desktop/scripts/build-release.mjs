@@ -2,13 +2,28 @@ import { execFile } from 'node:child_process'
 import { writeFileSync,mkdirSync,readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { promisify } from 'node:util'
+import { basename, dirname, join, resolve } from 'node:path'
 const require=createRequire(import.meta.url)
 const stable=process.argv.includes('--stable'),publisher=process.env.UNREALCODE_PUBLISHER?.trim()
+// A separate local candidate directory lets QA proceed when Windows retains
+// an image handle on an exited test process in the previous unpacked build.
+const output=process.argv.find(value=>value.startsWith('--output='))?.slice('--output='.length)
 if(stable&&!publisher)throw new Error('Stable builds require UNREALCODE_PUBLISHER and valid Windows signing credentials')
 const version=JSON.parse(readFileSync('package.json','utf8')).version
 if(stable&&!/^\d+\.\d+\.\d+$/.test(version))throw new Error('Stable packaging requires a stable package version')
 const channel=version.includes('-')?'preview':'latest'
 if(version.includes('-')&&!/^\d+\.\d+\.\d+-preview\.\d+$/.test(version))throw new Error('Prerelease package versions must use the preview channel suffix')
+// Optional workaround for Windows hosts that stall the generated NSIS helper.
+// Use the builder's own binary extractor; the normal signing step still follows.
+if(process.platform==='win32'&&process.argv.includes('--extract-uninstaller')){
+ const {WineVmManager}=require('app-builder-lib/out/vm/WineVm')
+ const {UninstallerReader}=require('app-builder-lib/out/targets/nsis/nsisUtil')
+ const original=WineVmManager.prototype.exec
+ WineVmManager.prototype.exec=function(file,args,options){
+  if(resolve(dirname(file))===resolve(output||'dist')&&basename(file)===`UnrealCode-Setup-${version}.exe`&&args.length===0&&options?.env?.__COMPAT_LAYER==='RunAsInvoker')return UninstallerReader.exec(file,join(dirname(file),`${basename(file,'exe')}__uninstaller.exe`))
+  return original.call(this,file,args,options)
+ }
+}
 mkdirSync('generated',{recursive:true})
 writeFileSync('generated/release-policy.json',JSON.stringify({publishers:publisher?[publisher]:[]}))
 // Use npm's actual CLI with Node on Windows. The builder's PowerShell
@@ -26,4 +41,4 @@ if(process.platform==='win32'){
  }
 }
 const {build,Platform}=require('electron-builder')
-await build({targets:Platform.WINDOWS.createTarget('nsis'),publish:'never',config:{publish:{provider:'github',owner:'MCShotty',repo:'UnrealCode',channel,releaseType:channel==='preview'?'prerelease':'release'},generateUpdatesFilesForAllChannels:false,...(publisher?{win:{publisherName:publisher}}:{}),...(stable?{forceCodeSigning:true}:{})}})
+await build({targets:Platform.WINDOWS.createTarget('nsis'),publish:'never',config:{...(output?{directories:{output}}:{}),publish:{provider:'github',owner:'MCShotty',repo:'UnrealCode',channel,releaseType:channel==='preview'?'prerelease':'release'},generateUpdatesFilesForAllChannels:false,...(publisher?{win:{publisherName:publisher}}:{}),...(stable?{forceCodeSigning:true}:{})}})

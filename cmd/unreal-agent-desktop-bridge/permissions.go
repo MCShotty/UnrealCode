@@ -92,7 +92,7 @@ func operationPermission(value operation.Operation) (tool string, args any, read
 			if json.Unmarshal(state.Plan.Data, &input) == nil {
 				return map[string]string{"read": "ReadFile", "list": "ListFiles", "patch": "ApplyPatch"}[input.Action], input, input.Action == "read" || input.Action == "list"
 			}
-		case workflowPlan, decisionPlanType, entityPlanType, catalogPlan, repositoryPlan, teamPlan:
+		case controlPlan, workflowPlan, decisionPlanType, entityPlanType, catalogPlan, repositoryPlan, teamPlan:
 			return string(state.Plan.Type), state.Plan.Data, true
 		case mcpPlan:
 			return "MCP", state.Plan.Data, false

@@ -116,6 +116,9 @@ func FuzzCoordinatorLogMatchesExecution(f *testing.F) {
 			complete := func(call *logModelCall, variant byte) {
 				t.Helper()
 				response := fuzzLogResponse(t, text, usage, call.index, variant)
+				// This driver exercises continued execution. Failure envelopes now
+				// terminate the coordinator; their durable path has a dedicated test.
+				response.Failure = nil
 				select {
 				case call.response <- response:
 				case <-call.ctx.Done():

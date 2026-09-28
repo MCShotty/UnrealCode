@@ -1,3 +1,4 @@
+import { actionable, classifyFailure, ActionableError } from './failures'
 import { app } from 'electron'
 import { spawn, execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
@@ -7,6 +8,7 @@ import { getCACertificates } from 'node:tls'
 import { promisify } from 'node:util'
 import type { AgentEvent, DockerStatus } from '../shared/api'
 import { backendEnvironment } from './child-environment'
+import { terminalDockerExecutable } from './terminal-command'
 import { resolveVolume } from './state-volumes'
 
 const execFileAsync = promisify(execFile)
@@ -31,29 +33,33 @@ export class DockerBridge {
   private project = ''
   private message = 'Docker backend is not started'
   private imageTag = ''
+  private phase: DockerStatus['phase'] = 'unavailable'
+  private failure?: DockerStatus['failure']
   onEvent: (value: AgentEvent) => void = () => {}
   onStatus: (value: DockerStatus) => void = () => {}
 
   get containerName(): string { return this.container }
   get projectPath(): string { return this.project }
-  status(): DockerStatus { return { ready: !!this.process && !this.process.killed, message: this.message, container: this.container || undefined } }
+  async previewAddresses():Promise<Record<string,string>>{if(!this.container)return {};const output=await this.docker(['port',this.container]),result:Record<string,string>={};for(const line of output.split('\n')){const match=/^(\d+)\/tcp -> (127\.0\.0\.1:\d+)$/.exec(line.trim());if(match)result[match[1]]=`http://${match[2]}`}return result}
+  status(): DockerStatus { return { ready: this.phase === 'running' && !!this.process && !this.process.killed, phase:this.phase,failure:this.failure,message: this.message, container: this.container || undefined } }
 
   async probe(): Promise<DockerStatus> {
     if (this.process) return this.status()
     try {
-      await this.docker(['info', '--format', '{{.ServerVersion}}'])
-      return { ready: false, message: 'Docker Desktop is ready. Open a project to start UnrealCode.' }
-    } catch {
-      return { ready: false, message: 'Start Docker Desktop with its Linux engine, then open a project.' }
-    }
+      const kind=await this.docker(['info','--format','{{.OSType}}'])
+      if(kind!=='linux')throw new Error('Linux engine required; Docker is using Windows containers')
+      this.phase='available';this.failure=undefined;this.message='Docker Desktop is ready. Open a project to start UnrealCode.'
+    } catch(error) {this.phase='unavailable';this.failure=classifyFailure(error,'docker');this.message=this.failure.message}
+    return this.status()
   }
-
+  async rebuild():Promise<void>{if(this.process)throw new Error('Finish active work before rebuilding the backend');await this.ensureImage(true)}
   private sourceDirectory(): string {
     return app.isPackaged ? join(process.resourcesPath, 'backend') : resolve(__dirname, '../../..')
   }
 
   private async docker(args: string[], timeout = 15000): Promise<string> {
-    const { stdout } = await execFileAsync('docker', args, { windowsHide: true, timeout, maxBuffer: 8 * 1024 * 1024, env: backendEnvironment() })
+    const environment=backendEnvironment()
+    const { stdout } = await execFileAsync(terminalDockerExecutable(environment), args, { windowsHide: true, timeout, maxBuffer: 8 * 1024 * 1024, env: environment })
     return stdout.trim()
   }
 
@@ -67,28 +73,28 @@ export class DockerBridge {
     return path
   }
 
-  private async ensureImage(): Promise<void> {
+  private async ensureImage(force = false): Promise<void> {
     const source = this.sourceDirectory()
     const tag = backendSourceTag(source, app.getVersion())
     this.imageTag = tag
-    if (app.isPackaged) {
+    if (app.isPackaged && !force) {
       try { await this.docker(['image', 'inspect', tag]); return } catch { /* build below */ }
     }
-    this.message = 'Building UnrealCode backend image…'
+    this.phase='building';this.message = 'Building UnrealCode backend image…'
     this.onStatus(this.status())
     const args = ['build', '-f', join(source, 'Dockerfile.desktop'), '-t', tag]
     const ca = await this.hostCA()
     if (ca) args.push('--secret', `id=host_ca,src=${ca}`)
     args.push(source)
-    await this.docker(args, 10 * 60 * 1000)
+    try{await this.docker(args,10*60*1000)}catch(error){throw actionable(error,'docker-build')}
   }
 
-  async start(projectPath: string, evaluationGit = false): Promise<DockerStatus> {
+  async start(projectPath: string, evaluationGit = false, previewPorts:number[]=[]): Promise<DockerStatus> {
+    if(previewPorts.length>10||previewPorts.some(port=>!Number.isInteger(port)||port<1024||port>65535))throw Error('Invalid preview ports')
     await this.stop()
-    this.message = 'Checking Docker Desktop…'
+    this.phase='checking';this.failure=undefined;this.message = 'Checking Docker Desktop…'
     this.onStatus(this.status())
-    try { await this.docker(['info', '--format', '{{.ServerVersion}}']) }
-    catch { throw new Error('Docker Desktop Linux engine is not running. Start Docker Desktop and try again.') }
+    const available=await this.probe();if(available.failure)throw new ActionableError(available.failure)
     await this.ensureImage()
     const digest = createHash('sha256').update(projectPath.toLocaleLowerCase()).digest('hex').slice(0, 20)
     const volume = await resolveVolume(app.getPath('userData'), projectPath, evaluationGit)
@@ -98,13 +104,15 @@ export class DockerBridge {
     const tag = this.imageTag
     const args = [
       'run', '--rm', '-i', '--name', this.container,
+        ...previewPorts.flatMap(port=>['--publish',`127.0.0.1::${port}`]),
       '--cap-drop=ALL', '--security-opt=no-new-privileges',
       '--mount', `type=bind,source=${projectPath},target=/workspace`,
       '--mount', `type=volume,source=${volume},target=/state`,
       '--tmpfs', '/tmp:rw,nosuid,nodev,size=256m',
       ...(evaluationGit ? ['-e', 'GIT_DIR=/state/evaluation-git', '-e', 'GIT_WORK_TREE=/workspace'] : []), tag
     ]
-    const child = spawn('docker', args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: backendEnvironment() })
+    const environment=backendEnvironment()
+    const child = spawn(terminalDockerExecutable(environment), args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: environment })
     this.process = child
     this.buffer = ''
     child.stdout.on('data', (data: Buffer) => this.consume(data.toString('utf8')))
@@ -114,11 +122,11 @@ export class DockerBridge {
     child.on('exit', (code) => this.fail(new Error(stderr.trim() || `Docker backend exited (${code})`)))
     try {
       const health = await this.request<{ version: number; capabilities?: string[] }>('health', {}, 30000)
-      if (health.version !== 1 || !['permissions.v1', 'files.v1', 'sessions.v1', 'mcp.v1', 'context.v1', 'teams.v1', 'verification.v1', 'history.latest.v1'].every(value => health.capabilities?.includes(value))) {
+      if (health.version !== 1 || !['permissions.v1', 'files.v1', 'sessions.v1', 'mcp.v1', 'context.v1', 'teams.v1', 'verification.v1', 'history.latest.v1', 'lifecycle.v1', 'controls.v1', 'inference.v1', 'hooks.v1', 'goal.usage.v1', 'questions.v2'].every(value => health.capabilities?.includes(value))) {
         throw new Error('The Docker backend is incompatible with this desktop version. Rebuild the backend image and reopen the project.')
       }
       if (evaluationGit) await this.docker(['exec', this.container, 'sh', '-c', 'if test ! -f /state/evaluation-git/HEAD; then env -u GIT_DIR -u GIT_WORK_TREE git init --bare /state/evaluation-git && git add --all && git -c user.name=UnrealCode -c user.email=evaluation@localhost commit --allow-empty -m "Task input snapshot"; fi'], 60000)
-      this.message = 'Container running'
+      this.phase='running';this.failure=undefined;this.message = 'Container running'
       this.onStatus(this.status())
       return this.status()
     } catch (error) {
@@ -191,7 +199,7 @@ export class DockerBridge {
   private fail(error: Error): void {
     if (!this.process) return
     this.process = null
-    this.message = error.message
+    this.phase='unavailable';this.failure=classifyFailure(error,'docker');this.message = this.failure.message
     for (const pending of this.pending.values()) { clearTimeout(pending.timeout); pending.reject(error) }
     this.pending.clear()
     this.onStatus(this.status())
@@ -209,7 +217,7 @@ export class DockerBridge {
     child.kill()
     for (const pending of this.pending.values()) { clearTimeout(pending.timeout); pending.reject(new Error('Backend stopped')) }
     this.pending.clear()
-    this.message = 'Docker backend stopped'
+    this.phase='unavailable';this.message = 'Docker backend stopped'
     this.onStatus(this.status())
   }
 }

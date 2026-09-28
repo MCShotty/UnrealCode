@@ -21,14 +21,14 @@ const server = createServer(async (req, res) => {
 })
 await new Promise(resolve => server.listen(0, '0.0.0.0', resolve))
 const packaged = process.argv.includes('--packaged')
-const app = await electron.launch({ executablePath: resolve(packaged ? 'dist/win-unpacked/UnrealCode.exe' : 'node_modules/electron/dist/electron.exe'), args: packaged ? [] : ['.'], cwd: process.cwd(), env: { ...process.env, UNREAL_DESKTOP_USER_DATA: join(root, 'data') } })
+const app = await electron.launch({ executablePath: resolve(process.env.UNREALCODE_QA_EXECUTABLE||(packaged ? 'dist/win-unpacked/UnrealCode.exe' : 'node_modules/electron/dist/electron.exe')), args: packaged ? [] : ['.'], cwd: process.cwd(), env: { ...process.env, UNREAL_DESKTOP_USER_DATA: join(root, 'data') } })
 const report = { root, errors: [] }
 try {
  const page = await app.firstWindow()
  page.on('pageerror', error => report.errors.push(error.message))
  await page.getByRole('button', { name: 'Set up later' }).click()
  await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false }) })
- await app.evaluate(({ Notification }) => { globalThis.__qaNotifications = []; Notification.prototype.show = function () { globalThis.__qaNotifications.push(this) } })
+ await app.evaluate(({ Notification, BrowserWindow }) => { globalThis.__qaNotifications = []; Notification.isSupported=()=>true; Notification.prototype.show = function () { globalThis.__qaNotifications.push(this) };if(process.env.UNREAL_DESKTOP_BACKGROUND_CHECK==='1'){BrowserWindow.prototype.show=function(){};BrowserWindow.prototype.focus=function(){}} })
  const endpoint = `http://localhost:${server.address().port}/v1`
  await page.evaluate(baseUrl => window.unreal.updateSettings({ provider: 'openai-compatible', baseUrl, executionMode: 'agent', taskIsolation: false, model: 'fake-workflow', theme: 'dark', notifications: true }), endpoint)
  const wait = async fn => { const end = Date.now() + 120000; while (Date.now() < end) { if (await page.evaluate(fn)) return; await new Promise(resolve => setTimeout(resolve, 100)) } throw Error('Workflow state timed out') }
@@ -58,7 +58,7 @@ try {
  assert(waiting.paused)
  assert.equal(waiting.tasks.at(-1).state, 'pending')
  const awaitingSession = waiting.tasks.find(task => task.state === 'waiting_input').sessionId
- await page.evaluate(id => window.unreal.sendMessage(id, 'Alpha', crypto.randomUUID()), awaitingSession)
+ await page.evaluate(async id => { const q=(await window.unreal.workView(id)).questions.find(q=>q.state==='pending'); await window.unreal.answerQuestion({sessionId:id,workspaceId:q.workspaceId,id:q.id,revision:q.revision,submissionId:crypto.randomUUID(),answers:[{questionId:q.questions[0].id,choiceId:q.questions[0].choices[0].id}]}) }, awaitingSession)
  await wait(async () => !(await window.unreal.queueSnapshot()).tasks.some(task => task.state === 'waiting_input'))
  assert((await page.evaluate(() => window.unreal.queueSnapshot())).paused)
  await page.evaluate(() => window.unreal.queuePause(false))

@@ -38,6 +38,9 @@ func response(source openaiapi.Response) (llm.Response, error) {
 		Output: make([]llm.Item, 0, len(source.Output)),
 		Usage:  responseUsage(source.Usage),
 	}
+	if source.ServiceTier != nil {
+		converted.ServiceTier = string(*source.ServiceTier)
+	}
 	switch *source.Status {
 	case openaiapi.ResponseStatusCompleted:
 		converted.Stop = llm.StopComplete

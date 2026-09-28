@@ -126,3 +126,28 @@ func TestDiscoverSkillsRejectsInvalidMetadataAndDuplicateNames(t *testing.T) {
 		}
 	}
 }
+
+func TestDiscoverSkillsRejectsOversizedAndLinkedFiles(t *testing.T) {
+	directory := t.TempDir()
+	valid := filepath.Join(directory, "valid", "SKILL.md")
+	oversized := filepath.Join(directory, "oversized", "SKILL.md")
+	linked := filepath.Join(directory, "linked", "SKILL.md")
+	for _, path := range []string{valid, oversized, linked} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(valid, []byte("---\nname: valid\ndescription: Safe.\n---\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(oversized, []byte("---\nname: huge\ndescription: Too large.\n---\n"+strings.Repeat("x", 512*1024)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(valid, linked); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	skills, skillErrors := DiscoverSkills(directory)
+	if len(skills) != 1 || skills[0].Name != "valid" || len(skillErrors) != 2 {
+		t.Fatalf("skills = %#v, errors = %v", skills, skillErrors)
+	}
+}

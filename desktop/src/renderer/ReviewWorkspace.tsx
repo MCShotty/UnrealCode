@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { AgentEvent, Checkpoint, CheckpointPreview } from '../shared/api'
+import {evidenceImages,evidenceText} from './evidence-images'
 
 const api = window.unreal
 function text(value: unknown): string { return typeof value === 'string' ? value : JSON.stringify(value, null, 2) }
@@ -33,7 +34,7 @@ export function ReviewWorkspace({ onSteer }: { onSteer: (sessionId: string, text
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [confirm, setConfirm] = useState(false)
-  const selection = useRef('')
+  const selection = useRef(0),previewGeneration=useRef(0)
   const changed = useMemo(() => changedLines(preview?.diff || ''), [preview?.diff])
   const evidenceRows = useMemo(() => {
     const rows: Array<{ id: string; title: string; content: string }> = []
@@ -65,18 +66,18 @@ export function ReviewWorkspace({ onSteer }: { onSteer: (sessionId: string, text
   }, [])
   useEffect(() => { void refresh().catch((reason) => setError(String(reason))) }, [refresh])
   const choose = async (item: Checkpoint): Promise<void> => {
-    selection.current = item.id
+    const generation=++selection.current;previewGeneration.current++
     setSelected(item); setPreview(null); setChecked([]); setComments([]); setConfirm(false); setEvidence([])
     try {
       const history = await api.getEvents(item.sessionId, 0)
       const end = items.filter((other) => other.sessionId === item.sessionId && other.createdAt > item.createdAt).sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]?.createdAt
-      if (selection.current === item.id) setEvidence(history.filter((event) => (!event.recordedAt || event.recordedAt >= item.createdAt) && (!end || !event.recordedAt || event.recordedAt < end)))
-    } catch (reason) { setError(String(reason)) }
+      if (selection.current === generation) setEvidence(history.filter((event) => (!event.recordedAt || event.recordedAt >= item.createdAt) && (!end || !event.recordedAt || event.recordedAt < end)))
+    } catch (reason) { if(selection.current===generation)setError(String(reason)) }
   }
   const open = async (path: string): Promise<void> => {
     if (!selected) return
-    const id = selected.id
-    try { const value = await api.checkpointPreview(id, path); if (selection.current === id) { setPreview(value); setLine(''); setConfirm(false) } } catch (reason) { setError(String(reason)) }
+    const id = selected.id,generation=selection.current,request=++previewGeneration.current
+    try { const value = await api.checkpointPreview(id, path); if (selection.current === generation&&previewGeneration.current===request) { setPreview(value); setLine(''); setConfirm(false) } } catch (reason) { setError(String(reason)) }
   }
   const restore = async (): Promise<void> => {
     if (!selected) return
@@ -98,6 +99,6 @@ export function ReviewWorkspace({ onSteer }: { onSteer: (sessionId: string, text
     {preview && <><div className="review-actions"><strong>{preview.path}</strong><select aria-label="Diff layout" value={mode} onChange={(event) => setMode(event.target.value)}><option value="unified">Unified diff</option><option value="split">Side by side</option></select></div>{preview.conflict && <p className="error-inline">{preview.reason || 'The file has later edits. Restore is blocked.'}</p>}{preview.binary ? <p>Binary file: {preview.beforeSize} → {preview.afterSize} bytes. Content preview is unavailable.</p> : mode === 'split' ? <div className="split-diff"><section><h3>Before</h3><pre>{preview.before.split('\n').slice(0, 2000).map((text, index) => <span className={changed.before.has(index + 1) ? 'deleted' : ''} key={index}><span className="diff-number">{index + 1}</span>{text}{'\n'}</span>)}</pre></section><section><h3>After</h3><pre>{preview.after.split('\n').slice(0, 2000).map((text, index) => <span className={changed.after.has(index + 1) ? 'added' : ''} key={index}><button title="Comment on this line" className="diff-number" onClick={() => setLine(String(index + 1))}>{index + 1}</button>{text}{'\n'}</span>)}</pre></section></div> : <pre className="unified-diff">{preview.diff.split('\n').slice(0, 4000).map((value, index) => <span className={value.startsWith('+') ? 'added' : value.startsWith('-') ? 'deleted' : ''} key={index}>{value}{'\n'}</span>)}</pre>}
     <p className="muted-copy">Previews show up to 2,000 lines per file or 4,000 diff lines. Restore always uses the full captured file.</p><div className="review-comment"><label>After-file line (optional)<input type="number" min={1} value={line} onChange={(event) => setLine(event.target.value)}/></label><textarea aria-label="Review comment" value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Describe what should change…"/><button className="secondary-button" disabled={!comment.trim()} onClick={() => { setComments([...comments, `${preview.path}${line ? `:${line}` : ''}: ${comment.trim()}`]); setComment('') }}>Add comment</button></div></>}
     {!!comments.length && <div><pre>{comments.join('\n\n')}</pre><button className="primary-button" disabled={busy} onClick={async () => { setBusy(true); try { await onSteer(selected.sessionId, `Review feedback:\n\n${comments.join('\n\n')}`); setComments([]) } catch (reason) { setError(String(reason)) } finally { setBusy(false) } }}>Send comments as steering</button></div>}
-    <section className="review-evidence"><h3>Explanations and command results</h3>{evidenceRows.map((row) => <details key={row.id} open><summary>{row.title}</summary><pre>{row.content}</pre></details>)}{!evidenceRows.length && <p>No recorded explanations or completed commands for this checkpoint.</p>}</section>
-    <details><summary>Raw recorded events</summary>{evidence.filter((event) => ['session.item', 'operation.update'].includes(event.event)).map((event) => <details key={event.seq}><summary>{event.event} · {event.recordedAt}</summary><pre>{text(event.payload)}</pre></details>)}</details></>}</section></div></div>
+    <section className="review-evidence"><h3>Visual evidence</h3>{evidence.flatMap(event=>evidenceImages(event.payload).map((image,index)=><figure key={`${event.seq}:${index}`}><img className="evidence-image" src={image} alt={`Recorded visual evidence at event ${event.seq}`}/><figcaption>Event {event.seq} · {event.recordedAt}</figcaption></figure>))}<h3>Explanations and command results</h3>{evidenceRows.map((row) => <details key={row.id} open><summary>{row.title}</summary><pre>{row.content}</pre></details>)}{!evidenceRows.length && <p>No recorded explanations or completed commands for this checkpoint.</p>}</section>
+    <details><summary>Raw recorded events</summary>{evidence.filter((event) => ['session.item', 'operation.update'].includes(event.event)).map((event) => <details key={event.seq}><summary>{event.event} · {event.recordedAt}</summary><pre>{evidenceText(event.payload)}</pre></details>)}</details></>}</section></div></div>
 }

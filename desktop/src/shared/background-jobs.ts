@@ -1,0 +1,1 @@
+export type BackgroundJob={id:string;requestId?:string;digest?:string;sessionId:string;workspace:string;container:string;command:string;createdAt:string;endedAt?:string;state:'starting'|'running'|'completed'|'failed'|'cancelled'|'interrupted';pid?:number;exitCode?:number;output:string;truncated:boolean;timeoutMs:number;persistenceWarning?:string}

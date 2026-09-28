@@ -70,6 +70,11 @@ func FuzzRunLogMatchesExecution(f *testing.F) {
 				responses = append(responses, response)
 			}
 			responses = append(responses, fuzzLogResponse(t, text, usage, len(responses), byte(len(actions))))
+			// Fatal failures are injected below. Do not also mark successful
+			// tool-bearing responses as failed provider envelopes.
+			for i := range responses {
+				responses[i].Failure = nil
+			}
 
 			mode, failAt := 0, 0
 			if len(actions) > 0 {

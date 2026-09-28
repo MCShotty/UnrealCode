@@ -36,6 +36,13 @@ func requestBody(request llm.Request, promptCacheKey string, extensions map[stri
 	if promptCacheKey != "" {
 		params.PromptCacheKey = &promptCacheKey
 	}
+	if request.Model.ServiceTier != "" {
+		if request.Model.ServiceTier != "priority" && request.Model.ServiceTier != "default" {
+			return nil, errors.New("unsupported service tier")
+		}
+		tier := openaiapi.ServiceTier(request.Model.ServiceTier)
+		params.ServiceTier = &tier
+	}
 	if request.Model.MaxOutputTokens != nil {
 		maxOutputTokens := int(*request.Model.MaxOutputTokens)
 		params.MaxOutputTokens = &maxOutputTokens
@@ -108,6 +115,14 @@ func requestInputItem(source llm.Item) (openaiapi.InputItem, error) {
 		message, ok := source.Data.(llm.Message)
 		if !ok {
 			return item, fmt.Errorf("message item data must be llm.Message, got %T", source.Data)
+		}
+		if len(message.Images) > 0 {
+			content := []map[string]any{{"type": "input_text", "text": message.Text}}
+			for _, image := range message.Images {
+				content = append(content, map[string]any{"type": "input_image", "image_url": image})
+			}
+			err := setUnion(&item, map[string]any{"type": "message", "role": message.Role, "content": content})
+			return item, err
 		}
 		var content openaiapi.EasyInputMessage_Content
 		if err := content.FromEasyInputMessageContent0(message.Text); err != nil {

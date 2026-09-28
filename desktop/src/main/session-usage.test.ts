@@ -7,6 +7,16 @@ const event = (seq: number, name: string, payload: unknown, recordedAt?: string)
 const at = (ms: number): string => new Date(1_000_000 + ms).toISOString()
 
 describe('session usage and execution', () => {
+  it('correlates out-of-order operation telemetry with its real tool and turn',()=>{
+    const summary=executionFromEvents('s1',[
+      event(1,'operation.started',{ID:'op',Type:'remote_job',Status:'running'},at(0)),
+      event(2,'operation.update',{ID:'op',Type:'remote_job',Status:'completed'},at(12)),
+      event(3,'session.item',{Kind:'model_response',Data:{TurnID:'turn',Response:{Output:[{Type:'tool_call',Data:{Name:'ReadFile',CallID:'call'}}]}}}),
+      event(4,'session.item',{Kind:'tool_call_status',Data:{TurnID:'turn',CallID:'call',Status:{WaitingFor:['op']}}}),
+      event(5,'operation.update',{ID:'op',Status:'running'},at(30))
+    ])
+    expect(summary.operations[0]).toMatchObject({tool:'ReadFile',callId:'call',turnId:'turn',status:'completed',durationMs:12})
+  })
   it('excludes approval waits and denied operations from execution overlap', () => {
     const summary = executionFromEvents('s1', [
       event(1, 'operation.started', { ID: 'a', Type: 'shell', Status: 'ready' }, at(0)),

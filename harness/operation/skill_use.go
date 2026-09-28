@@ -4,14 +4,14 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"math"
 
 	"github.com/unreallabsai/unreal-agent/harness/primitives"
 )
 
 const (
-	TypeSkillUse    Type    = "skill_use"
-	VersionSkillUse Version = 1
+	TypeSkillUse         Type    = "skill_use"
+	VersionSkillUse      Version = 1
+	MaxSkillContentBytes int64   = 512 * 1024
 
 	skillUseReadCorrelation primitives.CorrelationID = "skill-use-read"
 )
@@ -105,6 +105,9 @@ func validateSkillUseState(state SkillUseState) error {
 	if state.Path == "" {
 		return errors.New("skill path must be set")
 	}
+	if int64(len(state.Content)) > MaxSkillContentBytes {
+		return errors.New("skill content exceeds size limit")
+	}
 	return nil
 }
 
@@ -144,11 +147,17 @@ func advanceAwaitingSkillUse(
 		if !ok || output.Offset != int64(len(state.Content)) {
 			return failSkillUse(current, state, errors.New("skill read returned invalid output"))
 		}
+		if int64(len(output.Data)) > MaxSkillContentBytes-int64(len(state.Content)) {
+			return failSkillUse(current, state, errors.New("skill content exceeds size limit"))
+		}
 		state.Content = append(state.Content, output.Data...)
 		return awaitSkillUse(current, state)
 
 	case primitives.PrimitiveEventIOReadCompleted:
 		result, ok := event.Result.(primitives.IOReadCompletedResult)
+		if ok && result.Size > MaxSkillContentBytes {
+			return failSkillUse(current, state, errors.New("skill content exceeds size limit"))
+		}
 		if !ok || result.Size != int64(len(state.Content)) {
 			return failSkillUse(current, state, errors.New("skill read returned an invalid completion"))
 		}
@@ -172,7 +181,7 @@ func dispatchSkillUseRead(current Operation, state SkillUseState) (Step, error) 
 			CorrelationID: skillUseReadCorrelation,
 			Path:          state.Path,
 			Offset:        int64(len(state.Content)),
-			Count:         math.MaxInt64,
+			Count:         MaxSkillContentBytes - int64(len(state.Content)) + 1,
 		},
 	}}
 	return step, nil

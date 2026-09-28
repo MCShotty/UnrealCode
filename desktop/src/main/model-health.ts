@@ -32,7 +32,7 @@ export async function modelHealth(provider: Provider, baseUrl: string, model: st
       const start = performance.now()
       const response = provider === 'ollama'
         ? await request('/api/generate', { model, prompt: 'Reply with OK.', stream: false, options: { num_predict: 16 } })
-        : await request(`${url.pathname.replace(/\/$/, '') || '/v1'}/chat/completions`, { model, messages: [{ role: 'user', content: 'Reply with OK.' }], max_tokens: 16, stream: false })
+        : await request(`${url.pathname.replace(/\/$/, '') || '/v1'}/chat/completions`, { model, messages: [{ role: 'user', content: 'Reply with OK.' }], max_tokens: 512, reasoning_effort: 'low', stream: false })
       result.latencyMs = performance.now() - start
       result.response = String(response.response ?? response.choices?.[0]?.message?.content ?? '').slice(0, 1000)
       result.inputTokens = response.prompt_eval_count ?? response.usage?.prompt_tokens

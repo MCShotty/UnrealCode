@@ -10,8 +10,10 @@ vi.mock('node:child_process', async importOriginal => {
   const actual = await importOriginal<typeof import('node:child_process')>()
   const { promisify } = await import('node:util'), real = promisify(actual.execFile)
   return { ...actual, execFile: Object.assign(() => {}, { [promisify.custom]: async (file: string, args: string[], options: object) => {
+    if (file === 'git' && ['fetch','pull'].includes(args[0])) {captured.push(['git',...args]);return{stdout:'',stderr:''}}
     if (file !== 'gh') return real(file, args, options)
     captured.push(args)
+    if(args[0]==='auth'&&args[1]==='status')return{stdout:JSON.stringify({hosts:{'github.enterprise.test':[{state:'success',active:true}]}}),stderr:''}
     if(responses.workflow){
       if(args.includes('--input')){responses.bodies.push(JSON.parse(await readFile(args[args.indexOf('--input')+1],'utf8')));return{stdout:'{}',stderr:''}}
       if(args.includes('headRefOid'))return{stdout:'a'.repeat(40),stderr:''}
@@ -23,7 +25,7 @@ vi.mock('node:child_process', async importOriginal => {
     return { stdout, stderr: '' }
   } }) }
 })
-import { githubPullRequests, githubPullRequest, githubCreatePullRequest, githubReviewPullRequest,githubReviewComments,githubFailureLogs,githubRemoteState,githubPush } from './github'
+import { githubPullRequests, githubPullRequest, githubCreatePullRequest, githubReviewPullRequest,githubReviewComments,githubFailureLogs,githubRemoteState,githubPush,githubFetch,githubPull } from './github'
 let root = ''
 afterEach(async () => { if (root) await rm(root, { recursive: true, force: true }); captured.length = 0;responses.workflow=false;responses.bodies=[] })
 it.each(['https://github.com/acme/private-fork.git', 'git@github.com:acme/private-fork.git'])('pins PR requests to origin %s instead of gh inherited defaults', async origin => {
@@ -54,4 +56,28 @@ it('reads paginated comments and selected logs from origin and binds review subm
 })
 it('refuses a push when the commit changed after its preview',async()=>{
  root=await mkdtemp(join(tmpdir(),'unrealcode-push-preview-'));execFileSync('git',['init','-b','main',root],{stdio:'ignore',windowsHide:true});execFileSync('git',['-C',root,'remote','add','origin','https://github.com/acme/private-fork.git'],{windowsHide:true});await writeFile(join(root,'file.txt'),'before');execFileSync('git',['-C',root,'add','.']);const commit=()=>execFileSync('git',['-C',root,'-c','user.name=Fixture','-c','user.email=fixture@localhost','commit','-m','Fixture'],{stdio:'ignore',windowsHide:true});commit();const expected=await githubRemoteState(root);await writeFile(join(root,'file.txt'),'after');execFileSync('git',['-C',root,'add','.']);commit();await expect(githubPush(root,'main',expected)).rejects.toThrow('changed after the push preview')
+})
+it('rejects untrusted origin hosts and embedded URL credentials before Git network actions',async()=>{
+ root=await mkdtemp(join(tmpdir(),'unrealcode-gh-untrusted-'));execFileSync('git',['init',root],{stdio:'ignore',windowsHide:true})
+ execFileSync('git',['-C',root,'remote','add','origin','https://untrusted.example/acme/project.git'],{windowsHide:true})
+ await expect(githubPullRequests(root)).rejects.toThrow('not an authenticated GitHub host')
+ await expect(githubFetch(root)).rejects.toThrow('not an authenticated GitHub host')
+ await expect(githubPull(root)).rejects.toThrow('not an authenticated GitHub host')
+ execFileSync('git',['-C',root,'remote','set-url','origin','https://user:password@github.com/acme/project.git'],{windowsHide:true})
+ await expect(githubRemoteState(root)).rejects.toThrow('must not include credentials')
+})
+it('allows an exact GitHub Enterprise host already authenticated in gh',async()=>{
+ root=await mkdtemp(join(tmpdir(),'unrealcode-gh-enterprise-'));execFileSync('git',['init',root],{stdio:'ignore',windowsHide:true})
+ execFileSync('git',['-C',root,'remote','add','origin','git@github.enterprise.test:acme/project.git'],{windowsHide:true})
+ await githubPullRequests(root)
+ expect(captured.some(args=>args[0]==='auth'&&args[1]==='status')).toBe(true)
+ expect(captured.find(args=>args[0]==='pr'&&args[1]==='list')).toContain('github.enterprise.test/acme/project')
+})
+it('pins fetch and pull to the validated origin URL and requires a push preview',async()=>{
+ root=await mkdtemp(join(tmpdir(),'unrealcode-gh-pinned-'));execFileSync('git',['init','-b','main',root],{stdio:'ignore',windowsHide:true})
+ const origin='https://github.com/acme/project.git';execFileSync('git',['-C',root,'remote','add','origin',origin],{windowsHide:true})
+ await githubFetch(root);await githubPull(root)
+ expect(captured.find(args=>args[0]==='git'&&args[1]==='fetch')).toEqual(['git','fetch','--prune',origin,'+refs/heads/*:refs/remotes/origin/*'])
+ expect(captured.find(args=>args[0]==='git'&&args[1]==='pull')).toEqual(['git','pull','--ff-only',origin,'main'])
+ await expect(githubPush(root,'main')).rejects.toThrow('Preview')
 })

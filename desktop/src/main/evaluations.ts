@@ -1,10 +1,12 @@
+import { storageLocation, lookupStorage } from './storage-locations'
 import { createHash, randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { promises as fs } from 'node:fs'
-import { join, relative, isAbsolute } from 'node:path'
+import { dirname, join, relative, isAbsolute } from 'node:path'
 import { promisify } from 'node:util'
 import { DockerBridge } from './docker'
 import { backendEnvironment } from './child-environment'
+import { terminalDockerExecutable } from './terminal-command'
 import { credentialFor } from './settings'
 import { SessionUsageService, consumeUsage } from './session-usage'
 import { emptyTotals } from './account-usage'
@@ -14,9 +16,10 @@ import { decisionTraces } from './decision-trace'
 import type { AgentEvent, BridgeSessionConfig } from '../shared/api'
 import type { EvaluationRequest, EvaluationReport, EvaluationArm } from '../shared/diagnostics'
 import { atomicMetadata } from './atomic-metadata'
+import { defaultVolume, volumeRecords } from './state-volumes'
 
 const exec = promisify(execFile)
-const command = async (file: string, args: string[], cwd: string, timeout = 60000, signal?: AbortSignal): Promise<string> => (await exec(file, args, { cwd, timeout, signal, windowsHide: true, maxBuffer: 4 * 1024 * 1024, env: backendEnvironment() })).stdout.trim()
+const command = async (file: string, args: string[], cwd: string, timeout = 60000, signal?: AbortSignal): Promise<string> => {const environment=backendEnvironment();return (await exec(file==='docker'?terminalDockerExecutable(environment):file, args, { cwd, timeout, signal, windowsHide: true, maxBuffer: 4 * 1024 * 1024, env: environment })).stdout.trim()}
 export function validateEvaluation(request: EvaluationRequest): void {
   if (!request || !Array.isArray(request.tasks) || !request.tasks.length || request.tasks.length > 10) throw new Error('Select between 1 and 10 tasks')
   if (!Number.isInteger(request.runLimit) || request.runLimit < request.tasks.length * 2 || request.runLimit > 20) throw new Error('Run limit must cover both arms of every task and be at most 20')
@@ -73,7 +76,7 @@ export class Evaluations {
     for (let index = 0; index < report.arms.length; index++) {
       if (active.cancel.signal.aborted) break
       const arm = report.arms[index], task = report.request.tasks[arm.task]
-      const directory = join(this.directory, 'worktrees', report.id, String(index))
+      const directory = storageLocation(this.directory,'worktrees',`${report.id}:${index}`,join(this.directory,'worktrees',report.id,String(index)))
       await fs.mkdir(join(directory, '..'), { recursive: true })
       await command('git', ['worktree', 'add', '--detach', directory, report.revision], report.project)
       arm.worktree = directory; arm.retainedVolume = `unrealcode-eval-${createHash('sha256').update(directory.toLowerCase()).digest('hex').slice(0, 20)}`; arm.state = 'running'; await this.save(report)
@@ -157,16 +160,20 @@ export class Evaluations {
   }
   private async removeWorktree(report: EvaluationReport, arm: EvaluationArm): Promise<void> {
     if (!arm.worktree) return
-    const base = await fs.realpath(join(this.directory, 'worktrees', report.id)), target = await fs.realpath(arm.worktree)
-    const displacement = relative(base, target)
-    if (!displacement || displacement.startsWith('..') || isAbsolute(displacement)) throw new Error('Worktree cleanup path is outside this evaluation')
+    const legacy=join(this.directory,'worktrees',report.id,String(report.arms.indexOf(arm))),owned=lookupStorage(this.directory,'worktrees',`${report.id}:${report.arms.indexOf(arm)}`,legacy)||legacy
+    const target=await fs.realpath(arm.worktree),expected=await fs.realpath(owned)
+    if (target.toLowerCase()!==expected.toLowerCase()) throw new Error('Worktree cleanup path is outside this evaluation')
     await command('git', ['worktree', 'remove', '--force', target], report.project)
     arm.worktree = undefined; await this.save(report)
   }
   private async removeVolume(report: EvaluationReport, arm: EvaluationArm): Promise<void> {
     if (!arm.retainedVolume) return
-    const directory = join(this.directory, 'worktrees', report.id, String(report.arms.indexOf(arm)))
-    const expected = `unrealcode-eval-${createHash('sha256').update(directory.toLowerCase()).digest('hex').slice(0, 20)}`
+    const legacy=join(this.directory,'worktrees',report.id,String(report.arms.indexOf(arm)))
+    const directory = lookupStorage(this.directory,'worktrees',`${report.id}:${report.arms.indexOf(arm)}`,legacy)||legacy
+    // A backup restore allocates fresh volumes. Never remove the original
+    // recovery source just because its name still matches the legacy hash.
+    const registered = volumeRecords(dirname(this.directory)).find(item => item.isolated && item.project.toLowerCase() === directory.toLowerCase())
+    const expected = registered?.volume || defaultVolume(directory, true)
     if (arm.retainedVolume !== expected) throw new Error('Evaluation storage identity does not match its run')
     await command('docker', ['volume', 'rm', expected], report.project)
     arm.retainedVolume = undefined; await this.save(report)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json/v2"
 	"github.com/unreallabsai/unreal-agent/harness/llm"
 	"github.com/unreallabsai/unreal-agent/harness/operation"
 	"github.com/unreallabsai/unreal-agent/harness/session"
@@ -62,6 +63,34 @@ func TestTaskBudgetDenialPrecedesProviderRequest(t *testing.T) {
 	client.config.TeamManaged = false
 	if _, err := client.Respond(context.Background(), llm.Request{}, llm.RequestOptions{}); err != nil || count.Load() != 1 {
 		t.Fatal("ordinary sessions should not require a task permit")
+	}
+	a.events.flush()
+	entries, err := a.events.entries(id, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var started string
+	recorded := false
+	for _, entry := range entries {
+		var value struct {
+			ID    string    `json:"id"`
+			Usage llm.Usage `json:"usage"`
+		}
+		if err = json.Unmarshal(entry.Payload, &value); err != nil {
+			t.Fatal(err)
+		}
+		if entry.Event == "model.request.started" {
+			started = value.ID
+		}
+		if entry.Event == "model.request.completed" {
+			recorded = true
+			if started == "" || value.ID != started || value.Usage.InputTokens != 10 || value.Usage.OutputTokens != 2 {
+				t.Fatalf("request-correlated usage was not persisted: %+v", value)
+			}
+		}
+	}
+	if !recorded {
+		t.Fatal("missing usage-bearing model completion")
 	}
 }
 func TestTeamToolExposureRequiresOptInAndNeverNests(t *testing.T) {

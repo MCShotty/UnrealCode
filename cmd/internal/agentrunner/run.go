@@ -30,6 +30,7 @@ import (
 	"github.com/unreallabsai/unreal-agent/harness/tool"
 	"github.com/unreallabsai/unreal-agent/harness/tool/bash"
 	"github.com/unreallabsai/unreal-agent/harness/tool/viewimage"
+	"github.com/unreallabsai/unreal-agent/internal/saferead"
 )
 
 const (
@@ -532,7 +533,7 @@ func openDatetimeLog(directory string, now time.Time) (*os.File, error) {
 }
 
 func loadDotEnv(path string) (*environmentScope, error) {
-	encoded, err := os.ReadFile(path)
+	encoded, err := saferead.RegularFile(path, 64*1024)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return &environmentScope{}, nil

@@ -13,7 +13,7 @@ const requests=[]
 const model=createServer(async(req,res)=>{
  let text='';for await(const part of req)text+=part;const body=JSON.parse(text);requests.push(body)
  const messages=body.messages||[],content=messages.map(item=>typeof item.content==='string'?item.content:JSON.stringify(item.content)).join('\n'),done=messages.some(item=>item.role==='tool')
- const call=(name,args)=>({id:randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}})
+ const call=(name,args)=>{if(name==='TeamDispatch')Object.assign(args,{expectedResult:'Assigned file inspected or changed and verified',acceptance:['Report evidence for the assigned file']});return ({id:randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}})}
  let message={role:'assistant',content:'Parent task ready for review.'}
  if(content.includes('LIMIT_FIXTURE'))message={role:'assistant',content:'Limit fixture response'}
  else if(content.includes('Assignment: WORKER_A'))message=done?{role:'assistant',content:'WORKER_A complete. Changed a.txt; native patch verified.'}:{role:'assistant',tool_calls:[call('ApplyPatch',{edits:[{path:'a.txt',expectedRevision:createHash('sha256').update('original\n').digest('hex'),content:'specialist A\n'}]})]}
@@ -22,7 +22,7 @@ const model=createServer(async(req,res)=>{
  else if(!done)message={role:'assistant',tool_calls:[call('TeamDispatch',{role:'implementer',assignment:'WORKER_A: update a.txt',ownership:['a.txt']}),call('TeamDispatch',{role:'implementer',assignment:'WORKER_B: inspect b.txt and verify',ownership:['b.txt']})]}
  res.writeHead(200,{'content-type':'application/json'});res.write(JSON.stringify({id:randomUUID(),choices:[{index:0,finish_reason:message.tool_calls?'tool_calls':'stop',message}],usage:{prompt_tokens:30,completion_tokens:8}}));res.end()
 });await new Promise(resolve=>model.listen(0,'0.0.0.0',resolve))
-const packaged=process.argv.includes('--packaged'),launch=()=>electron.launch({executablePath:resolve(packaged?'dist/win-unpacked/UnrealCode.exe':'node_modules/electron/dist/electron.exe'),args:packaged?[]:['.'],env:{...process.env,UNREAL_DESKTOP_USER_DATA:data,UNREAL_DESKTOP_BACKGROUND_CHECK:'1'}})
+const packaged=process.argv.includes('--packaged'),launch=()=>electron.launch({executablePath:resolve(process.env.UNREALCODE_QA_EXECUTABLE||(packaged?'dist/win-unpacked/UnrealCode.exe':'node_modules/electron/dist/electron.exe')),args:packaged?[]:['.'],env:{...process.env,UNREAL_DESKTOP_USER_DATA:data,UNREAL_DESKTOP_BACKGROUND_CHECK:'1'}})
 let app=await launch(),page=await app.firstWindow(),parent='';const report={root,errors:[]}
 const wait=async(predicate,arg,timeout=90000)=>{const end=Date.now()+timeout;while(Date.now()<end){if(await page.evaluate(predicate,arg))return;await new Promise(resolve=>setTimeout(resolve,100))}throw Error('Team fixture timed out')}
 try{
@@ -38,12 +38,14 @@ try{
  const childConfig=await page.evaluate(id=>window.unreal.sessionConfig(id),a.sessionId);assert(childConfig.specialist);assert(!childConfig.teamEnabled);assert(childConfig.disallowedTools.includes('EntityExtract'))
  assert((await page.evaluate(id=>window.unreal.contextView(id),a.sessionId)).selection.excluded.includes('private'))
  const approvals=await page.evaluate(id=>window.unreal.approvals(id),b.sessionId);assert(approvals.some(item=>item.tool==='Bash'))
- await assert.rejects(page.evaluate(({id,options})=>window.unreal.teamConfigure(id,options),{id:a.sessionId,options}),/inherited|nested/)
+ const nestedDenial=await page.evaluate(async({id,options})=>{try{await window.unreal.teamConfigure(id,options);return ''}catch(error){return error.failure?.details||''}},{id:a.sessionId,options})
+ assert.match(nestedDenial,/inherited|nested/)
  await page.evaluate(({parent,id})=>window.unreal.teamWorkerAction(parent,id,'cancel'),{parent,id:b.id})
  await wait(async({parent,id})=>(await window.unreal.teamView(parent)).workers.find(worker=>worker.id===id)?.state==='cancelled',{parent,id:b.id})
- writeFileSync(join(project,'a.txt'),'later user edit\n');assert((await page.evaluate(({parent,id})=>window.unreal.teamPreview(parent,id),{parent,id:a.id})).changes[0].conflict)
- await assert.rejects(page.evaluate(({parent,id})=>window.unreal.teamIntegrate(parent,id,['a.txt']),{parent,id:a.id}),/conflict/)
- writeFileSync(join(project,'a.txt'),'original\n');await page.evaluate(({parent,id})=>window.unreal.teamIntegrate(parent,id,['a.txt']),{parent,id:a.id});assert.equal(readFileSync(join(project,'a.txt'),'utf8'),'specialist A\n')
+ await page.evaluate(parent=>window.unreal.teamStop(parent),parent);writeFileSync(join(project,'a.txt'),'later user edit\n');assert((await page.evaluate(({parent,id})=>window.unreal.teamPreview(parent,id),{parent,id:a.id})).changes[0].conflict)
+ const integrationDenial=await page.evaluate(async({parent,id})=>{try{await window.unreal.teamIntegrate(parent,id,['a.txt']);return ''}catch(error){return error.failure?.details||''}},{parent,id:a.id})
+ assert.match(integrationDenial,/conflict/)
+ writeFileSync(join(project,'a.txt'),'original\n');await wait(async id=>!(await window.unreal.checkpoints()).some(row=>row.sessionId===id&&['capturing','running'].includes(row.state)),parent);await page.evaluate(async({parent,id})=>{try{return await window.unreal.teamIntegrate(parent,id,['a.txt'])}catch(error){throw Error(error.failure?.details||error.message)}},{parent,id:a.id});assert.equal(readFileSync(join(project,'a.txt'),'utf8'),'specialist A\n')
  await page.evaluate(({parent,id})=>window.unreal.teamWorkerAction(parent,id,'retain'),{parent,id:b.id})
  team=await page.evaluate(id=>window.unreal.teamView(id),parent);assert.equal(team.totalUsage.input,team.parentUsage.input+team.workerUsage.input);assert(team.workerUsage.calls>0);report.parallelWorkers=true;report.inheritedRestrictions=true;report.individualCancellation=true;report.conflictAndIntegration=true;report.usage=team.totalUsage
  await app.evaluate(({BrowserWindow},target)=>BrowserWindow.getAllWindows()[0].webContents.send('app:navigate',target),{project,sessionId:parent});await page.getByRole('region',{name:'Task team'}).waitFor();await page.getByLabel('Message UnrealCode').waitFor();await page.locator('.user-bubble').first().waitFor();assert((await page.locator('.tool-card .tool-status').allTextContents()).every(status=>!/(running|started)/i.test(status)));await page.screenshot({path:join(root,'teams-dark.png'),animations:'disabled'})
@@ -53,11 +55,12 @@ try{
  const queuedParent=(await page.evaluate(()=>window.unreal.queueSnapshot())).tasks.find(task=>task.id===queueId).sessionId
  await page.evaluate(id=>window.unreal.queueAction(id,'cancel'),queueId)
  await wait(async id=>(await window.unreal.teamView(id)).workers.every(worker=>worker.state==='cancelled'),queuedParent)
- await assert.rejects(page.evaluate(id=>window.unreal.queueAction(id,'retry'),queueId),/specialists/i)
+ const queueDenial=await page.evaluate(async id=>{try{await window.unreal.queueAction(id,'retry');return ''}catch(error){return error.failure?.details||''}},queueId)
+ assert.match(queueDenial,/specialists/i)
  assert.equal((await page.evaluate(()=>window.unreal.queueSnapshot())).tasks[1].state,'pending')
  const queuedWorker=(await page.evaluate(id=>window.unreal.teamView(id),queuedParent)).workers[0];await page.evaluate(({parent,id})=>window.unreal.teamWorkerAction(parent,id,'retain'),{parent:queuedParent,id:queuedWorker.id})
  await page.evaluate(()=>window.unreal.queuePause(false));await wait(async()=>(await window.unreal.queueSnapshot()).tasks[1].state==='completed');report.queueCancellation=true
- const beforeRestart=requests.length;await app.close();app=await launch();page=await app.firstWindow();await page.evaluate(path=>window.unreal.openProject(path,true),project)
+ const beforeRestart=requests.length;await app.close();app=await launch();page=await app.firstWindow();await page.waitForFunction(()=>!!window.unreal);await page.evaluate(path=>window.unreal.openProject(path,true),project)
  const restored=await page.evaluate(id=>window.unreal.teamView(id),parent);assert(restored.paused);assert.equal(restored.totalUsage.input,team.totalUsage.input);assert.equal(requests.length,beforeRestart);report.restart=true
  const limited=(await page.evaluate(options=>window.unreal.createSession({},options),{...options,allowSpecialists:false,modelRequestLimit:1})).sessionId
  await page.evaluate(id=>window.unreal.sendMessage(id,'LIMIT_FIXTURE',crypto.randomUUID()),limited);await wait(async id=>(await window.unreal.getEvents(id,0)).some(event=>event.event==='session.idle'),limited)

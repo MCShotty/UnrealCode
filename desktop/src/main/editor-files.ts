@@ -4,6 +4,9 @@ import { dirname, isAbsolute, join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { EditableFile } from '../shared/api'
+import { createTimestampDirectory } from './storage-locations'
+import { readBoundedRegularFile } from './bounded-file-read'
+import {projectBytes,projectWrite} from './project-fs'
 
 const exec = promisify(execFile)
 const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
@@ -14,7 +17,7 @@ export async function editorPath(root: string, path: string): Promise<string> {
   for (const part of path.split('/')) {
     current = join(current, part)
     try { if ((await fs.lstat(current)).isSymbolicLink()) throw new Error('Editor does not follow symbolic links or junctions') }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+    catch (error) { if (!['ENOENT','ENOTDIR'].includes((error as NodeJS.ErrnoException).code || '')) throw error }
   }
   return current
 }
@@ -22,10 +25,9 @@ export async function readEditableFile(root: string, path: string): Promise<Edit
   const workspace = await fs.realpath(root)
   const target = await editorPath(root, path)
   try {
-    const info = await fs.stat(target)
-    if (!info.isFile() || info.size > 1024 * 1024) throw new Error('The editor supports regular UTF-8 text files up to 1 MiB')
-    const bytes = await fs.readFile(target)
-    if (bytes.length > 1024 * 1024 || bytes.includes(0)) throw new Error('Binary or oversized file: use an external editor')
+    const {bytes} = await projectBytes(root,path,1024 * 1024)
+    if (await editorPath(root, path) !== target) throw new Error('Project path changed while reading; retry')
+    if (bytes.includes(0)) throw new Error('Binary file: use an external editor')
     return { path, workspace, revision: hash(bytes), content: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) }
   } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { path, workspace, revision: 'missing', content: '' }; throw error }
 }
@@ -40,18 +42,10 @@ export async function saveEditableFile(root: string, path: string, expectedRevis
   try {
     const before = await readEditableFile(root, path)
     if (before.revision !== expectedRevision) throw new Error('File changed on disk. Reload or compare before saving; your unsaved buffer has been retained.')
-    const recovery = join(data, 'editor-recovery', randomUUID())
-    await fs.mkdir(recovery, { recursive: true })
+    const recovery = await createTimestampDirectory(join(data, 'editor-recovery'))
     await fs.writeFile(join(recovery, 'before.json'), JSON.stringify({ project: root, ...before, savedAt: new Date().toISOString() }), { mode: 0o600 })
-    await fs.mkdir(dirname(target), { recursive: true })
-    await editorPath(root, path)
-    const temporary = `${target}.${randomUUID()}.tmp`
-    try {
-      const mode = before.revision === 'missing' ? 0o644 : (await fs.stat(target)).mode
-      await fs.writeFile(temporary, content, { flag: 'wx', mode })
-      if ((await readEditableFile(root, path)).revision !== before.revision) throw new Error('File changed while saving. Your buffer is retained.')
-      await fs.rename(temporary, target)
-    } finally { await fs.unlink(temporary).catch(() => {}) }
+    const mode=before.revision==='missing'?0o644:(await projectBytes(root,path,1024*1024)).mode
+    await projectWrite(root,path,Buffer.from(content),{expected:before.revision,mode})
     return readEditableFile(root, path)
   } finally { unlock(); if (locks.get(key) === current) locks.delete(key) }
 }

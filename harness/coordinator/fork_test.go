@@ -11,8 +11,48 @@ import (
 	"github.com/unreallabsai/unreal-agent/harness/operation"
 	"github.com/unreallabsai/unreal-agent/harness/session"
 	"github.com/unreallabsai/unreal-agent/harness/sessionstore"
+	"github.com/unreallabsai/unreal-agent/harness/sessionstore/localfile"
 	"github.com/unreallabsai/unreal-agent/harness/tool"
 )
+
+func TestCoordinatorForkDoesNotReplayUndeliveredParentInput(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store, err := localfile.New(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Create(t.Context(), "parent"); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.AppendInput(t.Context(), "parent", externalEvent(t, 0, "parent-input", "parent work")); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.AppendTurn(t.Context(), "parent", session.Turn{ID: "parent-turn", Type: session.TurnRegular}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Fork(t.Context(), "child", "parent", "parent-turn"); err != nil {
+			t.Fatal(err)
+		}
+		restored, err := store.Resume(t.Context(), "child")
+		if err != nil {
+			t.Fatal(err)
+		}
+		child := newStopTestRun(t, 0)
+		child.current.dependencies.SessionID = "child"
+		child.current.dependencies.Sessions, child.current.dependencies.Restored = store, restored
+		child.start(t)
+		child.assertRunning(t)
+		if child.current.pendingInputs() != 0 || len(child.calls) != 0 {
+			t.Fatal("fork treated inherited unanswered input as new child work")
+		}
+		child.input(t, externalEvent(t, 1, "child-input", "continue in child"), stopInput(t, "child-stop", inbox.StopWhenIdle))
+		if len(child.calls) != 1 {
+			t.Fatalf("child model requests = %d, want one after new input", len(child.calls))
+		}
+		child.respond(t, 0, textResponse("Child done."))
+		child.assertStopped(t)
+	})
+}
 
 func TestCoordinatorForkStopsWhenChildIsIdle(t *testing.T) {
 	for _, parentStage := range []string{"unscheduled", "running", "completed", "compaction", "compaction response"} {
@@ -86,13 +126,20 @@ func TestCoordinatorForkStopsWhenChildIsIdle(t *testing.T) {
 						t.Fatal("child turn did not establish its own type")
 					}
 					inheritedCall := false
+					inheritedResult := false
 					for _, item := range child.calls[0].request.Input {
 						if item.Type == llm.ItemToolCall && item.Data.(llm.ToolCall).CallID == "call-0" {
 							inheritedCall = true
 						}
+						if item.Type == llm.ItemToolResult && item.Data.(llm.ToolResult).CallID == "call-0" {
+							inheritedResult = true
+						}
 					}
 					if !inheritedCall {
 						t.Fatal("fork lost its parent context")
+					}
+					if !inheritedResult {
+						t.Fatal("fork left an inherited tool call without a result")
 					}
 					if childTool {
 						child.respond(t, 0, llm.Response{Output: []llm.Item{{Type: llm.ItemToolCall, Data: llm.ToolCall{

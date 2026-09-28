@@ -26,7 +26,7 @@ func decisionTools() []tool.ExtraStaticTool {
 			Description: "Evaluate a batch of bounded semantic Choice, Noul, or Score questions using the globally selected decision engine. Use focused evidence and preserve uncertainty; do not ask this tool to write code, plan, calculate, or authorize actions.",
 			Parameters: map[string]any{"type": "object", "properties": map[string]any{
 				"state":      map[string]any{"description": "Focused text or JSON evidence"},
-				"questions":  map[string]any{"type": "object", "description": "Map of stable IDs to typed questions with type, instructions, and criteria"},
+				"questions":  map[string]any{"type": "object", "description": "Map of stable IDs to typed questions. Choice criteria is an option map; Score criteria is an ordered array; Noul criteria is optional and, if present, must be an object with true/false descriptions. Put other Noul guidance in instructions."},
 				"sourceRefs": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			}, "required": []any{"state", "questions"}}}}, Translator: decisionToolTranslator{kind: decisionPlanType}},
 		{Definition: tool.Definition{Tool: llm.Tool{Type: llm.ToolFunction, Name: entityToolName,

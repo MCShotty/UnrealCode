@@ -1,9 +1,23 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, shell } from 'electron'
-import { randomUUID } from 'node:crypto'
+import { classifyFailure, ActionableError, withEventFailure } from './failures'
+import { commands,validateCommand,type CommandResult } from '../shared/commands'
+import { modelCapabilities } from './model-capabilities'
+import { HindsightMemory } from './hindsight-memory'
+import { settledMemoryReply } from './memory-retention'
+import { historyCache, closeHistoryCaches, resetHistoryCaches } from './history-cache'
+import { timestampPath, timestampName } from './storage-locations'
+import type { RecoveryAction } from '../shared/failure'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, shell, Menu, nativeImage } from 'electron'
+import { randomUUID,createHash } from 'node:crypto'
+const imageInputs=new Map<string,{project:string;data:string;createdAt:number}>()
+let memoryService:HindsightMemory|undefined
+const hookControllers=new Map<string,AbortController>()
+const browserControllers=new Map<string,AbortController>()
+import {closeProjectFiles} from './project-fs'
+function memory():HindsightMemory {return memoryService||=(new HindsightMemory(app.getPath('userData')))}
 import { execFile } from 'node:child_process'
 import { mkdirSync, realpathSync } from 'node:fs'
 import { promises as fs } from 'node:fs'
-import { join } from 'node:path'
+import { join,basename } from 'node:path'
 import { promisify } from 'node:util'
 import type { AgentEvent, BridgeSessionConfig, DecisionBatch, DecisionStatus, Provider } from '../shared/api'
 import { DockerBridge } from './docker'
@@ -11,10 +25,15 @@ import { codexStatus, credentialFor, getSettings, hasKey, rememberProject, saveK
 import { AccountUsageService } from './account-usage'
 import { SessionUsageService } from './session-usage'
 import { deleteSkill, gitChanges, gitDiff, listFiles, listSkills, readFile, saveSkill } from './files'
+import { readBoundedRegularFile } from './bounded-file-read'
+import { checkedImageDimensions } from './image-header'
+import { convertWebp } from './webp-converter'
 import * as github from './github'
 import { discoverModels } from './models'
 import { CheckpointService } from './checkpoint-service'
 import { backendEnvironment } from './child-environment'
+import { terminalDockerExecutable } from './terminal-command'
+import { normalizeBrowserGrant } from './project-browser'
 import { WorkspaceRuntime, projectData } from './workspace-runtime'
 import { ConversationIndex } from './conversation-index'
 import type { ContextSelection } from '../shared/workflow'
@@ -63,7 +82,8 @@ let checkpoints: CheckpointService | null = null
 const connectionVault = new ConnectionVault(join(app.getPath('userData'), 'connection-secrets.json'))
 let connections: McpBroker
 let hostOperations: HostOperations
-function initializeConnections():void {
+async function initializeConnections():Promise<void> {
+await connections?.close()
 hostOperations = new HostOperations(join(app.getPath('userData'), 'host-operations.json'))
 hostOperations.onChanged = () => window?.webContents.send('workflow:changed', selected?.project || '')
 connections = new McpBroker(join(app.getPath('userData'), 'connections.json'), connectionVault)
@@ -86,30 +106,66 @@ let restoreSelection:{id:string;path:string}|undefined
 let supportSelection=''
 let activeIPC=0
 let workspaceSelection=0
-const recoveryChannels=new Set(['settings:get','app:version','project:path','docker:status','settings:codex-status','recovery:status','recovery:retry','recovery:export','recovery:preview','recovery:restore','storage:list','storage:remove','support:preview','support:export','updates:status','updates:check','updates:download','updates:cancel','updates:install'])
+const recoveryChannels=new Set(['recovery:action','history:rebuild','settings:get','app:version','project:path','docker:status','settings:codex-status','recovery:status','recovery:retry','recovery:export','recovery:preview','recovery:restore','recovery:retained','recovery:retained-export','recovery:retained-attach','storage:list','storage:remove','support:preview','support:export','updates:status','updates:check','updates:download','updates:cancel','updates:install'])
+const dependencyReadChannels=new Set(['project:pick','project:open','session:list','session:select','session:latest','session:events','session:event-window','history:page','history:search','workspace:active','settings:update','settings:has-key','settings:save-key','models:health','models:discover','files:changes'])
 function handle(channel:string,callback:(event:Electron.IpcMainInvokeEvent,...args:any[])=>unknown):void {
  ipcMain.handle(channel,async(event,...args)=>{
-  if(recoveryState.busy&&!['recovery:status','updates:status','updates:cancel'].includes(channel))throw new Error('App maintenance is in progress')
-  if(recoveryState.migrationError&&!recoveryChannels.has(channel))throw new Error(recoveryState.migrationError)
-  if(workspaceSelection&&/^(editor:|skills:(save|delete)|terminal:)/.test(channel))throw new Error('Wait for the selected task workspace to finish opening')
-  const tracked=!recoveryChannels.has(channel)&&!['workspace:archive','workspace:restore'].includes(channel);if(tracked)activeIPC++
-  try{return await callback(event,...args)}catch(error){recordFailure(channel,error);throw error}finally{if(tracked)activeIPC--}
+  let tracked=false
+  try{
+   if(recoveryState.busy&&!['recovery:status','updates:status','updates:cancel'].includes(channel))throw new Error('App maintenance is in progress')
+   if(recoveryState.migrationError&&!recoveryChannels.has(channel))throw new ActionableError(recoveryState.failure!)
+   if(recoveryState.waitingForDependency&&!recoveryChannels.has(channel)&&!dependencyReadChannels.has(channel))throw new ActionableError(recoveryState.failure!)
+   if(workspaceSelection&&/^(editor:|skills:(save|delete)|terminal:)/.test(channel))throw new Error('Wait for the selected task workspace to finish opening')
+   tracked=!recoveryChannels.has(channel)&&!['workspace:archive','workspace:restore'].includes(channel);if(tracked)activeIPC++
+   return {unrealResult:true,ok:true,value:await callback(event,...args)}
+  }catch(error){const failure=classifyFailure(error,channel);if((error as {code?:string})?.code!=='HISTORY_QUERY_CANCELLED'){recordFailure(channel,{code:failure.code,reference:failure.reference});window?.webContents.send('app:failure',failure)}return {unrealResult:true,ok:false,failure}}
+  finally{if(tracked)activeIPC--}
  })
 }
-async function recoverStartup():Promise<void>{try{recoveryState.lastBackup=await recovery.migrate();migrateLegacySettings();getSettings();initializeConnections();recoveryState.migrationError=undefined;recoveryState.message='Ready'}catch(error){recoveryState.migrationError=`Recovery is required before opening projects. ${String(error)}`;recordFailure('migration',error);throw error}}
+async function recoverStartup():Promise<void>{
+ try{recoveryState.lastBackup=await recovery.migrate();migrateLegacySettings();getSettings();await initializeConnections();recoveryState.migrationError=undefined;recoveryState.waitingForDependency=false;recoveryState.failure=undefined;recoveryState.message='Ready'}
+ catch(error){const failure=classifyFailure(error,'migration');recoveryState.failure=failure;recordFailure('migration',{code:failure.code,reference:failure.reference});
+  if(['DOCKER_UNAVAILABLE','DOCKER_MISSING','DOCKER_WINDOWS_ENGINE','DOCKER_CONTEXT'].includes(failure.code)){getSettings();recoveryState.waitingForDependency=true;recoveryState.migrationError=undefined;recoveryState.message='Waiting for Docker to complete the recovery backup'}
+  else{recoveryState.waitingForDependency=false;recoveryState.migrationError='Recovery is required before opening projects. '+failure.message;recoveryState.message=failure.title}
+  throw new ActionableError(failure)
+ }
+}
 async function maintenance<T>(work:()=>Promise<T>):Promise<T>{
  if(recoveryState.busy||activeIPC||terminals.size||evaluations.busy)throw new Error('Finish active actions, evaluations and terminals before maintenance')
  recoveryState.busy=true;recoveryState.message='Saving and checking app data…'
  let quiesced=false
- try{for(const owner of workspaces.values())await owner.maintenanceReady();quiesced=true;await connections?.close();clearTimeout(connectionRefresh);for(const owner of workspaces.values())await owner.stopAll();await drainMetadata();return await work()}
- finally{recoveryState.busy=false;if(quiesced){workspaces.clear();selected=null;bridge=new DockerBridge();sessionUsage=new SessionUsageService(bridge);checkpoints=null;recoveryState.message='Reopen a project to continue';window?.webContents.send('app:maintenance-finished')}else recoveryState.message='Settle active work before maintenance'}
+ try{for(const owner of workspaces.values())await owner.maintenanceReady();quiesced=true;await connections?.disconnectAll();clearTimeout(connectionRefresh);for(const owner of workspaces.values())await owner.stopAll();await memoryService?.prepareBackup();await drainMetadata();await closeHistoryCaches();return await work()}
+ finally{recoveryState.busy=false;if(quiesced){workspaces.clear();selected=null;bridge=new DockerBridge();sessionUsage=new SessionUsageService(bridge);checkpoints=null;recoveryState.message=recoveryState.waitingForDependency?'Waiting for Docker to complete the recovery backup':recoveryState.migrationError?'Inspect the recovery issue before continuing':'Reopen a project to continue';window?.webContents.send('app:maintenance-finished')}else recoveryState.message='Settle active work before maintenance'}
 }
 function supportText():string{return supportDocument(app.getVersion(),{backendReady:bridge.status().ready,openProjects:workspaces.size,migrationBlocked:!!recoveryState.migrationError,updateState:updates.view().state})}
+async function storageItems(){const local=await storage.list();try{return [...local,...await recoveryVolumes.modelStorage((await recovery.knownVolumes()).map(item=>item.volume))]}catch(error){window?.webContents.send('app:failure',classifyFailure(error,'docker-storage'));return local}}
+async function rebuildHistory():Promise<void>{
+ const unavailable=()=>new ActionableError(classifyFailure(new Error('Docker daemon not running for history rebuild'),'history:rebuild'))
+ if(!selected?.bridge.status().ready)throw unavailable()
+ const cache=historyCache(app.getPath('userData'))
+ await cache.reindex()
+ await Promise.all([...workspaces.values()].map(owner=>owner.syncIndex()))
+}
 function registerRecoveryIPC():void {
+ handle('recovery:action',async(_event,action:RecoveryAction)=>{
+  if(action==='retry')return recoveryState.waitingForDependency||recoveryState.migrationError?maintenance(()=>recoverStartup()):(selected?.active.bridge||bridge).probe()
+  if(action==='docker-open'){
+   const local=process.env.LOCALAPPDATA||join(app.getPath('home'),'AppData','Local')
+   const allUsers=process.env.ProgramFiles||'C:\\Program Files'
+   for(const path of [join(local,'Programs','DockerDesktop','Docker Desktop.exe'),join(allUsers,'Docker','Docker','Docker Desktop.exe')]){
+    if(await fs.stat(path).then(info=>info.isFile(),()=>false)){const error=await shell.openPath(path);if(error)throw Error(error);return}
+   }
+   throw new ActionableError(classifyFailure(new Error('docker CLI executable not found'),'docker-open'))
+  }
+  if(action==='docker-help')return shell.openExternal('https://docs.docker.com/desktop/setup/install/windows-install/')
+  if(action==='backend-rebuild')return maintenance(()=>bridge.rebuild())
+  if(action==='cache-rebuild')return rebuildHistory()
+  throw Error('Use the Settings or Recovery tab for this action')
+ })
  handle('recovery:status',()=>({...recoveryState}))
  handle('recovery:retry',()=>maintenance(()=>recoverStartup()))
  handle('recovery:export',async()=>{
-  const answer=await dialog.showSaveDialog(window!,{title:'Export private recovery backup folder',defaultPath:`UnrealCode-${new Date().toISOString().slice(0,10)}.unrealcode-backup`});if(!answer.filePath)return null
+  const answer=await dialog.showSaveDialog(window!,{title:'Export private recovery backup folder',defaultPath:`${timestampName()}.unrealcode-backup`});if(!answer.filePath)return null
   const path=answer.filePath;await maintenance(()=>recovery.export(path));recoveryState.lastBackup=path;return path
  })
  handle('recovery:preview',async()=>{const answer=await dialog.showOpenDialog(window!,{title:'Select an UnrealCode recovery backup',properties:['openDirectory']});if(!answer.filePaths[0])return null;const preview=await recovery.preview(answer.filePaths[0]);restoreSelection={id:preview.id,path:answer.filePaths[0]};return preview})
@@ -117,21 +173,36 @@ function registerRecoveryIPC():void {
   const selected=restoreSelection;if(!selected||selected.id!==id)throw new Error('Preview this backup first')
   const preview=await recovery.preview(selected.path);if(preview.id!==id)throw new Error('Backup changed; preview it again')
   const answer=await dialog.showMessageBox(window!,{type:'warning',title:'Restore app data?',buttons:['Restore and restart','Cancel'],defaultId:1,cancelId:1,message:`Restore ${preview.files} files and ${preview.volumes} saved-session volumes?`,detail:`Backup: ${selected.path}\nCurrent app data is backed up first. Credentials are retained locally; project/cloud/MCP trust is reset. Open editor buffers must be saved first. Project files outside app data are unchanged. The app restarts and tasks stay stopped.`});if(answer.response!==0)return
-  await maintenance(()=>recovery.restore(selected.path));restoreSelection=undefined;app.relaunch();app.quit()
+  await maintenance(async()=>{await recovery.restore(selected.path);await fs.mkdir(join(app.getPath('userData'),'cache-quarantine'),{recursive:true});await fs.rename(join(app.getPath('userData'),'history-cache'),timestampPath(join(app.getPath('userData'),'cache-quarantine'))).catch(error=>{if(error.code!=='ENOENT')throw error})});restoreSelection=undefined;app.relaunch();app.quit()
  })
- handle('storage:list',async()=>[...await storage.list(),...await recoveryVolumes.modelStorage((await recovery.knownVolumes()).map(item=>item.volume))])
- handle('storage:remove',async(_event,ids:string[])=>{if(!Array.isArray(ids)||!ids.length||ids.length>100)throw new Error('Select storage entries');const all=[...await storage.list(),...await recoveryVolumes.modelStorage((await recovery.knownVolumes()).map(item=>item.volume))],rows=all.filter(item=>ids.includes(item.id));if(rows.length!==ids.length||rows.some(item=>!item.removable))throw new Error('Refresh and select removable storage');const answer=await dialog.showMessageBox(window!,{type:'warning',buttons:['Remove selected storage','Cancel'],defaultId:1,cancelId:1,message:'Delete the selected storage entries?' ,detail:rows.map(item=>item.path+' ('+item.bytes+' bytes)').join('\n')});if(answer.response===0)await maintenance(async()=>{const indexes=rows.filter(item=>item.category!=='models');if(indexes.length)await storage.remove(indexes.map(item=>item.id));const fresh=await recoveryVolumes.modelStorage((await recovery.knownVolumes()).map(item=>item.volume));for(const item of rows.filter(item=>item.category==='models')){if(!fresh.some(value=>value.id===item.id))throw new Error('Model cache changed. Refresh the preview.');await recoveryVolumes.removeModelCache(item.path.split(':')[0])}})})
+ handle('recovery:retained',()=>recovery.retainedVolumes())
+ handle('recovery:retained-export',async(_event,id:string)=>{
+  const item=(await recovery.retainedVolumes()).items.find(item=>item.id===id)
+  if(!item?.exportable)throw Error(item?.reason||'Inspect a verified retained session copy first')
+  const answer=await dialog.showSaveDialog(window!,{title:'Export retained session files for manual recovery',defaultPath:`${timestampName()}.unrealcode-retained`})
+  if(!answer.filePath)return null
+  return maintenance(()=>recovery.exportRetainedVolume(id,answer.filePath!))
+ })
+ handle('recovery:retained-attach',async(_event,id:string)=>{
+  const item=(await recovery.retainedVolumes()).items.find(item=>item.id===id)
+  if(!item?.attachable||!item.project)throw Error(item?.reason||'Inspect an eligible retained session copy first')
+  const answer=await dialog.showMessageBox(window!,{type:'warning',buttons:['Reattach saved sessions','Cancel'],defaultId:1,cancelId:1,message:'Reattach this retained session volume?',detail:`Original project: ${item.project}\nResolved folder: ${item.resolvedProject}\nVolume: ${item.volume}\nNo existing project mapping will be replaced. The folder must be trusted again before opening its sessions.`})
+  if(answer.response!==0)return null
+  return maintenance(()=>recovery.attachRetainedVolume(id,{volume:item.volume,project:item.project!,resolvedProject:item.resolvedProject!}))
+ })
+ handle('storage:list',storageItems)
+ handle('storage:remove',async(_event,ids:string[])=>{if(!Array.isArray(ids)||!ids.length||ids.length>100)throw new Error('Select storage entries');const all=await storageItems(),rows=all.filter(item=>ids.includes(item.id));if(rows.length!==ids.length||rows.some(item=>!item.removable))throw new Error('Refresh and select removable storage');const answer=await dialog.showMessageBox(window!,{type:'warning',buttons:['Remove selected storage','Cancel'],defaultId:1,cancelId:1,message:'Delete the selected storage entries?' ,detail:rows.map(item=>item.path+' ('+item.bytes+' bytes)').join('\n')});if(answer.response===0)await maintenance(async()=>{const indexes=rows.filter(item=>item.category!=='models');if(indexes.length){const closed=await storage.list();await storage.remove(indexes.map(item=>item.path===join(app.getPath('userData'),'history-cache')?closed.find(row=>row.path===item.path)?.id||item.id:item.id))}const fresh=rows.some(item=>item.category==='models')?await recoveryVolumes.modelStorage((await recovery.knownVolumes()).map(item=>item.volume)):[];for(const item of rows.filter(item=>item.category==='models')){if(!fresh.some(value=>value.id===item.id))throw new Error('Model cache changed. Refresh the preview.');await recoveryVolumes.removeModelCache(item.path.split(':')[0])}})})
  handle('support:preview',()=>{supportSelection=supportText();return supportSelection})
- handle('support:export',async()=>{if(!supportSelection)throw new Error('Preview the support bundle first');const answer=await dialog.showSaveDialog(window!,{title:'Export the previewed support bundle',defaultPath:'UnrealCode-support.json',filters:[{name:'JSON',extensions:['json']}]});if(!answer.filePath)return null;await fs.writeFile(answer.filePath,supportSelection,{mode:0o600});return answer.filePath})
+ handle('support:export',async()=>{if(!supportSelection)throw new Error('Preview the support bundle first');const answer=await dialog.showSaveDialog(window!,{title:'Export the previewed support bundle',defaultPath:`${timestampName()}.support.json`,filters:[{name:'JSON',extensions:['json']}]});if(!answer.filePath)return null;await fs.writeFile(answer.filePath,supportSelection,{mode:0o600});return answer.filePath})
  handle('updates:status',()=>updates.view())
  handle('updates:check',(_event,channel:'stable'|'preview')=>updates.check(channel))
  handle('updates:download',()=>updates.download())
  handle('updates:cancel',()=>updates.cancel())
- handle('updates:install',async()=>{const answer=await dialog.showMessageBox(window!,{type:'question',buttons:['Restart and install','Later'],defaultId:1,cancelId:1,message:'Install the verified update now?',detail:'Save open editor buffers first. Active tasks, specialist workers, verification runs and terminals must be settled. A recovery backup is saved before the restart.'});if(answer.response!==0)return;await maintenance(async()=>{const path=join(app.getPath('userData'),'recovery',`before-update-${randomUUID()}`);await recovery.export(path);recoveryState.lastBackup=path;await updates.install()})})
+ handle('updates:install',async()=>{const answer=await dialog.showMessageBox(window!,{type:'question',buttons:['Restart and install','Later'],defaultId:1,cancelId:1,message:'Install the verified update now?',detail:'Save open editor buffers first. Active tasks, specialist workers, verification runs and terminals must be settled. A recovery backup is saved before the restart.'});if(answer.response!==0)return;await maintenance(async()=>{const path=timestampPath(join(app.getPath('userData'),'recovery'));await recovery.export(path,undefined,true);recoveryState.lastBackup=path;await updates.install()})})
 }
 
 function project(): string {
-  if (!bridge.projectPath) throw new Error('Open a trusted project first')
+  if (!selected && !bridge.projectPath) throw new Error('Open a trusted project first')
   return selected?.active.project || bridge.projectPath
 }
 
@@ -200,23 +271,75 @@ function runtime(): WorkspaceRuntime {
 function connectionContext() { const owner = runtime(); return { project: owner.project, container: owner.active.bridge.containerName, workspace:owner.active.project } }
 async function refreshConnectionCatalog(owner: WorkspaceRuntime): Promise<void> { await owner.visitBridges(target=>target.request('mcp.configure',{tools:connections.catalog({project:owner.project,container:target.containerName})})) }
 async function handleHostEvent(owner: WorkspaceRuntime, event: AgentEvent): Promise<void> {
-  if (event.event === 'host.cancel') { const operationId=String((event.payload as { operationId: string }).operationId);hostOperations.cancel(owner.project,event.sessionId,operationId);const worker=owner.teams.view(event.sessionId)?.workers.find(item=>item.requestId===operationId);if(worker)await owner.teams.cancel(event.sessionId,worker.id);return }
-  if (event.event === 'session.status' && ['stopped','error'].includes(String((event.payload as {status:string}).status))) { hostOperations.cancelSession(owner.project,event.sessionId); return }
-  if (!['host.request','host.read','host.team','host.model'].includes(event.event)) return
-  const target = await owner.owner(event.sessionId), operation = event.payload as HostOperation
+  if (event.event === 'host.cancel') { const operationId=String((event.payload as { operationId: string }).operationId);hostOperations.cancel(owner.project,event.sessionId,operationId);const key=`${owner.project}:${event.sessionId}:${operationId}`;hookControllers.get(key)?.abort();browserControllers.get(key)?.abort();const worker=owner.teams.view(event.sessionId)?.workers.find(item=>item.requestId===operationId);if(worker)await owner.teams.cancel(event.sessionId,worker.id);return }
+  if (event.event === 'session.status' && ['stopped','error'].includes(String((event.payload as {status:string}).status))) { hostOperations.cancelSession(owner.project,event.sessionId);for(const map of [hookControllers,browserControllers])for(const [key,controller] of map)if(key.startsWith(`${owner.project}:${event.sessionId}:`))controller.abort(); return }
+  if (!['host.request','host.read','host.team','host.model','host.control','host.hook'].includes(event.event)) return
+  const operation = event.payload as HostOperation
+  const browserKey=`${owner.project}:${event.sessionId}:${operation.operationId}`
+  const browserController=event.event==='host.control'&&operation.tool==='Browser'?new AbortController():undefined
+  if(browserController)browserControllers.set(browserKey,browserController)
+  let responseBridge:DockerBridge|undefined
   let result: import('../shared/connections').HostResult
   try {
+    const target=await owner.owner(event.sessionId);responseBridge=target.bridge
     const config = await target.bridge.request<BridgeSessionConfig>('session.config',{ sessionId:event.sessionId })
     if (operation.sessionId !== event.sessionId || operation.workspaceId !== config.workspaceId) throw new Error('Host request does not match the active workspace permissions')
     if(event.event==='host.model') {
-      if(!config.teamManaged||operation.tool!=='ModelPermit'||typeof operation.arguments.modelRequestId!=='string')throw new Error('Invalid task model permit')
-      await owner.teamPermit(event.sessionId,operation.arguments.modelRequestId);result={text:'Allowed'}
+      if((!config.teamManaged&&!config.goalManaged)||operation.tool!=='ModelPermit'||typeof operation.arguments.modelRequestId!=='string')throw new Error('Invalid task model permit')
+      if(config.goalManaged)await target.planning.permit(event.sessionId,operation.arguments.modelRequestId);if(config.teamManaged)await owner.teamPermit(event.sessionId,operation.arguments.modelRequestId);result={text:'Allowed'}
       await target.bridge.request('host.respond',{requestId:operation.requestId,sessionId:event.sessionId,operationId:operation.operationId,...result}).catch(()=>{});return
+    }
+    if(event.event==='host.hook'){
+      if(config.mode==='plan')throw Error('Command hooks do not run in Plan mode')
+      const eventName=String(operation.arguments.event) as import('../shared/hooks').ProjectHook['event']
+      if(!['beforeTool','afterTool','turnComplete','verification'].includes(eventName))throw Error('Unknown hook event')
+      const matched=await target.projectHooks.matching(eventName,operation.tool),controller=new AbortController(),hookKey=`${owner.project}:${event.sessionId}:${operation.operationId}`;hookControllers.set(hookKey,controller)
+      try{for(const hook of matched.hooks){
+        const digest=createHash('sha256').update(`${operation.operationId}:${hook.id}`).digest('hex'),hookId=`${digest.slice(0,8)}-${digest.slice(8,12)}-4${digest.slice(13,16)}-a${digest.slice(17,20)}-${digest.slice(20,32)}`
+        const execute=async(signal?:AbortSignal)=>{const current=await target.projectHooks.matching(eventName,operation.tool);if(current.revision!==matched.revision)throw Error('Hook definitions changed after approval');const job=await target.jobs.start(event.sessionId,hook.command,hook.timeoutMs,hookId);const abort=()=>{void target.jobs.stop(event.sessionId,job.id).catch(()=>{})};const hookAbort=()=>{abort();hostOperations.cancel(owner.project,event.sessionId,hookId)};controller.signal.addEventListener('abort',hookAbort,{once:true});signal?.addEventListener('abort',abort,{once:true});try{let status=job;while(['starting','running'].includes(status.state)){signal?.throwIfAborted();controller.signal.throwIfAborted();status=await target.jobs.wait(event.sessionId,job.id,1000)}return {text:status.output,error:status.state!=='completed'||status.exitCode!==0}}finally{signal?.removeEventListener('abort',abort);controller.signal.removeEventListener('abort',hookAbort)}}
+        controller.signal.throwIfAborted();const cancelApproval=()=>hostOperations.cancel(owner.project,event.sessionId,hookId);controller.signal.addEventListener('abort',cancelApproval,{once:true});const response=config.mode==='agent'?await execute(controller.signal):await hostOperations.run(owner.project,{...operation,operationId:hookId,tool:`Hook ${hook.id}`,arguments:{...operation.arguments,command:hook.command,timeoutMs:hook.timeoutMs,revision:matched.revision}},`Container hook ${eventName}`,execute)
+        if(response.error)throw Error(`Hook ${hook.id} failed or was denied. Inspect its background-job output.`)
+      }
+      }finally{hookControllers.delete(hookKey)}
+      result={text:'Reviewed hooks completed'};await target.bridge.request('host.respond',{requestId:operation.requestId,sessionId:event.sessionId,operationId:operation.operationId,...result}).catch(()=>{});return
+    }
+    if(event.event==='host.control'){
+      if(config.disallowedTools.includes(operation.tool))throw Error('Control tool disabled')
+      const args=operation.arguments;let value:unknown
+      if(operation.tool==='PlanUpdate'){if(!Array.isArray(args.milestones))throw Error('Plan milestones must be a list');value=await target.planning.savePlan(event.sessionId,{objective:args.objective as string,body:args.body as string,acceptance:args.acceptance as string[],milestones:args.milestones.map((text,index)=>({id:`milestone-${index+1}`,text,state:'pending',evidence:[]}))})}
+      else if(operation.tool==='Browser'){
+        if(config.specialist&&config.parentSessionId){const parent=await owner.owner(config.parentSessionId);target.browser.inherit(parent.browser);target.browser.setPreviewOrigins(Object.values(await parent.bridge.previewAddresses()))}
+        const action=args as unknown as import('../shared/browser').BrowserAction;if(action.type==='screenshot'&&!(await modelCapabilities(config.provider,config.model,config.baseUrl)).vision)throw Error('Image input support is not verified for this model. Use a browser snapshot or select a verified vision model.');const readOnly=['snapshot','screenshot'].includes(action.type)
+        if(!readOnly&&config.mode==='plan')throw Error('Plan mode permits existing-page observation only')
+        if(['upload','download'].includes(action.type)&&config.disallowedTools.includes('ApplyPatch'))throw Error('File transfer is restricted for this session')
+        const browser=target.browser
+        const execute=async(signal?:AbortSignal)=>{const combined=signal?AbortSignal.any([signal,browserController!.signal]):browserController!.signal;const response=await browser.call(event.sessionId,action,combined);return action.type==='screenshot'?{text:JSON.stringify({kind:'unrealcode.browser.image',image:`data:image/png;base64,${response.image}`})}:{text:JSON.stringify(response)}}
+        const targetURL=action.url||(await target.browser.state(event.sessionId)).tabs.find(tab=>tab.id===action.tabId)?.url||'',local=/^https?:\/\/(localhost|127\.0\.0\.1)(?=[:/]|$)/.test(targetURL)
+        browserController!.signal.throwIfAborted()
+        result=readOnly||config.mode==='agent'&&local?await execute():await hostOperations.run(owner.project,operation,'Dedicated project browser',execute)
+        await target.bridge.request('host.respond',{requestId:operation.requestId,sessionId:event.sessionId,operationId:operation.operationId,...result}).catch(()=>{});return
+      }
+      else if(operation.tool==='BrowserPreview')value={addresses:await (config.specialist&&config.parentSessionId?(await owner.owner(config.parentSessionId)).bridge:target.bridge).previewAddresses(),workspace:target.project}
+      else if(operation.tool==='MemoryRecall')value=await memory().recall(owner.project,String(args.query||''),target.project)
+      else if(operation.tool==='MemoryReflect')value=await memory().reflect(owner.project,String(args.query||''),target.project)
+      else if(operation.tool==='BackgroundStatus')value=await target.jobs.list(event.sessionId)
+      else if(operation.tool==='BackgroundRead')value=await target.jobs.read(event.sessionId,String(args.jobId||''))
+      else if(operation.tool==='BackgroundWait')value=await target.jobs.wait(event.sessionId,String(args.jobId||''))
+      else if(operation.tool==='BackgroundStop'){await target.jobs.stop(event.sessionId,String(args.jobId||''));value={stopped:true}}
+      else if(operation.tool==='BackgroundStart'){if(config.mode==='plan'||config.disallowedTools.includes('Bash')||config.specialist)throw Error('Background command is not permitted for this session');const start=async()=>({text:JSON.stringify(await target.jobs.start(event.sessionId,args.command as string,args.timeoutMs===undefined?3600000:Number(args.timeoutMs),operation.operationId))});result=config.mode==='agent'?await start():await hostOperations.run(owner.project,operation,'Project container background command',start);await target.bridge.request('host.respond',{requestId:operation.requestId,sessionId:event.sessionId,operationId:operation.operationId,...result}).catch(()=>{});return}
+      else if(operation.tool==='GoalStatus')value=await target.planning.read(event.sessionId)
+      else if(operation.tool==='GoalComplete'){if(config.specialist)throw Error('Only the parent can complete its objective');value=await target.planning.complete(event.sessionId,args.evidence as string[]);await target.bridge.request('session.goal',{sessionId:event.sessionId,enabled:false})}
+      else throw Error('Unknown control tool')
+      result={text:JSON.stringify(value)};await target.bridge.request('host.respond',{requestId:operation.requestId,sessionId:event.sessionId,operationId:operation.operationId,...result}).catch(()=>{});return
     }
     if(event.event==='host.team') {
       if(config.specialist||!config.teamEnabled||!owner.teams.options(event.sessionId).allowSpecialists||config.disallowedTools.includes(operation.tool))throw new Error('Specialist delegation is not enabled for this session')
       let value:unknown
+      if(operation.tool==='TeamDispatch'&&owner.teams.options(event.sessionId).policy==='manual')throw Error('This task permits manual specialist assignment only')
+      if(operation.tool==='TeamDispatch'&&(!String(operation.arguments.expectedResult||'').trim()||!Array.isArray(operation.arguments.acceptance)||!operation.arguments.acceptance.length))throw Error('Automatic dispatch requires expectedResult and acceptance criteria')
       if(operation.tool==='TeamDispatch')value=await owner.teams.dispatch(event.sessionId,validateAssignment(operation.arguments as WorkerAssignment),operation.operationId)
+      else if(operation.tool==='TeamWait')value=await owner.teams.wait(event.sessionId)
+      else if(operation.tool==='TeamFollowUp'){await owner.teams.followUp(event.sessionId,String(operation.arguments.workerId||''),String(operation.arguments.message||''));value={continued:true}}
       else if(operation.tool==='TeamStatus')value=owner.teams.modelView(event.sessionId)
       else if(operation.tool==='TeamSteer'){await owner.teams.steer(event.sessionId,String(operation.arguments.workerId||''),String(operation.arguments.message||''),operation.operationId);value={steered:true}}
       else if(operation.tool==='TeamCancel'){await owner.teams.cancel(event.sessionId,String(operation.arguments.workerId||''));value={cancelled:true}}
@@ -249,7 +372,20 @@ async function handleHostEvent(owner: WorkspaceRuntime, event: AgentEvent): Prom
       return connections.call(context,tool,operation.arguments,signal)
     })
   } catch (error) { result = { text:error instanceof Error ? error.message : 'Host operation failed',error:true } }
-  await target.bridge.request('host.respond',{ requestId:operation.requestId,sessionId:event.sessionId,operationId:operation.operationId,...result }).catch(()=>{})
+  finally{if(browserController)browserControllers.delete(browserKey)}
+  await responseBridge?.request('host.respond',{ requestId:operation.requestId,sessionId:event.sessionId,operationId:operation.operationId,...result }).catch(()=>{})
+}
+
+async function retainMemory(owner:WorkspaceRuntime,event:AgentEvent):Promise<void>{
+  if(!memoryService)return
+  const status=await memoryService.status(owner.project);if(!status.settings.projects.includes(owner.project))return
+  const target=await owner.owner(event.sessionId);await target.index.flush()
+  const page=await target.index.cache.page(target.project,event.sessionId,{limit:250})
+  const reply=settledMemoryReply(event,page.events)
+  if(!reply)return
+  const outcome=(event.payload as any).outcome,selection=target.context.get(event.sessionId),sourceFiles:Array<{path:string;sha256:string}>=[]
+  for(const path of [...new Set([...selection.attached,...selection.pinned])].filter(path=>!target.context.isExcluded(path)).slice(0,10)){try{const content=await readFile(target.project,path);sourceFiles.push({path,sha256:createHash('sha256').update(content).digest('hex')})}catch{/* Unavailable sources are not claimed current. */}}
+  await memoryService.record(owner.project,{sessionId:event.sessionId,turnId:outcome?.messageIds?.[0]||String(event.seq),workspace:target.project,sourceFiles,content:`Recorded task outcome: ${outcome?.state||'completed'}. The following is the agent's reported result, not an independent assertion that all claims were verified.\n${reply.text}`,sourceRefs:[`session:${event.sessionId}:event:${reply.seq}`],createdAt:event.recordedAt||new Date().toISOString()})
 }
 
 async function openWorkspace(requested: string): Promise<ReturnType<DockerBridge['status']>> {
@@ -264,7 +400,8 @@ async function openWorkspace(requested: string): Promise<ReturnType<DockerBridge
   let current = workspaces.get(canonical)
   if (!current) {
     current = new WorkspaceRuntime(canonical, app.getPath('userData'), {
-      event: (event) => { window?.webContents.send('agent:event', event); if (current) void handleHostEvent(current,event).catch(()=>{}) },
+      event: (event) => { const display=withEventFailure(event);window?.webContents.send('agent:event', display);if(display.failure){recordFailure(event.event,{code:display.failure.code,reference:display.failure.reference});window?.webContents.send('app:failure',display.failure);} if (current) {void handleHostEvent(current,event).catch(()=>{});if(event.event==='session.idle'&&memoryService)void retainMemory(current,event).catch(()=>{})} },
+      recall:async(prompt,workspace)=>{if(!memoryService)return '';try{const result=await memoryService.recall(canonical,prompt.slice(0,8000),workspace);return JSON.stringify(result)}catch{return 'Project memory is unavailable. Verify against current files and recorded sessions.'}},
       changed: () => window?.webContents.send('workflow:changed', canonical),
       hasTerminal: () => selected?.project === canonical && terminals.size > 0,
       configure: async (target) => { await configureDecision(target, canonical); await target.request('mcp.configure',{ tools:connections.catalog({ project:canonical,container:target.containerName }) }) },
@@ -292,15 +429,18 @@ async function openWorkspace(requested: string): Promise<ReturnType<DockerBridge
       }
     }
   }
-  await current.ensureStarted()
+  let offline:ReturnType<typeof classifyFailure>|undefined
+  try{if(recoveryState.waitingForDependency)offline=recoveryState.failure;else await current.ensureStarted()}catch(error){offline=classifyFailure(error,'docker-start')}
+  try{void memory().status(canonical).then(status=>{if(status.settings.enabled&&status.settings.projects.includes(canonical))void memory().start().catch(()=>{})}).catch(()=>{})}catch{/* Optional memory cannot block opening a coding workspace. */}
   selected = current; bridge = current.bridge; sessionUsage = current.usage; checkpoints = current.checkpoints
   current.active = current
   rememberProject(canonical)
   const settings = getSettings()
-  if (settings.decisionEngine === 'jev' && !settings.decisionCloudProjects.includes(canonical) && !settings.decisionCloudDeclinedProjects.includes(canonical)) await requestDecisionConsent(canonical, bridge)
-  await configureDecision(bridge)
-  window?.webContents.send('docker:status-changed', bridge.status())
-  return bridge.status()
+  if (!offline && settings.decisionEngine === 'jev' && !settings.decisionCloudProjects.includes(canonical) && !settings.decisionCloudDeclinedProjects.includes(canonical)) await requestDecisionConsent(canonical, bridge)
+  if(!offline)await configureDecision(bridge)
+  const state=offline?{ready:false,message:offline.message,phase:'unavailable' as const,failure:offline}:bridge.status()
+  window?.webContents.send('docker:status-changed',state)
+  return state
 }
 
 function registerIPC(): void {
@@ -366,7 +506,7 @@ function registerIPC(): void {
   const idleMutation = <T>(work: (root: string) => Promise<T>): Promise<T> => {
     const owner = runtime().active
     return owner.checkpoints.exclusive(async () => {
-      if (terminals.size || owner.checkpoints.busy || !await owner.bridge.request<boolean>('project.idle', {})) throw new Error('Wait for active project work to finish and close terminals before changing files or Git state')
+      if (terminals.size || owner.jobs.busy || owner.checkpoints.busy || !await owner.bridge.request<boolean>('project.idle', {})) throw new Error('Wait for active project work to finish and close terminals before changing files or Git state')
       return work(owner.project)
     })
   }
@@ -399,26 +539,30 @@ function registerIPC(): void {
   handle('context:update', (_event, sessionId: string, patch: Partial<ContextSelection>) => runtime().updateContext(sessionId, patch))
   handle('handoff:preview', (_event, sessionId: string) => runtime().previewHandoff(sessionId))
   handle('handoff:start', async (_event, sessionId: string, summary: string, destination: Pick<BridgeSessionConfig, 'provider' | 'model' | 'baseUrl' | 'thinkingLevel'>) => ({ sessionId: await runtime().handoff(sessionId, summary, destination) }))
-  handle('history:search', async (_event, query: string, sessionId?: string, allProjects = false) => {
-    const owner = runtime()
-    await owner.syncIndex()
-    const projects = allProjects ? getSettings().trustedProjects : [owner.project]
-    const hits = await Promise.all(projects.map((root) => {
-      const index = workspaces.get(root)?.index || new ConversationIndex(root, join(projectData(app.getPath('userData'), root), 'search'))
-      return index.search(query, sessionId)
-    }))
-    return hits.flat().sort((a, b) => (b.recordedAt || '').localeCompare(a.recordedAt || '')).slice(0, 200)
+  handle('history:search', async (_event,query:string,sessionId?:string,allProjects=false)=>{
+    const owner=runtime();void owner.syncIndex().catch(()=>{})
+    return historyCache(app.getPath('userData')).search(allProjects?getSettings().trustedProjects:[owner.project],query,sessionId,`history-search:${_event.sender.id}`)
   })
-  handle('session:event-window', (_event, sessionId: string, sequence: number) => {
-    if (!Number.isSafeInteger(sequence) || sequence < 1) throw new Error('Invalid event sequence')
-    return sessionRequest('session.events', sessionId, { after: Math.max(0, sequence - 100), limit: 1000 })
+  handle('history:page',(_event,id:string,options?:{before?:number;around?:number;limit?:number})=>{
+    if(options&&Object.values(options).some(value=>!Number.isSafeInteger(value)||value<1))throw new Error('Invalid history page')
+    return runtime().historyPage(id,options,`history-${options?.limit===1?'status':'page'}:${_event.sender.id}`)
   })
+  handle('history:rebuild',rebuildHistory)
+  handle('work:view',(_event,id:string,range?:{from?:number;to?:number})=>{if(range&&Object.values(range).some(value=>!Number.isSafeInteger(value)||value<1))throw Error('Invalid work range');return runtime().workView(id,range,`work:${_event.sender.id}:${range?"chat":"panel"}`)})
+  handle('activity:page',(_event,id:string,query:import('../shared/activity').ActivityQuery={})=>{if(!query||typeof query!=='object'||query.search!==undefined&&(typeof query.search!=='string'||query.search.length>500)||[query.offset,query.limit].some(v=>v!==undefined&&(!Number.isSafeInteger(v)||v<0))||query.workId!==undefined&&(typeof query.workId!=='string'||query.workId.length>160))throw Error('Invalid activity filter');return runtime().activityPage(id,query,`activity:${_event.sender.id}:${query.limit===5?'summary':'panel'}`)})
+  handle('activity:detail',(_event,id:string,call:string,offset=0)=>{if(typeof call!=='string'||call.length>512||!Number.isSafeInteger(offset)||offset<0)throw Error('Invalid activity detail page');return runtime().activityDetail(id,call,offset)})
+  handle('conversation:ui',(_event,id:string)=>runtime().conversationUI.get(id))
+  handle('conversation:ui-save',(_event,id:string,patch)=>runtime().conversationUI.patch(id,patch))
+  handle('question:answer',(_event,submission:import('../shared/activity').QuestionSubmission)=>{if(!submission||typeof submission!=='object'||Buffer.byteLength(JSON.stringify(submission))>32768)throw Error('Invalid question submission');return runtime().answerQuestion(submission)})
+  handle('question:dismiss',(_event,id:string,question:string)=>runtime().dismissQuestion(id,question))
+  handle('session:retry',(_event,id:string,seq:number,message:string)=>{if(!Number.isSafeInteger(seq)||seq<1||typeof message!=='string'||message.length>64)throw Error('Invalid response retry');return runtime().retryResponse(id,seq,message)})
+  handle('session:event-window',async(_event,id:string,sequence:number)=>{if(!Number.isSafeInteger(sequence)||sequence<1)throw new Error('Invalid event sequence');return (await runtime().historyPage(id,{around:sequence,limit:1000})).events})
   handle('settings:get', () => recoveryState.migrationError ? defaultSettings() : getSettings())
   handle('settings:update', async (_event, patch) => {
     const next = updateSettings(patch)
     nativeTheme.themeSource = next.theme
-    window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#101726' : '#f3f5fb')
-    if (bridge.projectPath) {
+    window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0e1420' : '#f4f6fc')
+    if (bridge.status().ready) {
       if (next.decisionEngine === 'jev' && !next.decisionCloudProjects.includes(bridge.projectPath) && !next.decisionCloudDeclinedProjects.includes(bridge.projectPath)) await requestDecisionConsent(bridge.projectPath)
       await Promise.all([...workspaces.values()].map((owner) => owner.configureAll()))
     }
@@ -480,7 +624,7 @@ function registerIPC(): void {
     const chosen = await dialog.showOpenDialog(window!, { properties: ['openDirectory'] })
     return chosen.canceled ? null : chosen.filePaths[0]
   })
-  handle('project:path', () => bridge.projectPath || null)
+  handle('project:path', () => selected?.project || bridge.projectPath || null)
   handle('project:open', (_event, requested: string) => openWorkspace(requested))
   handle('docker:status', () => bridge.probe())
 
@@ -494,7 +638,7 @@ function registerIPC(): void {
     if (!task?.sessionId) throw new Error('Unknown task workspace')
     if(owner.teams.hasPending(task.sessionId))throw new Error('Resolve the task specialists before retaining the parent workspace')
     const child = await owner.owner(task.sessionId)
-    if (child.checkpoints.busy || !await child.bridge.request('project.idle', {})) throw new Error('Finish or stop task work first')
+    if (child.jobs.busy || child.checkpoints.busy || !await child.bridge.request('project.idle', {})) throw new Error('Finish or stop task work first')
     await owner.tasks.update(id, { state: 'retained' })
     owner.queue.reviewed(task.sessionId, 'Changes retained in the isolated task. Resume the queue when ready.')
   })
@@ -503,34 +647,111 @@ function registerIPC(): void {
     if (!task?.sessionId) throw new Error('Task workspace has no session')
     const child = await owner.owner(task.sessionId)
     return owner.checkpoints.exclusive(async () => {
-      if (terminals.size || owner.checkpoints.busy || child.checkpoints.busy || !await child.bridge.request('project.idle', {}) || !await owner.bridge.request('project.idle', {})) throw new Error('Finish or stop project operations and close terminals before integration')
+      if (terminals.size || owner.jobs.busy || owner.checkpoints.busy || child.jobs.busy || child.checkpoints.busy || !await child.bridge.request('project.idle', {}) || !await owner.bridge.request('project.idle', {})) throw new Error('Finish or stop project operations and close terminals before integration')
       const recovery = await owner.tasks.integrate(id, paths)
       if (!(await owner.tasks.preview(id)).changes.length&&!owner.teams.hasPending(task.sessionId!)) owner.queue.reviewed(task.sessionId!)
       return recovery
     })
   })
+  handle('instructions:claude-preview',()=>runtime().active.context.claudePreview())
+  handle('instructions:claude-import',async(_event,revision:string)=>{const owner=runtime().active,source=await owner.context.claudePreview();if(source.revision!==revision)throw Error('CLAUDE.md changed. Preview again.');await remotePreview('Import project instructions',source.content);await owner.context.importClaude(revision)})
+  handle('hooks:get',()=>runtime().active.projectHooks.read())
+  handle('hooks:save',async(_event,hooks:import('../shared/hooks').ProjectHook[])=>{const owner=runtime().active,valid=owner.projectHooks.validate(hooks);if(owner.jobs.busy||owner.checkpoints.busy||!await owner.bridge.request('project.idle',{}))throw Error('Settle work before changing hooks');await remotePreview('Trust project hooks',valid.map(hook=>`${hook.enabled?'Enabled':'Disabled'} ${hook.event} / ${hook.tool}\n${hook.command}\nTimeout: ${hook.timeoutMs} ms`).join('\n\n'));const value=await owner.projectHooks.save(valid);await owner.bridge.request('hooks.configure',{enabled:valid.some(hook=>hook.enabled)});return value})
   handle('session:list', () => runtime().sessions())
-  handle('session:config', (_event, sessionId: string) => sessionRequest('session.config', sessionId))
+  handle('memory:storage',()=>memory().runtime.storage())
+  handle('memory:clear-cache',async()=>{await remotePreview('Remove local memory model cache','Stops the optional memory service and removes only its downloaded embedding/reranking weights. Coding sessions and retained memories remain available. The weights download again when memory starts.');await memory().stop();await memory().runtime.clearModelCache()})
+  handle('memory:status',(_event,limit?:number)=>memory().status(selected?.project||'',limit))
+  handle('memory:records',(_event,before?:string,limit?:number)=>memory().recordsPage(runtime().project,before,limit))
+  handle('memory:record',(_event,id:string)=>memory().readRecord(runtime().project,id))
+  handle('memory:configure',(_event,profile:import('../shared/memory').MemoryProfile)=>memory().configure(profile))
+  handle('memory:verify',()=>memory().verify())
+  handle('memory:enable',async(_event,enabled:boolean)=>{if(typeof enabled!=='boolean')throw Error('Choose whether to enable memory');if(enabled){const status=await memory().status(runtime().project);await remotePreview('Enable automatic project memory',`Project: ${runtime().project}\nMemory processing: ${status.settings.profile?.provider}/${status.settings.profile?.model}\nBounded task outcomes and source references will be processed by this model and retained locally. Existing session logs and current files remain authoritative.`)}return memory().enable(runtime().project,enabled)})
+  handle('memory:retry',()=>memory().retry(runtime().project))
+  handle('memory:recall',(_event,query:string)=>memory().recall(runtime().project,query,project()))
+  handle('memory:reflect',(_event,query:string)=>memory().reflect(runtime().project,query,runtime().active.project))
+  handle('memory:forget',(_event,id:string)=>memory().forget(runtime().project,id))
+  handle('memory:correct',(_event,id:string,content:string)=>memory().correct(runtime().project,id,content))
+  handle('memory:rebuild',()=>memory().rebuild(runtime().project))
+  handle('memory:export',async()=>{const result=await dialog.showSaveDialog(window!,{title:'Export private project memory',defaultPath:`UnrealCode-memory-${timestampName()}.json`,filters:[{name:'JSON',extensions:['json']}]});if(result.canceled||!result.filePath)return null;await fs.writeFile(result.filePath,await memory().export(runtime().project),{mode:0o600});return result.filePath})
+  const planningOwner=async(id:string)=>{const owner=await runtime().owner(id);await owner.bridge.request('session.config',{sessionId:id});return owner}
+  handle('browser:state',async(_event,id:string)=>(await planningOwner(id)).browser.state(id))
+  handle('browser:install',async(_event,id:string)=>(await planningOwner(id)).browser.install())
+  handle('browser:action',async(_event,id:string,action:import('../shared/browser').BrowserAction)=>(await planningOwner(id)).browser.call(id,action))
+  handle('browser:configure',async(_event,id:string,grant:import('../shared/browser').BrowserGrant)=>{
+    const owner=await planningOwner(id)
+    const effective=normalizeBrowserGrant(grant.enabled?grant:{...grant,ports:[]})
+    await remotePreview('Review browser access',`Workspace: ${owner.project}\nObservation covers whole origins: ${effective.origins.join(', ')}\nInteraction covers whole origins: ${effective.interactOrigins.join(', ')}\nContainer ports: ${effective.ports.join(', ')}`)
+    const before=await owner.browser.state()
+    if(JSON.stringify(before.grant.ports)!==JSON.stringify(effective.ports)){
+      if(owner.jobs.busy||owner.checkpoints.busy||terminals.size||!await owner.bridge.request('project.idle',{}))throw Error('Settle active work before changing preview ports')
+      await owner.browser.configure(effective);await owner.bridge.stop();await owner.start()
+    }else await owner.browser.configure(effective)
+  })
+  handle('browser:ports',async(_event,id:string)=>{const owner=await planningOwner(id),result:Record<string,string>={};for(const port of (await owner.browser.state()).grant.ports){const {stdout}=await execFileAsync(terminalDockerExecutable(backendEnvironment()),['port',owner.bridge.containerName,String(port)],{windowsHide:true,timeout:10000,env:backendEnvironment()});const endpoint=stdout.trim().split('\n').find(line=>/^127\.0\.0\.1:\d+$/.test(line.trim()));if(endpoint)result[String(port)]=`http://${endpoint.trim()}`}return result})
+  handle('jobs:list',async(_event,id:string)=>(await planningOwner(id)).jobs.list(id))
+  handle('jobs:start',async(_event,id:string,command:string,timeoutMs:number)=>{const owner=await planningOwner(id);const config=await owner.bridge.request<BridgeSessionConfig>('session.config',{sessionId:id});if(config.mode==='plan'||config.specialist||config.disallowedTools.includes('Bash'))throw Error('Background commands are not permitted for this session');await remotePreview('Start background command',command);return owner.jobs.start(id,command,timeoutMs)})
+  handle('jobs:stop',async(_event,id:string,jobId:string)=>(await planningOwner(id)).jobs.stop(id,jobId))
+  handle('planning:get',async(_event,id:string)=>(await planningOwner(id)).planning.read(id))
+  handle('planning:save',async(_event,id:string,plan:Parameters<import('./task-planning').TaskPlanning['savePlan']>[1])=>(await planningOwner(id)).planning.savePlan(id,plan))
+  handle('planning:implement',async(_event,id:string,revision:number,mode:string)=>{
+    if(mode!=='ask'&&mode!=='agent')throw Error('Choose Ask or Agent execution')
+    const owner=await planningOwner(id);if(owner.checkpoints.busy||runtime().teams.hasPending(id))throw Error('Settle active work and specialists before implementing the plan')
+    const plan=await owner.planning.approve(id,revision)
+    await owner.bridge.request('session.mode',{sessionId:id,mode})
+    await owner.send(id,`Implement approved plan revision ${revision}. Stay within existing grants.\nObjective: ${plan.objective}\n${plan.body}\nMilestones:\n${plan.milestones.map(x=>x.text).join('\n')}\nAcceptance criteria:\n${plan.acceptance.join('\n')}`,randomUUID())
+  })
+  handle('goal:save',async(_event,id:string,goal:Parameters<import('./task-planning').TaskPlanning['goal']>[1])=>(await planningOwner(id)).planning.goal(id,goal))
+  handle('goal:action',async(_event,id:string,action:string)=>{
+    if(!['resume','pause','complete'].includes(action))throw Error('Invalid goal action')
+    const owner=await planningOwner(id),goal=await owner.planning.goalAction(id,action as 'resume'|'pause'|'complete')
+    await owner.bridge.request('session.goal',{sessionId:id,enabled:action==='resume'})
+    if(action==='pause')await runtime().stop(id)
+    if(action==='resume')try{await owner.send(id,`Continue the explicitly requested objective: ${goal.objective}. Inspect retained work first. Use PlanUpdate to track milestones. When its acceptance criteria are verified, use GoalComplete with the evidence.`,randomUUID())}catch(error){await owner.planning.goalAction(id,'pause');throw error}
+    return goal
+  })
+  handle('model:capabilities',async(_event,id?:string)=>{const config=id?await sessionRequest('session.config',id) as BridgeSessionConfig:runtime().config();return modelCapabilities(config.provider,config.model,config.baseUrl)})
+  handle('command:execute',async(_event,input:unknown):Promise<CommandResult>=>{
+    const {name,args,sessionId:id}=validateCommand(input),owner=runtime()
+    if(id)await sessionRequest('session.config',id)
+    if(['plan','ask','agent'].includes(name)){
+      if(id){if(owner.teams.worker(id)||owner.teams.hasPending(id))throw Error('Settle specialists before changing execution mode');const pending=await (await owner.owner(id)).requestMode(id,name);if(pending)return {view:'chat',message:`${name} mode is pending until active work settles. Send the planning prompt after it applies.`}}else updateSettings({executionMode:name as 'plan'|'ask'|'agent'})
+      window?.webContents.send('workflow:changed',owner.project);return {view:'chat',prompt:name==='plan'?args:undefined,message:`${name} mode selected`}
+    }
+    if(name==='fast'||name==='reasoning'){
+      const config=await sessionRequest('session.config',id!) as BridgeSessionConfig,caps=await modelCapabilities(config.provider,config.model,config.baseUrl)
+      if(name==='fast'){if(!caps.fast)throw Error(caps.message);if(args&&!['on','off'].includes(args))throw Error('Use /fast on or /fast off');const enabled=args?args==='on':config.serviceTier!=='priority';await sessionRequest('session.modelOptions',id!,{serviceTier:enabled?'priority':'default'});return {message:`Fast ${enabled?'requested':'disabled'} for the next model request. Actual processing is reported in Usage.`}}
+      if(!args)return {view:'control'};if(!caps.reasoning.includes(args))throw Error(`Supported reasoning: ${caps.reasoning.join(', ')||'unknown'}`);await sessionRequest('session.modelOptions',id!,{thinkingLevel:args});return {message:`Reasoning ${args} applies to the next request`}
+    }
+    if(name==='rename'){await sessionRequest('session.rename',id!,{title:args});await owner.index.putSessions(await owner.liveSessions());return {message:'Session renamed'}}
+    if(name==='fork'){const result=await owner.fork(id!);return {sessionId:result.sessionId,view:'chat'}}
+    if(name==='resume'){await owner.open(id!);return {view:'chat',message:'Session resumed'}}
+    if(name==='compact'){await owner.compactContext(id!);return {view:'context',message:'Context summary created'}}
+    if(name==='skills'&&args){const skill=(await listSkills(project())).find(x=>x.name===args);if(!skill)throw Error('Choose an existing project skill');return {view:'chat',prompt:`Use the project skill ${skill.name}. Read its current instructions using SkillUse.`}}
+    if(name==='init')return {view:'chat',prompt:'Inspect this project and propose an AGENTS.md containing accurate build, test, architecture and contribution instructions. Show the proposed content for review before writing it.'}
+    if(name==='goal'&&args){await (await planningOwner(id!)).planning.goal(id!,{objective:args,requestLimit:50,tokenLimit:250000,elapsedMinutes:30});return {view:'control',message:'Objective saved paused. Review its limits and choose Resume.'}}
+    const routes:Partial<Record<typeof name,string>>={model:'workflow',agents:'control',tasks:'control',permissions:'chat',status:'control',usage:'usage',context:'context',review:'review',diff:'review',checkpoint:'review',rewind:'review',skills:'skills',mcp:'connections',memory:'memory',browser:'browser',hooks:'hooks',goal:'control',help:'help',new:'new'}
+    return {view:routes[name]||'chat'}
+  })
+  handle('session:config', async (_event, sessionId: string) => ({...await sessionRequest('session.config', sessionId) as BridgeSessionConfig,pendingMode:(await runtime().owner(sessionId)).pendingModes.get(sessionId)}))
   handle('session:mode', async (_event, sessionId: string, mode: string) => {
     if(runtime().teams.worker(sessionId)||runtime().teams.hasPending(sessionId))throw new Error('Resolve task specialists before changing the parent execution mode; specialist modes are inherited')
     const owner = await runtime().owner(sessionId)
-    return owner.checkpoints.exclusive(async () => {
-      if (owner.checkpoints.busy) throw new Error('Finish or stop active work before changing execution mode')
-      return owner.bridge.request('session.mode', { sessionId, mode })
-    })
+    await owner.requestMode(sessionId,mode)
   })
   handle('permission:list', (_event, sessionId: string) => sessionRequest('permission.list', sessionId))
   handle('permission:respond', (_event, sessionId: string, id: string, digest: string, allow: boolean) => {
     if (typeof allow !== 'boolean') throw new Error('Approval needs an explicit choice')
     return sessionRequest('permission.respond', sessionId, { id, digest, allow })
   })
-  handle('session:create', async (_event,_config:unknown,options?:TeamOptions) => { const valid=options?validateTeamOptions(options):undefined;closeTerminals(); const owner = runtime(); if(valid?.allowSpecialists&&!await owner.tasks.available())throw new Error('Specialists require a committed Git repository opened at its root. Disable specialists to continue in this folder.'); const config={...owner.config(),teamEnabled:valid?.allowSpecialists,teamManaged:!!valid&&(valid.allowSpecialists||valid.modelRequestLimit>0||valid.elapsedMinutes>0||valid.tokenLimit>0)};const sessionId = await owner.create(config);if(valid)await owner.teams.configure(sessionId,valid); window?.webContents.send('docker:status-changed', owner.active.bridge.status()); return { sessionId } })
+  handle('session:create', async (_event,_config:unknown,options?:TeamOptions) => { const owner = runtime(),valid=validateTeamOptions(options||(await owner.teamPreferences.read()).options);closeTerminals(); if(valid?.allowSpecialists&&!await owner.tasks.available())throw new Error('Specialists require a committed Git repository opened at its root. Disable specialists to continue in this folder.'); const config={...owner.config(),teamEnabled:valid?.allowSpecialists,teamManaged:!!valid&&(valid.allowSpecialists||valid.modelRequestLimit>0||valid.elapsedMinutes>0||valid.tokenLimit>0)};const sessionId = await owner.create(config);await owner.index.putSessions(await owner.liveSessions()).catch(()=>{});if(valid&&config.teamManaged)await owner.teams.configure(sessionId,valid); window?.webContents.send('docker:status-changed', owner.active.bridge.status()); return { sessionId } })
+  handle('team:preferences',()=>runtime().teamPreferences.read())
+  handle('team:preferences-save',(_event,value:import('../shared/teams').TeamPreferences)=>runtime().teamPreferences.save(value))
   handle('team:view',(_event,sessionId:string)=>runtime().teams.view(sessionId))
   handle('team:configure',(_event,sessionId:string,options:TeamOptions)=>runtime().configureTeam(sessionId,options))
   handle('team:dispatch',(_event,parent:string,assignment:WorkerAssignment)=>runtime().teams.dispatch(parent,assignment,randomUUID()))
   handle('team:resume',async(_event,parent:string)=>{const owner=runtime(),task=owner.teams.view(parent);if(!task||task.parentSessionId!==parent)throw new Error('Select the parent task');await Promise.all([parent,...task.workers.flatMap(worker=>worker.sessionId?[worker.sessionId]:[])].map(id=>owner.refreshTeamUsage(id)));await owner.teams.resume(parent)})
   handle('team:stop',(_event,parent:string)=>runtime().teams.stopAll(parent))
-  handle('team:worker-action',(_event,parent:string,id:string,action:string,prompt?:string)=>{const owner=runtime();if(action==='cancel')return owner.teams.cancel(parent,id);if(action==='resume')return owner.teams.resumeWorker(parent,id);if(action==='steer')return owner.teams.steer(parent,id,String(prompt||''));if(action==='retain')return owner.specialistRetain(parent,id);throw new Error('Unknown specialist action')})
+  handle('team:worker-action',(_event,parent:string,id:string,action:string,prompt?:string)=>{const owner=runtime();if(action==='cancel')return owner.teams.cancel(parent,id);if(action==='resume')return owner.teams.resumeWorker(parent,id,prompt);if(action==='followup')return owner.teams.followUp(parent,id,String(prompt||''));if(action==='steer')return owner.teams.steer(parent,id,String(prompt||''));if(action==='retain')return owner.specialistRetain(parent,id);throw new Error('Unknown specialist action')})
   handle('team:preview',(_event,parent:string,id:string)=>runtime().specialistPreview(parent,id))
   handle('team:integrate',(_event,parent:string,id:string,paths:string[])=>runtime().specialistIntegrate(parent,id,paths))
   handle('workflow:settings',()=>runtime().workflows.settings())
@@ -547,11 +768,22 @@ function registerIPC(): void {
     await owner.workflowReady(sessionId);owner.queue.pause();return owner.workflows.start(sessionId,snapshot)
   })
   handle('session:open', async (_event, sessionId: string) => { closeTerminals(); const owner = runtime(); await owner.open(sessionId); window?.webContents.send('docker:status-changed', owner.active.bridge.status()) })
-  handle('session:select', async (_event, sessionId: string) => { workspaceSelection++;try{closeTerminals(); const owner = runtime(); await owner.select(sessionId); window?.webContents.send('docker:status-changed', owner.active.bridge.status())}finally{workspaceSelection--} })
-  handle('session:send', (_event, sessionId: string, prompt: string, messageId: string) => runtime().send(sessionId, prompt, messageId, terminals.size > 0))
+  handle('session:select', async (_event, sessionId: string) => { workspaceSelection++;try{closeTerminals(); const owner = runtime(); if(owner.bridge.status().ready)await owner.select(sessionId);else if(!(await owner.sessions()).some(item=>item.id===sessionId))throw new Error('Session does not belong to project'); window?.webContents.send('docker:status-changed', owner.active.bridge.status())}finally{workspaceSelection--} })
+  handle('images:pick',async(_event,max=3)=>{
+    if(!Number.isSafeInteger(max)||max<1||max>3)throw Error('Choose 1 to 3 available image slots')
+    const owner=runtime(),selection=await dialog.showOpenDialog(window!,{title:'Attach images to this project chat',properties:['openFile','multiSelections'],filters:[{name:'Images',extensions:['png','jpg','jpeg','webp']}]});if(selection.canceled)return []
+    if(selection.filePaths.length>max)throw Error(`Choose at most ${max} image${max===1?'':'s'} for this message`)
+    for(const [id,image] of imageInputs)if(Date.now()-image.createdAt>3600000)imageInputs.delete(id)
+    if(imageInputs.size+selection.filePaths.length>30)throw Error('Finish or remove pending image attachments first')
+    const result=[],pending: Array<{id:string;data:string;name:string;width:number;height:number}>=[]
+    for(const path of selection.filePaths){const bytes=await readBoundedRegularFile(path,4*1024*1024),declared=checkedImageDimensions(bytes);let data:string,width:number,height:number;if(declared.format==='webp')({data,width,height}=await convertWebp(bytes,declared));else{const image=nativeImage.createFromBuffer(bytes);if(image.isEmpty())throw Error('Unsupported or damaged image');const original=image.getSize();if(original.width>8192||original.height>8192||original.width*original.height>16*1024*1024)throw Error('Image dimensions exceed the 16 megapixel attachment limit');const scale=Math.min(1,2048/Math.max(original.width,original.height)),resized=scale<1?image.resize({width:Math.round(original.width*scale),height:Math.round(original.height*scale)}):image;data=resized.toDataURL();({width,height}=resized.getSize())}if(data.length>2*1024*1024)throw Error('Image remains too large; reduce its dimensions');const id=randomUUID();pending.push({id,data,name:basename(path),width,height})}
+    for(const image of pending){imageInputs.set(image.id,{project:owner.project,data:image.data,createdAt:Date.now()});result.push({id:image.id,name:image.name,width:image.width,height:image.height})}return result
+  })
+  handle('images:discard',(_event,ids:string[])=>{if(!Array.isArray(ids)||ids.length>30||ids.some(id=>typeof id!=='string'||id.length>100))throw Error('Invalid image attachment IDs');for(const id of ids)imageInputs.delete(id)})
+  handle('session:send', async(_event, sessionId: string, prompt: string, messageId: string,imageIds:string[]=[]) => {const owner=runtime();if(!Array.isArray(imageIds)||imageIds.some(id=>typeof id!=='string')||imageIds.length>3)throw Error('Invalid image attachments');if(imageIds.length){const config=await sessionRequest('session.config',sessionId) as BridgeSessionConfig;if(!(await modelCapabilities(config.provider,config.model,config.baseUrl)).vision)throw Error('Image input support is not verified for this model. Choose a verified vision model or a runtime that reports vision support.')}if(!Array.isArray(imageIds)||imageIds.length>3)throw Error('At most three images can be attached');const images=imageIds.map(id=>{const image=imageInputs.get(id);if(!image||image.project!==owner.project)throw Error('Image attachment expired or belongs to another project');return image.data});await owner.send(sessionId,prompt,messageId,terminals.size>0,images);for(const id of imageIds)imageInputs.delete(id)})
   handle('session:stop', (_event, sessionId: string) => runtime().stop(sessionId))
   handle('session:fork', (_event, sessionId: string) => runtime().fork(sessionId))
-  handle('session:latest', (_event,sessionId:string)=>sessionRequest('session.events.latest',sessionId,{limit:3000}))
+  handle('session:latest',async(_event,id:string)=>(await runtime().historyPage(id,{limit:1000})).events)
   handle('session:events', (_event, sessionId: string, after: number) => sessionRequest('session.events', sessionId, { after, limit: 1000 }))
 
   handle('files:list', (_event, relative?: string) => listFiles(project(), relative))
@@ -577,7 +809,7 @@ function registerIPC(): void {
     const container = owner.bridge.containerName
     if (!container) throw new Error('Container is not running')
     const pty = await import('node-pty')
-    const terminal = pty.spawn('docker', ['exec', '-it', container, '/bin/bash'], {
+    const terminal = pty.spawn(terminalDockerExecutable(backendEnvironment()), ['exec', '-it', container, '/bin/bash'], {
       name: 'xterm-256color', cols: 100, rows: 30, cwd: owner.project,
       env: backendEnvironment()
     })
@@ -601,7 +833,8 @@ function createWindow(): void {
     width: 1500, height: 940, minWidth: 1000, minHeight: 650,
     // Explicit automation option for CI and non-disruptive local smoke checks.
     show: !backgroundCheck,
-    title: 'UnrealCode', backgroundColor: nativeTheme.shouldUseDarkColors ? '#101726' : '#f3f5fb',
+    title: 'UnrealCode', backgroundColor: nativeTheme.shouldUseDarkColors ? '#0e1420' : '#f4f6fc',
+    icon: join(app.isPackaged ? process.resourcesPath : join(__dirname, '../..'), 'assets', 'unrealcode-icon.png'),
     webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: !backgroundCheck, offscreen: backgroundCheck }
   })
   const openInBrowser = (url: string): void => {
@@ -624,14 +857,16 @@ function createWindow(): void {
 app.whenReady().then(async () => {
   try { await recoverStartup() } catch { /* Show recovery controls without overwriting prior data. */ }
   nativeTheme.themeSource = recoveryState.migrationError ? 'system' : getSettings().theme
-  nativeTheme.on('updated', () => window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#101726' : '#f3f5fb'))
+  nativeTheme.on('updated', () => window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0e1420' : '#f4f6fc'))
   app.setAppUserModelId('ai.mcshotty.unrealcode')
   registerIPC()
   registerRecoveryIPC()
   createWindow()
+  Menu.setApplicationMenu(Menu.buildFromTemplate([{role:'fileMenu'},{role:'editMenu'},{role:'viewMenu'},{label:'UnrealCode',submenu:commands.map(command=>({label:`/${command.name} — ${command.description}`,click:()=>window?.webContents.send('app:command',command.name)}))},{role:'windowMenu'}]))
   void updates.initialize()
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
 
-app.on('before-quit', () => { closeTerminals(); hostOperations?.cancelAll(); void connections?.close(); evaluations.stopAll(); for (const owner of workspaces.values()) void owner.stopAll() })
+let shutdownReady=false,shutdownPending=false
+app.on('before-quit', event => {if(shutdownReady)return;event.preventDefault();if(shutdownPending)return;shutdownPending=true;closeTerminals();hostOperations?.cancelAll();for(const map of [hookControllers,browserControllers])for(const controller of map.values())controller.abort();evaluations.stopAll();void (async()=>{await Promise.allSettled([memoryService?.stop(),connections?.close(),...[...workspaces.values()].map(owner=>owner.stopAll())]);await drainMetadata();await closeHistoryCaches()})().finally(()=>{closeProjectFiles();shutdownReady=true;app.quit()})})
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

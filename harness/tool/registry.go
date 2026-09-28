@@ -5,11 +5,16 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"uuid"
+
+	"github.com/unreallabsai/unreal-agent/harness/operation"
+	"github.com/unreallabsai/unreal-agent/internal/saferead"
 )
 
 const (
@@ -174,19 +179,72 @@ func (current *registry) resolveSkill(name string) (Skill, bool) {
 }
 
 func DiscoverSkills(directory string) ([]Skill, []error) {
-	paths, err := filepath.Glob(filepath.Join(directory, "*", "SKILL.md"))
+	const maxSkillDirectories = 128
+	const maxSkillTotalBytes = 4 * 1024 * 1024
+	info, err := os.Lstat(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, []error{fmt.Errorf("find skills: %w", err)}
 	}
+	if !info.IsDir() {
+		return nil, []error{fmt.Errorf("skill directory %q is not a regular directory", directory)}
+	}
+	parent, err := os.Lstat(filepath.Dir(directory))
+	if err != nil {
+		return nil, []error{fmt.Errorf("inspect skill parent directory: %w", err)}
+	}
+	if !parent.IsDir() {
+		return nil, []error{fmt.Errorf("skill parent directory %q is not a regular directory", filepath.Dir(directory))}
+	}
+	dir, err := os.Open(directory)
+	if err != nil {
+		return nil, []error{fmt.Errorf("open skills directory: %w", err)}
+	}
+	names, readErr := dir.Readdirnames(maxSkillDirectories + 1)
+	closeErr := dir.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return nil, []error{fmt.Errorf("list skills: %w", readErr)}
+	}
+	if closeErr != nil {
+		return nil, []error{fmt.Errorf("close skills directory: %w", closeErr)}
+	}
+	if len(names) > maxSkillDirectories {
+		return nil, []error{fmt.Errorf("skill directory exceeds %d entries", maxSkillDirectories)}
+	}
+	sort.Strings(names)
 
 	var skills []Skill
 	var skillErrors []error
-	names := make(map[string]struct{})
-	for _, path := range paths {
-		contents, err := os.ReadFile(path)
+	skillNames := make(map[string]struct{})
+	totalBytes := 0
+	for _, name := range names {
+		skillDirectory := filepath.Join(directory, name)
+		entry, err := os.Lstat(skillDirectory)
+		if err != nil {
+			skillErrors = append(skillErrors, fmt.Errorf("inspect skill directory %q: %w", skillDirectory, err))
+			continue
+		}
+		if !entry.IsDir() {
+			if entry.Mode()&os.ModeSymlink != 0 {
+				skillErrors = append(skillErrors, fmt.Errorf("skill directory %q is a link", skillDirectory))
+			}
+			continue
+		}
+		path := filepath.Join(skillDirectory, "SKILL.md")
+		contents, err := saferead.RegularFile(path, operation.MaxSkillContentBytes)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
 		if err != nil {
 			skillErrors = append(skillErrors, fmt.Errorf("read skill %q: %w", path, err))
 			continue
+		}
+		totalBytes += len(contents)
+		if totalBytes > maxSkillTotalBytes {
+			skillErrors = append(skillErrors, fmt.Errorf("skill directory exceeds %d bytes", maxSkillTotalBytes))
+			break
 		}
 		frontmatter, err := parseSkillFrontmatter(contents)
 		if err != nil {
@@ -202,11 +260,11 @@ func DiscoverSkills(directory string) ([]Skill, []error) {
 			skillErrors = append(skillErrors, fmt.Errorf("validate skill %q: %w", path, err))
 			continue
 		}
-		if _, exists := names[skill.Name]; exists {
+		if _, exists := skillNames[skill.Name]; exists {
 			skillErrors = append(skillErrors, fmt.Errorf("skill %q: duplicate name %q", path, skill.Name))
 			continue
 		}
-		names[skill.Name] = struct{}{}
+		skillNames[skill.Name] = struct{}{}
 		skills = append(skills, skill)
 	}
 	return skills, skillErrors

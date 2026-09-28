@@ -108,8 +108,8 @@ export async function githubBranch(root: string): Promise<string> {
   return run('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], await repo(root))
 }
 
-export async function githubFetch(root: string): Promise<void> { await run('git', ['fetch', '--prune', 'origin'], await repo(root), 120000) }
-export async function githubPull(root: string): Promise<void> { await run('git', ['pull', '--ff-only'], await repo(root), 120000) }
+export async function githubFetch(root: string): Promise<void> { const project=await repo(root),origin=await validatedOrigin(project);await run('git', ['fetch', '--prune', origin.remote, '+refs/heads/*:refs/remotes/origin/*'], project, 120000) }
+export async function githubPull(root: string): Promise<void> { const project=await repo(root),origin=await validatedOrigin(project),branch=checkRef(await githubBranch(project));await run('git', ['pull', '--ff-only', origin.remote, branch], project, 120000) }
 
 export async function githubStage(root: string, paths: string[], staged: boolean): Promise<void> {
   const project = await repo(root)
@@ -139,10 +139,10 @@ export async function githubCommit(root: string, message: string): Promise<strin
 
 export async function githubPush(root: string, branch: string, expected?:GitHubRemoteState): Promise<void> {
   const project = await repo(root)
+  if(!expected)throw new Error('Preview the exact GitHub remote and commit before pushing')
   const current = await githubBranch(project)
   if (current !== checkRef(branch)) throw new Error('Push only the checked-out branch')
-  if(expected){const currentState=await githubRemoteState(project);if(JSON.stringify(currentState)!==JSON.stringify(expected))throw new Error('Repository changed after the push preview. Preview again.');await run('git',['push',expected.remote,`${expected.head}:refs/heads/${branch}`],project,120000)}
-  else await run('git', ['push', '-u', 'origin', branch], project, 120000)
+  const currentState=await githubRemoteState(project);if(JSON.stringify(currentState)!==JSON.stringify(expected))throw new Error('Repository changed after the push preview. Preview again.');await run('git',['push',expected.remote,`${expected.head}:refs/heads/${branch}`],project,120000)
 }
 
 function parsePR(value: unknown): GitHubPullRequest {
@@ -158,23 +158,39 @@ function parsePR(value: unknown): GitHubPullRequest {
 
 const prFields = 'number,title,state,isDraft,url,headRefName,baseRefName,reviewDecision,statusCheckRollup'
 
-async function originRepository(project: string): Promise<string> {
+async function requireAuthenticatedGithubHost(host: string): Promise<void> {
+  if (host === 'github.com') return
+  let known: unknown
+  try { known = JSON.parse(await run('gh', ['auth', 'status', '--active', '--json', 'hosts'], undefined, 15000)) }
+  catch { throw new Error('Sign in to this GitHub Enterprise host with gh before using its repository') }
+  const hosts = (known as {hosts?: Record<string, Array<{active?:boolean;state?:string}>>})?.hosts
+  const accounts = Object.entries(hosts || {}).find(([name]) => name.toLowerCase() === host)?.[1]
+  if (!Array.isArray(accounts) || !accounts.some(account => account.active === true && account.state === 'success')) {
+    throw new Error('Origin host is not an authenticated GitHub host. Review the remote URL and connect that host with gh.')
+  }
+}
+
+async function validatedOrigin(project: string): Promise<{repository:string;remote:string}> {
   const remote = await run('git', ['remote', 'get-url', 'origin'], project)
-  const scp = /^(?:[^@/:]+@)?([A-Za-z0-9.-]+):([^/].*)$/.exec(remote)
+  const scp = /^(?:git@)?([A-Za-z0-9.-]+):([^/].*)$/.exec(remote)
   let host: string, path: string
   if (scp && !remote.includes('://')) { host = scp[1]; path = scp[2] }
   else {
     let url: URL
     try { url = new URL(remote) } catch { throw new Error('Origin must be a GitHub HTTPS or SSH remote') }
     if (!['https:', 'ssh:'].includes(url.protocol)) throw new Error('Origin must be a GitHub HTTPS or SSH remote')
+    if (url.password || url.search || url.hash || url.port || (url.protocol === 'https:' && url.username) || (url.protocol === 'ssh:' && url.username && url.username !== 'git')) throw new Error('Origin remote must not include credentials, ports, or URL parameters')
     host = url.hostname; path = url.pathname.replace(/^\//, '')
   }
+  host = host.toLowerCase()
   path = path.replace(/\/$/, '').replace(/\.git$/, '')
   if (!/^[A-Za-z0-9.-]+$/.test(host) || !githubName.test(path)) throw new Error('Origin does not identify a GitHub repository')
-  return `${host}/${path}`
+  await requireAuthenticatedGithubHost(host)
+  return {repository:`${host}/${path}`,remote}
 }
+async function originRepository(project: string): Promise<string> { return (await validatedOrigin(project)).repository }
 
-export async function githubRemoteState(root:string):Promise<GitHubRemoteState>{const project=await repo(root);return{repository:await originRepository(project),remote:await run('git',['remote','get-url','origin'],project),branch:await githubBranch(project),head:await run('git',['rev-parse','HEAD'],project)}}
+export async function githubRemoteState(root:string):Promise<GitHubRemoteState>{const project=await repo(root),origin=await validatedOrigin(project);return{repository:origin.repository,remote:origin.remote,branch:await githubBranch(project),head:await run('git',['rev-parse','HEAD'],project)}}
 const numberID=(number:number):void=>{if(!Number.isSafeInteger(number)||number<1)throw new Error('Invalid GitHub item number')}
 async function apiRepository(root:string):Promise<{project:string;repository:string;host:string;path:string}>{const project=await repo(root),repository=await originRepository(project),[host,...parts]=repository.split('/');return{project,repository,host,path:parts.join('/')}}
 export async function githubIssues(root:string):Promise<GitHubIssue[]>{const info=await apiRepository(root);return JSON.parse(await run('gh',['issue','list','--repo',info.repository,'--state','open','--limit','100','--json','number,title,body,url,state'],info.project))}

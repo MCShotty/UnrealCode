@@ -398,7 +398,9 @@ func (state *storedState) inheritItem(item sessionstore.Item) {
 		state.respondedTurns[response.TurnID] = struct{}{}
 	case sessionstore.ItemToolCallStatus:
 		status := item.Data.(sessionstore.ToolCallStatus)
-		// TODO: Preserve status snapshots in forked history without making inherited operations dispatchable.
+		// Keep inherited operation snapshots for history display, but never add
+		// them to the child's resumable operation state.
+		status.InheritedOperations = append(status.InheritedOperations, status.Operations...)
 		status.Operations = nil
 		item.Data = status
 		state.toolCallStatuses[toolCallStatusKey{

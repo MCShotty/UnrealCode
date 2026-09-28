@@ -3,7 +3,12 @@ import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import assert from 'node:assert/strict'
-const images = process.argv.slice(2)
+import { Worker } from 'node:worker_threads'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+const cacheComparison=process.argv.includes('--history-cache')
+const images = process.argv.slice(2).filter(value=>value!=='--history-cache')
 if (images.length !== 2) throw new Error('Supply baseline and candidate Docker image tags')
 const server = createServer(async (req, res) => {
   let text = ''; for await (const part of req) text += part
@@ -15,7 +20,17 @@ const server = createServer(async (req, res) => {
 })
 await new Promise(resolve => server.listen(0, '0.0.0.0', resolve))
 const median = values => [...values].sort((a,b) => a-b)[Math.floor(values.length/2)]
-async function benchmark(image) {
+async function historyLoad(){
+ const root=mkdtempSync(join(tmpdir(),'unrealcode-overlap-cache-')),path=join(root,'fixture.sqlite'),peers=[]
+ async function peer(reader){const worker=new Worker(resolve('out/main/history-worker.cjs'),{workerData:{path,reader}}),pending=new Map();let next=0
+  await new Promise((resolve,reject)=>{worker.on('error',reject);worker.on('message',message=>{if(message.ready)resolve();else{const call=pending.get(message.id);pending.delete(message.id);message.ok?call?.resolve(message.value):call?.reject(new Error(message.error.message))}})})
+  const request=(method,params)=>new Promise((resolve,reject)=>{const id=++next;pending.set(id,{resolve,reject});worker.postMessage({id,method,params})});const result={worker,request};peers.push(result);return result}
+ const writer=await peer(false),readers=await Promise.all([peer(true),peer(true)])
+ const background=(async()=>{for(let offset=0;offset<100000;offset+=250){await writer.request('ingest',{batch:Array.from({length:250},(_,i)=>({project:'fixture',event:{v:1,event:'session.item',sessionId:'cache-load',seq:offset+i+1,payload:{Kind:'input',Data:{Kind:'external',Payload:`Read source file ${offset+i} and verify changes`}}}}))});await Promise.all(readers.map(reader=>reader.request('search',{projects:['fixture'],query:'source file 999'})))}})()
+ return {root,close:async()=>{await background;for(const peer of peers){await peer.request('close',{});await peer.worker.terminate()}}}
+}
+async function benchmark(image,withCache=false) {
+  const cache=withCache?await historyLoad():undefined
   const child = spawn('docker', ['run', '--rm', '-i', '--cap-drop=ALL', '--security-opt=no-new-privileges', image], { windowsHide: true, stdio: ['pipe','pipe','pipe'] })
   let buffer = '', stderr = ''
   const pending = new Map(), events = []
@@ -53,7 +68,7 @@ async function benchmark(image) {
       const overlap=Math.max(0,Math.min(a.end,b.end)-Math.max(a.start,b.start)); overlaps.push(overlap); assert(overlap>100,'Independent tools did not overlap')
       await request('session.stop',{sessionId})
     }
-    return { image, runs:durations.length, medianTaskMs:median(durations), medianSteeringAckMs:median(steering), medianToolOverlapMs:median(overlaps), scope:'Synthetic bridge with fixture provider and two 250 ms shell tools; excludes desktop rendering and snapshot setup.' }
-  } finally { for (const operation of pending.values()) clearTimeout(operation.timer); child.stdin.end(); await new Promise(resolve => { child.once('exit',resolve); setTimeout(() => { child.kill(); resolve() },5000).unref() }) }
+    return { image, historyIndexing:withCache,cacheFixture:cache?.root,runs:durations.length, medianTaskMs:median(durations), medianSteeringAckMs:median(steering), medianToolOverlapMs:median(overlaps), scope:'Synthetic bridge with fixture provider and two 250 ms shell tools; excludes desktop rendering and snapshot setup. Optional concurrent 100,000-event SQLite writer and two search workers.' }
+  } finally { for (const operation of pending.values()) clearTimeout(operation.timer); child.stdin.end(); await new Promise(resolve => { child.once('exit',resolve); setTimeout(() => { child.kill(); resolve() },5000).unref() });await cache?.close() }
 }
-try { const baseline=await benchmark(images[0]),candidate=await benchmark(images[1]); console.log(JSON.stringify({baseline,candidate,taskChangePercent:(candidate.medianTaskMs/baseline.medianTaskMs-1)*100})) } finally { server.close() }
+try { const baseline=await benchmark(images[0]),candidate=await benchmark(images[1],cacheComparison); console.log(JSON.stringify({baseline,candidate,taskChangePercent:(candidate.medianTaskMs/baseline.medianTaskMs-1)*100})) } finally { server.close() }
