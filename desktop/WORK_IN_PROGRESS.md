@@ -67,6 +67,9 @@ acceptance run `36269843333` actually started: its bridge job passed and the
 Windows job failed at the old missing-Docker smoke assertion, now corrected and
 passed locally. Hosted CI has not run on this 1.0 checkpoint. A push would expose
 the new source publicly; the explicit 1.0 push hold remains active.
+An attempt to remove the superseded local `dist/release-readiness-20260928`
+test package was rejected by automatic approval review with the sole reason
+`blocked by policy`. It remains intact; no alternate deletion method was used.
 
 Still open for stable 1.0: publisher signing and a signed-update exercise;
 fresh-machine installation and upgrades from supported 0.x profiles; hosted
