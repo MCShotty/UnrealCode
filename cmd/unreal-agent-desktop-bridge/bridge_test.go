@@ -51,6 +51,9 @@ func testApp(t *testing.T, state string, toolFirst bool) (*app, context.CancelFu
 		cancel()
 		t.Fatal(err)
 	}
+	// The production bridge runs with /workspace mounted by Docker. Tests also
+	// run on bare Linux and macOS CI hosts, where that path need not exist.
+	a.workspace = t.TempDir()
 	calls := &atomic.Int32{}
 	a.makeClient = func(_ sessionConfig, _ credential) (agentrunner.Client, string, error) {
 		return &fakeClient{calls: calls, toolFirst: toolFirst}, "fake-model", nil

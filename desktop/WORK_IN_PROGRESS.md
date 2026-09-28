@@ -18,6 +18,13 @@ files, reviewed 207 production packages, compared seven local credential
 values privately, and found zero matches. The reachable-history scan found
 zero matches in 1,593 blobs. This local hash will differ from the hosted build;
 only the tagged hosted artifact is eligible for publication.
+The nonpublishing hosted release preflight `36460317190` passed checksum
+generation, unsigned-state inspection, GitHub attestation creation and
+verification, package audit, and packaged smoke. Initial broad `main` CI then
+exposed Go bridge fixtures that assumed `/workspace` existed on bare Linux and
+macOS runners. The fixture now uses a temporary workspace; its race test passed
+in a plain Go Docker image without `/workspace`. Broader CI must be rerun on
+this corrected source before tagging.
 
 ## 1.0 release-readiness checkpoint — 2026-09-28
 
