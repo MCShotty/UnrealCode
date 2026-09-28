@@ -315,6 +315,14 @@ func searchProject(ctx context.Context, root string, p *contextPreferences, quer
 	if strings.TrimSpace(query) == "" || len(query) > 500 {
 		return result, errors.New("invalid search query")
 	}
+	// Compare resolved files against the resolved root. On macOS, temporary
+	// directories may be reached through /var while EvalSymlinks returns
+	// /private/var; comparing those spellings skips every legitimate file.
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return result, err
+	}
+	root = canonicalRoot
 	output, err := exec.CommandContext(ctx, "git", "-c", "safe.directory="+root, "-C", root, "ls-files", "-co", "--exclude-standard", "-z").Output()
 	var names []string
 	if err == nil {

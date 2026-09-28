@@ -126,7 +126,14 @@ jobs:
         run: |
           set -euo pipefail
           version="$(node -p "require('./desktop/package.json').version")"
+          notes="desktop/RELEASE_NOTES_${version}.md"
+          test -f "$notes"
+          body="desktop/dist/RELEASE_BODY.md"
+          cp "$notes" "$body"
+          printf '\n## Installer SHA-256\n\n```text\n' >> "$body"
+          cat desktop/dist/SHA256SUMS >> "$body"
+          printf '```\n' >> "$body"
           gh release create "$GITHUB_REF_NAME" \
             "desktop/dist/UnrealCode-Setup-${version}.exe" desktop/dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --verify-tag \
-            --title "UnrealCode ${version}" --notes-file desktop/RELEASE_NOTES_1.0.md
+            --title "UnrealCode ${version}" --notes-file "$body"

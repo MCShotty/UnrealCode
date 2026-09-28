@@ -62,3 +62,18 @@ func TestProjectSearchBoundsAndCancellation(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectSearchResolvesRootAlias(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "visible.txt"), []byte("needle\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	result, err := searchProject(context.Background(), alias, &contextPreferences{}, "needle")
+	if err != nil || len(result.Matches) != 1 || result.Matches[0].Path != "visible.txt" {
+		t.Fatalf("result=%+v error=%v", result, err)
+	}
+}

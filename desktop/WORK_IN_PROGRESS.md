@@ -23,8 +23,14 @@ generation, unsigned-state inspection, GitHub attestation creation and
 verification, package audit, and packaged smoke. Initial broad `main` CI then
 exposed Go bridge fixtures that assumed `/workspace` existed on bare Linux and
 macOS runners. The fixture now uses a temporary workspace; its race test passed
-in a plain Go Docker image without `/workspace`. Broader CI must be rerun on
-this corrected source before tagging.
+in a plain Go Docker image without `/workspace`. The next broad CI run passed
+Linux but exposed a macOS project-search issue: `/var` and `/private/var`
+referred to the same temporary root, while search compared their path strings.
+Search now canonicalizes its root, and a symlink-root regression passes in the
+plain Go image. Broad CI and the nonpublishing release preflight must rerun on
+this corrected source before tagging. Versioned release notes are required for
+future tags; the release page will display the exact installer SHA-256 as well
+as attaching `SHA256SUMS`.
 
 ## 1.0 release-readiness checkpoint — 2026-09-28
 
