@@ -2,6 +2,18 @@
 
 ## 1.0 release-readiness checkpoint — 2026-09-28
 
+The audited preview source was pushed to the public `codex/desktop-roadmap`
+branch at `99ffb04` after the owner explicitly authorized a 1.0 push. Hosted
+Desktop acceptance run `36453526173` passed its bridge job and the Windows
+helper, clean dependency install, TypeScript, desktop tests, packaging, and
+release audit. Its smoke step failed because a Docker CLI with an unavailable
+daemon correctly returned `DOCKER_UNAVAILABLE` instead of the local fixture's
+`DOCKER_MISSING`. The smoke assertion now accepts either precise failure code
+with its own required recovery action and Retry; local smoke and 31 focused
+failure-classification tests pass. A rerun on the patched branch is pending.
+The free SignPath Foundation route is being evaluated and has not been approved.
+No trusted 1.0 signature, stable tag, or release asset exists.
+
 The current local, unsigned candidate is
 `dist/release-readiness-1fd1a0b/UnrealCode-Setup-1.0.0-preview.1.exe`.
 SHA-256: `2FA55CE240A0876C3195C55F75EECC8950B69D5994A5719C7AE6F8E8DD993550`.
@@ -52,8 +64,8 @@ requests, 21,396 input tokens and 925 output tokens.
 The exact payload/source audit scanned **1,106 entries** and reviewed **207
 production npm packages**, comparing seven local credential values privately
 with zero matches. Reachable Git history scanned 1,257 blobs with zero secret
-hits. The patch whitespace check passed. No 1.0 tag, push, release asset
-upload, or visibility change was made in this sweep. This agent did not install
+hits. The patch whitespace check passed. No 1.0 tag, release asset upload, or
+visibility change was made in this sweep. This agent did not install
 the candidate on another machine. The user subsequently reported that an
 installer named `UnrealCode-Setup-1.0.0-preview.1.exe` installed successfully
 on a second machine. The user supplied SHA-256
@@ -74,9 +86,9 @@ blobs with zero secret matches.
 
 GitHub currently reports `MCShotty/UnrealCode` as public. Historical Desktop
 acceptance run `36269843333` actually started: its bridge job passed and the
-Windows job failed at the old missing-Docker smoke assertion, now corrected and
-passed locally. Hosted CI has not run on this 1.0 checkpoint. A push would expose
-the new source publicly; the owner has now authorized that source push for CI.
+Windows job failed at the old missing-Docker smoke assertion. The later 1.0
+source push and hosted run are recorded above. The owner authorized that
+public source push for CI; the stable signed release remains pending.
 An attempt to remove the superseded local `dist/release-readiness-20260928`
 test package was rejected by automatic approval review with the sole reason
 `blocked by policy`. It remains intact; no alternate deletion method was used.

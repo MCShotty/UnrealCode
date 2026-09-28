@@ -80,7 +80,7 @@ npm ci
 npm run dev
 ```
 
-Repository access is required while it is private. On first launch, choose or skip the decision engine, select a provider, open a project, and review its trust prompt. The app prepares its Docker backend from bundled source. Missing Docker, expired credentials, and unreachable endpoints have setup/reconnect actions.
+On first launch, choose or skip the decision engine, select a provider, open a project, and review its trust prompt. The app prepares its Docker backend from bundled source. Missing Docker, expired credentials, and unreachable endpoints have setup/reconnect actions.
 
 Start with **Ask** mode. Use **Review** to inspect a task's changes before integrating an isolated workspace or restoring selected checkpoint files.
 
@@ -146,6 +146,15 @@ npm run build:win
 ```
 
 The build creates a local NSIS installer under `desktop/dist/`; it does not publish a GitHub release. See [BUILDING.md](desktop/BUILDING.md) for Docker, packaged-app, signing, and audit checks, and [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance. Coding assistants should read [AGENTS.md](AGENTS.md). Report vulnerabilities using [SECURITY.md](SECURITY.md).
+
+## Code signing policy and privacy
+
+The current 1.0 preview is unsigned. The proposed free open-source signing
+route, release responsibilities, and verification steps are in the
+[Code signing policy](CODE_SIGNING_POLICY.md). SignPath Foundation approval is
+pending; no installer is represented as signed before its actual signature is
+checked. [Privacy and data flows](PRIVACY.md) explains local storage and when
+configured providers, connections, and other services receive information.
 
 ### Current limits
 

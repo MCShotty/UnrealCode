@@ -30,7 +30,9 @@ try {
   result.userData = await instance.evaluate(({ app }) => app.getPath('userData'))
   if (process.argv.includes('--no-docker')) {
     result.dockerStatus = await page.evaluate(() => window.unreal.dockerStatus())
-    if (result.dockerStatus.failure?.code !== 'DOCKER_MISSING' || !result.dockerStatus.failure.actions.includes('docker-help')) throw new Error(`Missing actionable Docker guidance: ${result.dockerStatus.failure?.code || 'no failure'}`)
+    const failure = result.dockerStatus.failure
+    const requiredAction = { DOCKER_MISSING: 'docker-help', DOCKER_UNAVAILABLE: 'docker-open' }[failure?.code]
+    if (result.dockerStatus.ready || result.dockerStatus.phase !== 'unavailable' || !requiredAction || !failure.actions.includes(requiredAction) || !failure.actions.includes('retry')) throw new Error(`Missing actionable Docker guidance: ${failure?.code || 'no failure'}`)
   }
   if (process.argv.includes('--credentials')) {
     await page.evaluate(() => window.unreal.saveKey('openai', 'qa-only-value-not-a-real-key'))
