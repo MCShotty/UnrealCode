@@ -204,7 +204,16 @@ func (h *workflowHandler) AddRemoteJob(value operation.Operation) error {
 		h.waitingQuestions[value.ID] = q.ID
 		h.publish(*step.Operation)
 		h.mu.Unlock()
-		h.events.enqueue(h.session, "session.needs_input", map[string]any{"questionId": q.ID, "question": q.Questions[0].Title, "operationId": value.ID})
+		// The answer can arrive after create persisted the card but before this
+		// operation registered as waiting. Reconcile that durable state now;
+		// otherwise the answered operation can remain awaiting forever.
+		pending, err := h.reconcileQuestion(q.ID)
+		if err != nil {
+			return err
+		}
+		if pending {
+			h.events.enqueue(h.session, "session.needs_input", map[string]any{"questionId": q.ID, "question": q.Questions[0].Title, "operationId": value.ID})
+		}
 		return nil
 	}
 	if args.Action != "search" {
@@ -297,6 +306,23 @@ func (h *workflowHandler) resolveQuestion(q questionRequest) {
 			h.publish(*step.Operation)
 		}
 	}
+}
+
+func (h *workflowHandler) reconcileQuestion(id string) (bool, error) {
+	rows, err := h.questions.list(h.session, h.workspaceID)
+	if err != nil {
+		return false, err
+	}
+	for _, q := range rows {
+		if q.ID == id {
+			if q.State == "pending" {
+				return true, nil
+			}
+			h.resolveQuestion(q)
+			return false, nil
+		}
+	}
+	return false, errors.New("Question disappeared while starting its operation")
 }
 
 type searchMatch struct {

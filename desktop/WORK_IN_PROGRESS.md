@@ -31,6 +31,13 @@ plain Go image. Broad CI and the nonpublishing release preflight must rerun on
 this corrected source before tagging. Versioned release notes are required for
 future tags; the release page will display the exact installer SHA-256 as well
 as attaching `SHA256SUMS`.
+The corrected macOS job passed. Ubuntu then intermittently timed out waiting
+for a required-question/provider-failure test; the failed job passed on rerun.
+Inspection found an answer-before-operation-registration race that could leave
+an answered required question awaiting forever. The bridge now reconciles the
+durable question state after registration. A deterministic regression for that
+ordering and the provider-failure retry test passed 20 race-enabled repetitions
+each in a plain Go image. Final hosted CI must pass on this patch.
 
 ## 1.0 release-readiness checkpoint — 2026-09-28
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"github.com/unreallabsai/unreal-agent/cmd/internal/agentrunner"
 	"github.com/unreallabsai/unreal-agent/harness/llm"
@@ -81,6 +82,51 @@ func TestQuestionReceiptsOwnershipAndReplay(t *testing.T) {
 	rows, err = reconstructed.list(id, "")
 	if err != nil || rows[0].SubmissionID != p.SubmissionID {
 		t.Fatal("Canonical replay lost receipt", err)
+	}
+}
+
+func TestAnswerBeforeRequiredOperationRegistrationCompletes(t *testing.T) {
+	a, stop, _, _ := testApp(t, t.TempDir(), false)
+	defer stop()
+	id := session.ID(uuid.New().String())
+	args := workflowArgs{Action: "input", Mode: "required", Questions: []questionItem{{ID: "choice", Title: "Target?", Choices: []questionChoice{{ID: "a", Label: "Alpha"}}}}}
+	if err := normalizeQuestions(&args); err != nil {
+		t.Fatal(err)
+	}
+	q, err := a.questions.create(id, "workspace", "early-answer", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = a.questions.answer(id, answerQuestionParams{ID: q.ID, WorkspaceID: "workspace", Revision: q.Revision, SubmissionID: uuid.New().String(), Answers: []questionAnswer{{QuestionID: "choice", ChoiceID: "a"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h := newWorkflowHandler(ctx, &contextPreferences{}, t.TempDir(), a.events, id)
+	h.questions = a.questions
+	h.workspaceID = "workspace"
+	data, err := json.Marshal(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := operation.NewRemoteJobSpec(operation.RemoteJobPlan{Type: workflowPlan, Version: 1, Data: jsontext.Value(data)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := operation.Operation{ID: operation.ID(q.ID), Type: spec.Type, Version: spec.Version, State: spec.State, MaxOutputLength: spec.MaxOutputLength, Status: operation.StatusAwaiting}
+	h.waiting[op.ID] = op
+	h.waitingQuestions = map[operation.ID]string{op.ID: q.ID}
+	if pending, err := h.reconcileQuestion(q.ID); err != nil || pending {
+		t.Fatalf("answered question stayed pending: %v, %v", pending, err)
+	}
+	select {
+	case updated := <-h.RemoteJobUpdates():
+		if updated.ID != op.ID || updated.Status != operation.StatusCompleted {
+			t.Fatalf("operation was not completed: %+v", updated)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("answered operation was left waiting")
 	}
 }
 
