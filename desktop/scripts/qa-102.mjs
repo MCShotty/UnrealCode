@@ -59,7 +59,10 @@ try{
  if(!repro){
   const emit=async value=>app.evaluate(({BrowserWindow},failure)=>BrowserWindow.getAllWindows()[0].webContents.send('app:failure',failure),value)
   const warning={code:'ENDPOINT_UNAVAILABLE',scope:'decision.error',title:'Fixture warning',message:'Optional decision service unavailable',actions:[],retryable:true,reference:'warning1'}
-  await emit(warning);await page.getByRole('button',{name:'Silence warnings'}).click()
+  await emit(warning);await page.getByRole('button',{name:'Dismiss issue'}).click()
+  await emit({...warning,reference:'repeat-warning'});await page.waitForTimeout(100)
+  assert.equal(await page.getByRole('status',{name:'Fixture warning'}).count(),0,'Dismissed unchanged warning reappeared')
+  await emit({...warning,message:'A different advisory condition',reference:'changed-warning'});await page.getByRole('button',{name:'Silence warnings'}).click()
   assert.equal((await page.evaluate(()=>window.unreal.getSettings())).warningNotifications,false)
   await emit({...warning,reference:'warning2'});await page.waitForTimeout(100);assert.equal(await page.getByRole('status',{name:'Fixture warning'}).count(),0)
   const failure={...warning,scope:'provider',code:'PROVIDER_TRANSIENT',title:'Fixture task failed',actions:['settings'],reference:'error1'}

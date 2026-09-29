@@ -3,6 +3,7 @@
 This update repairs stale document/review results, quiets optional warnings, and improves the Browser and non-Git project experience.
 
 - **Warning controls:** turn off warning popups in Settings → Appearance, or use **Silence warnings** on an advisory notice. The setting survives restart. Task failures, data problems, approvals and required answers remain visible.
+- **Warning dismissal:** an unchanged advisory stays dismissed for the app session instead of reappearing on every background poll.
 - **Browser:** a compact responsive tab bar and address toolbar, a useful first-page guide, and a separate Agent access dialog with reliable focus restoration.
 - **Git:** plain folders remain usable without repeated background Git error notices. Repository readiness and GitHub login are reported separately; unavailable status is never called a clean working tree.
 - **PDFs and OCR:** delayed results stay with their original page, and obsolete text layers are cancelled during navigation.

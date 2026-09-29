@@ -17,6 +17,7 @@
 - A document-worker queue race that could exceed the two-worker limit when a new request arrived during a queued slot handoff.
 - Delayed GitHub pull-request details replacing a more recently selected review.
 - Recovery **Open settings** targeting an invalid tab, and a completed recovery action dismissing a newer issue.
+- Dismissed, unchanged background warnings reappearing on the next poll and covering release notices.
 - Appearance and warning preference changes unnecessarily reconfiguring decision and MCP services.
 - Non-Git folders being reported as clean repositories and Git actions appearing available before repository prerequisites were satisfied.
 
