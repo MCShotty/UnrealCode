@@ -64,6 +64,7 @@ try{
   await emit({...warning,reference:'warning2'});await page.waitForTimeout(100);assert.equal(await page.getByRole('status',{name:'Fixture warning'}).count(),0)
   const failure={...warning,scope:'provider',code:'PROVIDER_TRANSIENT',title:'Fixture task failed',actions:['settings'],reference:'error1'}
   await emit(failure);await page.getByRole('alert',{name:'Fixture task failed'}).waitFor()
+  await emit(warning);await page.getByRole('alert',{name:'Fixture task failed'}).waitFor()
   await page.getByRole('button',{name:'Open settings',exact:true}).click();await page.getByRole('heading',{name:'Model provider',exact:true}).waitFor()
   await page.reload();assert.equal((await page.evaluate(()=>window.unreal.getSettings())).warningNotifications,false)
   await emit(warning);await page.waitForTimeout(100);assert.equal(await page.getByRole('button',{name:'Silence warnings'}).count(),0)

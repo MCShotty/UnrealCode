@@ -35,7 +35,7 @@ export function FailureCenter(){
     if(action==='settings'||action==='support'||action==='recovery'){window.dispatchEvent(new CustomEvent('unrealcode:settings',{detail:action==='settings'?'provider':'recovery'}));dismiss(reference);return}
     setPending(reference)
     try{await window.unreal.recoveryAction(action);if(action!=='docker-help'&&action!=='docker-open')dismiss(reference)}
-    catch(error){const next=(error as {failure?:AppFailure}).failure;if(next)setFailure(next)}finally{setPending(current=>current===reference?undefined:current)}
+    catch(error){const next=(error as {failure?:AppFailure}).failure;if(next)setFailure(current=>current?.reference===reference?next:current)}finally{setPending(current=>current===reference?undefined:current)}
   }
   const mute=async()=>{const reference=failure.reference;setPending(reference);try{await window.unreal.updateSettings({warningNotifications:false});dismiss(reference)}finally{setPending(current=>current===reference?undefined:current)}}
   return <aside className="failure-notice" role={warning?'status':'alert'} aria-label={failure.title}>
