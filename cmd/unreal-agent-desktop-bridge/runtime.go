@@ -462,6 +462,33 @@ func (c *observedClient) Respond(ctx context.Context, request llm.Request, optio
 		}
 	}
 	c.events.enqueue(c.id, "model.request.started", map[string]string{"id": id})
+	var partial strings.Builder
+	previewAttempt := 0
+	upstreamPreview := options.OnTextDelta
+	options.OnTextDelta = func(delta llm.TextDelta) {
+		if delta.Attempt != previewAttempt {
+			previewAttempt = delta.Attempt
+			partial.Reset()
+		}
+		text := delta.Text
+		for _, secret := range c.sensitive {
+			if secret != "" {
+				text = strings.ReplaceAll(text, secret, "[redacted]")
+			}
+		}
+		if partial.Len() < 16384 {
+			if len(text) > 16384-partial.Len() {
+				text = text[:16384-partial.Len()]
+			}
+			partial.WriteString(text)
+		}
+		if text != "" || delta.Reset {
+			c.events.preview(c.id, "model.response.preview", map[string]any{"id": id, "attempt": delta.Attempt, "outputIndex": delta.OutputIndex, "text": text, "reset": delta.Reset})
+		}
+		if upstreamPreview != nil {
+			upstreamPreview(delta)
+		}
+	}
 	response, err := c.inner.Respond(ctx, request, options)
 	response, err = llm.NormalizeFailure(response, err)
 	llm.RedactFailure(&response, c.sensitive...)
@@ -480,6 +507,9 @@ func (c *observedClient) Respond(ctx context.Context, request llm.Request, optio
 		} else if response.Stop == llm.StopMaxOutputTokens {
 			response.Failure = &llm.Failure{Code: "incomplete_response", Message: "The provider reached its output limit. Review the partial response before retrying."}
 		}
+	}
+	if (err != nil || response.Failure != nil) && partial.Len() > 0 {
+		c.events.enqueue(c.id, "model.response.incomplete", map[string]any{"id": id, "attempt": previewAttempt, "text": partial.String(), "status": "incomplete"})
 	}
 	c.events.enqueue(c.id, "model.request.completed", map[string]any{"id": id, "success": err == nil && response.Failure == nil, "requestedTier": request.Model.ServiceTier, "actualTier": response.ServiceTier, "usage": response.Usage, "provider": effective.Provider, "model": request.Model.ID, "failure": response.Failure})
 	return response, err
@@ -555,7 +585,23 @@ func externalInputWithAdvice(prompt, messageID, advice string) (inbox.Input, err
 }
 
 func (a *app) contextBuilder(id session.ID, config sessionConfig, model, operationDirectory string) (*catalogBuilder, *mcpRegistry, error) {
-	skills, skillErrors := tool.DiscoverSkills(filepath.Join(a.workspace, ".harness", "skills"))
+	builtinSkills, builtinErrors := tool.DiscoverSkills("/usr/local/share/unrealcode/skills")
+	projectSkills, projectErrors := tool.DiscoverSkills(filepath.Join(a.workspace, ".harness", "skills"))
+	skills := append([]tool.Skill{}, builtinSkills...)
+	for _, skill := range projectSkills {
+		replaced := false
+		for index := range skills {
+			if skills[index].Name == skill.Name {
+				skills[index] = skill
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			skills = append(skills, skill)
+		}
+	}
+	skillErrors := append(builtinErrors, projectErrors...)
 	for _, skillErr := range skillErrors {
 		fmt.Fprintln(os.Stderr, "skill:", skillErr)
 	}

@@ -114,6 +114,30 @@ func TestNoulProseCriteriaBecomesInstructions(t *testing.T) {
 	}
 }
 
+func TestDecisionBatchNormalizesPrimitiveNamesWithoutChangingInput(t *testing.T) {
+	batch := decisionBatch{State: "focused evidence", Questions: map[string]decisionQuestion{
+		"choice": {Type: " Choice ", Instructions: "Which route?", Criteria: map[string]any{"code": "Coding", "other": "Other"}},
+		"score":  {Type: "Score", Instructions: "How relevant?", Criteria: []any{"Unrelated", "Related", "Direct"}},
+		"noul":   {Type: "Noul", Instructions: "Is this relevant?", Criteria: "Check the supplied evidence."},
+	}}
+	normalized := normalizeDecisionBatch(batch)
+	if err := validateDecisionBatch(normalized); err != nil {
+		t.Fatalf("capitalized primitives should be accepted: %v", err)
+	}
+	for name, want := range map[string]string{"choice": "choice", "score": "score", "noul": "noul"} {
+		if normalized.Questions[name].Type != want {
+			t.Errorf("%s type = %q, want %q", name, normalized.Questions[name].Type, want)
+		}
+	}
+	if batch.Questions["score"].Type != "Score" || batch.Questions["noul"].Criteria != "Check the supplied evidence." {
+		t.Fatal("normalization mutated the original model request")
+	}
+	unknown := decisionBatch{State: "focused evidence", Questions: map[string]decisionQuestion{"q": {Type: "Maybe", Instructions: "Unknown primitive"}}}
+	if err := validateDecisionBatch(normalizeDecisionBatch(unknown)); err == nil {
+		t.Fatal("unknown decision primitive was accepted")
+	}
+}
+
 func TestDecisionToolIsRegisteredWithoutChangingBuiltins(t *testing.T) {
 	definitions := decisionTools()
 	if len(definitions) != 2 || definitions[0].Definition.Tool.Name != decisionToolName {

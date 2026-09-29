@@ -148,6 +148,12 @@ export function saveKey(provider: string, key: string): void {
   }
 }
 
+export function clearKey(provider:string):void{
+  if (!['openai', 'anthropic', 'openrouter', 'fireworks', 'openai-compatible'].includes(provider)) throw new Error('Unsupported API-key provider')
+  sessionKeys.delete(provider)
+  if (safeStorage.isEncryptionAvailable()) { const secrets=readSecrets();delete secrets[provider];writeJSON(secretsPath(),secrets) }
+}
+
 export function getKey(provider: string): string {
   if (sessionKeys.has(provider)) return sessionKeys.get(provider) ?? ''
   const encoded = readSecrets()[provider]

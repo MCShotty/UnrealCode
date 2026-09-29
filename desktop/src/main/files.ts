@@ -61,10 +61,8 @@ export async function readFile(root: string, requested: string): Promise<string>
 }
 
 export async function gitChanges(root: string): Promise<string[]> {
-  try {
-    const { stdout } = await execFileAsync('git', ['status', '--short', '--untracked-files=normal'], { cwd: root, windowsHide: true, timeout: 10000, maxBuffer: 1024 * 1024 })
-    return stdout.split(/\r?\n/).filter(Boolean).slice(0, 200)
-  } catch { return [] }
+  const { stdout } = await execFileAsync('git', ['status', '--short', '--untracked-files=normal'], { cwd: root, windowsHide: true, timeout: 10000, maxBuffer: 1024 * 1024 })
+  return stdout.split(/\r?\n/).filter(Boolean).slice(0, 200)
 }
 
 export async function gitDiff(root: string, requested: string): Promise<string> {
@@ -116,9 +114,31 @@ export async function listSkills(root: string): Promise<SkillEntry[]> {
     totalBytes += bytes.length
     const content = bytes.toString('utf8')
     const description = content.match(/^description:\s*(.+)$/m)?.[1]?.trim() || ''
-    result.push({ name, description, content })
+    result.push({ name, description, content, source: 'project' })
   }
   return result.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+export async function listAvailableSkills(root: string): Promise<SkillEntry[]> {
+  const project = await listSkills(root)
+  const candidates = [join(process.resourcesPath || '', 'builtin-skills'), join(__dirname, '..', '..', 'builtin-skills')]
+  const builtins = new Map<string, SkillEntry>()
+  for (const base of candidates) {
+    const entries = await fs.readdir(base, { withFileTypes: true }).catch(error => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+      throw error
+    })
+    if (!entries.length) continue
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !skillName.test(entry.name)) continue
+      const content = (await readBoundedRegularFile(join(base, entry.name, 'SKILL.md'), skillLimit)).toString('utf8')
+      const description = content.match(/^description:\s*(.+)$/m)?.[1]?.trim() || ''
+      builtins.set(entry.name, { name: entry.name, description, content, source: 'built-in' })
+    }
+    break
+  }
+  for (const skill of project) builtins.set(skill.name, skill)
+  return [...builtins.values()].sort((a, b) => a.name.localeCompare(b.name))
 }
 
 export async function saveSkill(root: string, name: string, content: string): Promise<void> {

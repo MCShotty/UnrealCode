@@ -14,7 +14,12 @@ volumes. A trusted project folder can be mounted into its local container.
   the task settles or you stop it. A local endpoint remains local only if that
   endpoint itself does not forward requests.
 - **Optional decision model:** TypeSafe receives focused project text only after
-  the project's cloud-decision consent. Laya and GLiNER run locally when enabled.
+  the project's cloud-decision consent. BrowserDo additionally needs an exact
+  web-origin cloud consent before it sends bounded, redacted page descriptors.
+  Password inputs, hidden fields, cookies and supplied browser values are
+  excluded from those descriptors; token-like visible text is conservatively
+  omitted or redacted. Other visible page content can still be sent after you
+  grant the origin. Laya and GLiNER run locally when enabled.
 - **Optional app-wide memory:** Hindsight and its database run in local Docker
   containers. After you accept the scope and separately selected model destination,
   that provider can receive bounded task outcomes, corrections, recall/reflect
@@ -23,20 +28,29 @@ volumes. A trusted project folder can be mounted into its local container.
   attribution. Unintegrated specialist findings remain task-scoped. Existing
   project memories migrate after consent; historical chats are not all ingested.
 - **Connections and browser:** Enabled MCP servers receive the arguments and
-  resources passed to their tools. Browser navigation and interactions contact
-  the visited origins. Windows-hosted MCP servers run with the Windows account's
-  access; review their permissions and privacy policies before connecting.
+  resources passed to their tools. The live project browser contacts visited
+  origins, stores sign-ins in a separate Electron partition per project, and
+  gives the agent no access until exact observation/interaction origins are
+  granted and a tab is handed back. A granted origin can expose a signed-in page.
+  Specialist browser profiles remain isolated. Browser cookies are excluded from
+  ordinary recovery exports and support bundles. Windows-hosted MCP servers run
+  with the Windows account's access; review their permissions before connecting.
+- **Documents:** The PDF reader and English/Arabic OCR run locally in workers.
+  PDF text is not automatically added to memory or sent to a model. An agent may
+  read trusted-project PDFs or an external PDF explicitly attached to its chat.
+  OCR language data downloads on demand from a pinned upstream commit and is
+  checked against bundled SHA-256 values before use.
 - **GitHub and usage reports:** Git and `gh` contact GitHub for actions you
   select or authorize. Optional provider-organization reports contact that
   provider using the separate admin credential you configure.
-- **Setup and updates:** Explicit backend/browser/model preparation can download
-  images or model files from their upstream hosts. Release notifications contact
-  GitHub's public API without authentication when due after startup and at most
-  once daily, or when you request a manual check. These checks are enabled by
-  default in 1.0.1 and can be disabled in Settings → Recovery. They send no project
-  content, provider credentials, or conversation history. GitHub receives the
-  ordinary network request. Viewing a release opens GitHub in your system browser;
-  downloading and installation are manual for unsigned builds.
+- **Setup and updates:** Explicit backend/legacy-browser/model preparation can
+  download images or model files from their upstream hosts. Release notifications
+  first contact GitHub's API anonymously; for this private repository, a 404 may
+  cause Electron main to use the existing host `gh` login for that GitHub request.
+  The token stays out of the renderer, Docker and saved notification cache. Checks
+  run when due after startup and at most daily, or when requested; they can be
+  disabled in Settings → Recovery. They send no project or conversation content.
+  Downloading and installation remain manual for unsigned builds.
 
 The app does not control how a selected model provider, MCP server, website, or
 repository host retains or uses data after receiving it. Review the applicable

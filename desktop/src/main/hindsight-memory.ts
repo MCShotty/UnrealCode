@@ -7,7 +7,7 @@ import {DockerBridge} from './docker'
 import {readBoundedJSON} from './bounded-file-read'
 import {atomicMetadata} from './atomic-metadata'
 import {storageLocation,timestampName} from './storage-locations'
-import {credentialFor} from './settings'
+import {credentialFor,getKey,saveKey,clearKey} from './settings'
 import {readFile} from './files'
 import {redactContent,providerFailure,ActionableError} from './failures'
 import type {MemoryProfile,MemoryRecord,MemoryRecordPage,MemorySettings,MemoryStatus} from '../shared/memory'
@@ -54,12 +54,54 @@ export class HindsightMemory {
  async status(project:string,recordLimit=50):Promise<MemoryStatus>{await this.load();if(!Number.isSafeInteger(recordLimit)||recordLimit<0||recordLimit>100)throw Error('Choose a memory record limit from 0 to 100');const settings=structuredClone(this.value.settings),rows=this.rows(project),records=recordLimit?structuredClone(rows.slice(-recordLimit)):[];return {state:!settings.enabled?'disabled':!settings.profile||settings.verifiedProfile!==this.fingerprint(settings.profile)?'unconfigured':this.outboxError?'unavailable':this.runtime.state==='disabled'?'unavailable':this.runtime.state,message:this.outboxError||this.runtime.message,pending:rows.filter(x=>x.state==='pending'||x.state==='failed'||x.deletionPending).length,records,totalRecords:rows.length,...this.value.usage,settings,timelineUsage:this.value.timelineUsage,migration:this.value.migration,analysing:this.analysing,retaining:this.draining&&this.runtime.state==='ready'}}
  async recordsPage(project:string,beforeId?:string,limit=50):Promise<MemoryRecordPage>{await this.load();if(!Number.isSafeInteger(limit)||limit<1||limit>100||beforeId!==undefined&&(typeof beforeId!=='string'||beforeId.length>100))throw Error('Choose a memory page from 1 to 100 records');const rows=this.rows(project),end=beforeId===undefined?rows.length:rows.findIndex(row=>row.id===beforeId);if(end<0)throw Error('Memory record cursor is stale; refresh the record list');const start=Math.max(0,end-limit);return {records:structuredClone(rows.slice(start,end)),total:rows.length,...(start>0?{olderCursor:rows[start].id}:{})}}
  async readRecord(project:string,id:string):Promise<MemoryRecord>{await this.load();if(typeof id!=='string'||!id||id.length>100)throw Error('Choose a memory record');const row=this.rows(project).find(row=>row.id===id);if(!row)throw Error('Memory record is unavailable in this project');return structuredClone(row)}
- async configure(profile:MemoryProfile):Promise<void>{
+ private candidateCredential(profile:MemoryProfile,key?:string):Record<string,string>{
+  if(key!==undefined){if(!['openai','anthropic','openrouter','fireworks','openai-compatible'].includes(profile.provider)||!key.trim()||Buffer.byteLength(key)>16384||/[\r\n\0]/.test(key))throw Error('Invalid candidate memory credential')
+   if(profile.provider==='openai-compatible')return {...credentialFor(profile.provider,profile.baseUrl),apiKey:key.trim()}
+   return {apiKey:key.trim(),baseUrl:''}
+  }
+  return credentialFor(profile.provider,profile.baseUrl)
+ }
+ private validateProfile(profile:MemoryProfile,key?:string):void{
   if(!profile||!['openai','openai-codex','anthropic','openrouter','fireworks','ollama','openai-compatible'].includes(profile.provider)||typeof profile.model!=='string'||!profile.model.trim()||profile.model.length>200||typeof profile.baseUrl!=='string'||profile.baseUrl.length>2000||!['low','medium','high','xhigh','max'].includes(profile.thinkingLevel)||![profile.requestLimit,profile.tokenLimit].every(x=>Number.isSafeInteger(x)&&x>0)||profile.requestLimit>100000||profile.tokenLimit>100000000)throw Error('Invalid memory inference profile or limits')
-  credentialFor(profile.provider,profile.baseUrl)
+  this.candidateCredential(profile,key)
+ }
+ async configure(profile:MemoryProfile):Promise<void>{
+  this.validateProfile(profile)
   await this.stop();await this.mutate(()=>{this.value.settings.profile=structuredClone(profile);this.value.settings.verifiedProfile=undefined;if(this.global())this.value.settings.globalConsent=false;if(!this.global()){this.value.settings.enabled=false;this.value.settings.projects=[]}})
  }
- async verify():Promise<void>{await this.load();const profile=this.profile(),bridge=await this.inferenceBridge();const result=await bridge.request<any>('inference.generate',{config:{provider:profile.provider,model:profile.model,baseUrl:profile.baseUrl,thinkingLevel:profile.thinkingLevel,systemPrompt:'',disallowedTools:[]},credential:credentialFor(profile.provider,profile.baseUrl),request:{Model:{ID:profile.model},Input:[{Type:'message',Data:{Role:'user',Text:'Return only this JSON object: {"unrealcode_memory_check":true}'}}]}});const text=(result.Output||[]).filter((x:any)=>x.Type==='message').map((x:any)=>x.Data.Text).join('\n');let valid=false;try{valid=JSON.parse(text).unrealcode_memory_check===true}catch{};await this.mutate(()=>{this.value.usage.requests++;this.value.usage.inputTokens+=Number(result.Usage?.InputTokens||0);this.value.usage.outputTokens+=Number(result.Usage?.OutputTokens||0);if(result.Failure||result.Stop==='refused'||result.Stop==='max_output_tokens')valid=false;if(valid)this.value.settings.verifiedProfile=this.fingerprint(profile)});if(!valid)throw Error('Memory model did not return the required structured response. Review its capability and model settings')}
+ private async probeProfile(profile:MemoryProfile,key?:string):Promise<void>{
+  let bridge:DockerBridge
+  try{bridge=await this.inferenceBridge()}catch(error){throw new Error(`Memory service startup failed: ${String(error instanceof Error?error.message:error)}`)}
+  let result:any
+  try{result=await bridge.request<any>('inference.generate',{config:{provider:profile.provider,model:profile.model,baseUrl:profile.baseUrl,thinkingLevel:profile.thinkingLevel,systemPrompt:'',disallowedTools:[]},credential:this.candidateCredential(profile,key),request:{Model:{ID:profile.model},Input:[{Type:'message',Data:{Role:'user',Text:'Return only this JSON object: {"unrealcode_memory_check":true}'}}]}})}catch(error){throw new Error(`Memory model verification failed: ${String(error instanceof Error?error.message:error)}`)}
+  const text=(result.Output||[]).filter((x:any)=>x.Type==='message').map((x:any)=>x.Data.Text).join('\n')
+  let valid=false;try{valid=JSON.parse(text).unrealcode_memory_check===true}catch{}
+  await this.mutate(()=>{this.value.usage.requests++;this.value.usage.inputTokens+=Number(result.Usage?.InputTokens||0);this.value.usage.outputTokens+=Number(result.Usage?.OutputTokens||0)})
+  if(result.Failure||result.Stop==='refused'||result.Stop==='max_output_tokens')throw new ActionableError(providerFailure(result.Failure||{Code:result.Stop==='refused'?'model_refusal':'incomplete_response'}))
+  if(!valid)throw Error('Memory model verification failed: The model did not return the required structured response. Check its capabilities and model ID.')
+ }
+ async verify():Promise<void>{await this.load();const profile=structuredClone(this.profile());this.validateProfile(profile);await this.probeProfile(profile);await this.mutate(()=>{if(this.fingerprint(this.profile())!==this.fingerprint(profile))throw Error('Memory profile changed during verification');this.value.settings.verifiedProfile=this.fingerprint(profile)})}
+ async switchVerified(profile:MemoryProfile,key?:string):Promise<void>{
+  await this.load();this.validateProfile(profile,key)
+  const previous=structuredClone(this.value.settings),wasRunning=previous.enabled&&previous.globalConsent===true
+  await this.probeProfile(profile,key)
+  const oldKey=key===undefined?undefined:getKey(profile.provider)
+  try{await this.stop()}catch(error){throw new Error(`Memory switch could not stop the old service; the previous profile remains selected: ${String(error instanceof Error?error.message:error)}`)}
+  try{
+   if(key!==undefined)saveKey(profile.provider,key)
+   await this.mutate(()=>{this.value.settings={...previous,profile:structuredClone(profile),verifiedProfile:this.fingerprint(profile),globalConsent:true,enabled:true}})
+   await this.start()
+  }catch(error){
+   await this.stop().catch(()=>{})
+   const rollbackProblems:string[]=[]
+   try{await this.mutate(()=>{this.value.settings=previous})}catch(restoreError){rollbackProblems.push(`settings: ${String(restoreError)}`)}
+   if(key!==undefined)try{if(oldKey)saveKey(profile.provider,oldKey);else clearKey(profile.provider)}catch(restoreError){rollbackProblems.push(`credential: ${String(restoreError)}`)}
+   if(wasRunning)try{await this.start()}catch(restoreError){rollbackProblems.push(`service: ${String(restoreError)}`)}
+   const detail=String(error instanceof Error?error.message:error)
+   if(rollbackProblems.length)throw new Error(`Memory switch failed: ${detail}. The previous knowledge is retained, but recovery needs attention (${rollbackProblems.join('; ')}).`)
+   throw new Error(`Memory switch failed; the previous profile and knowledge were restored: ${detail}`)
+  }
+ }
  async enable(project:string,enabled:boolean):Promise<void>{await this.load();if(enabled&&this.value.settings.verifiedProfile!==this.fingerprint(this.profile()))throw Error('Verify the memory profile before enabling automatic memory');await this.mutate(()=>{if(this.global()){this.value.settings.enabled=enabled;if(enabled){this.value.settings.globalConsent=true;if(this.value.migration?.state==='awaiting-consent'){this.value.migration.state='copying';for(const row of this.rows('')){if(row.state!=='forgotten')row.state='pending';row.attempts=0}}}}else{this.value.settings.projects=enabled?[...new Set([...this.value.settings.projects,project])]:this.value.settings.projects.filter(x=>x!==project);this.value.settings.enabled=this.value.settings.projects.length>0}this.bank(project)});if(enabled){await this.start();this.scheduleDrain()}else if(!this.value.settings.enabled)await this.stop()}
  async retry(project:string):Promise<void>{await this.load();if(!this.enabledFor(project))throw Error('Enable memory for this project before retrying the service');if(this.value.settings.verifiedProfile!==this.fingerprint(this.profile()))throw Error('Verify the memory profile before retrying the service');await this.mutate(()=>{for(const row of this.rows(project))if(row.deletionPending||row.state==='failed')row.attempts=0});await this.start();this.scheduleDrain()}
  async start(){if(this.stopping)throw Error('Memory service is stopping');if(this.starting)return this.starting;this.starting=this.startRuntime().finally(()=>{this.starting=undefined});return this.starting}

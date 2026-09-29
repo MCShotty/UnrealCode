@@ -21,7 +21,17 @@ it.each([
  ['MCP connection failed','CONNECTION_FAILURE'],
  ['Retained volume ownership changed during export','RECOVERY_REVIEW'],
  ['File changed on disk; reload before saving','STALE_STATE']
+ ,['Git for Windows is unavailable. Install Git, then retry Agent team.','GIT_MISSING']
+ ,['Agent team needs a Git repository. Open one at its root; no GitHub login is required.','GIT_REPOSITORY_REQUIRED']
+ ,['Open the repository root as the project before enabling Agent team.','GIT_ROOT_REQUIRED']
+ ,['Make an initial Git commit before enabling Agent team.','GIT_COMMIT_REQUIRED']
+ ,['Git could not run. Check its installation and access to this project.','GIT_INACCESSIBLE']
 ])('provides recovery for %s',(message,code)=>{const result=classifyFailure(new Error(message));expect(result.code).toBe(code);expect(result.actions.length).toBeGreaterThan(0);expect(result.reference).toBeTruthy()})
+it('names the failed memory stage without exposing old profile details',()=>{
+ expect(classifyFailure(new Error('Memory model verification failed: unsupported response'),'memory:switch-verified').code).toBe('MEMORY_MODEL_VERIFY_FAILED')
+ expect(classifyFailure(new Error('Memory switch failed; previous profile restored: service unavailable'),'memory:switch-verified').code).toBe('MEMORY_SERVICE_FAILED')
+ expect(classifyFailure(new Error('openrouter API key is not configured'),'memory:switch-verified').code).toBe('MEMORY_CREDENTIAL_REQUIRED')
+})
 it('routes retained-session conflicts to Recovery without exposing their raw diagnostic in the primary message',()=>{
  const failure=classifyFailure(new Error('Reattach blocked: retained session mapping belongs to another project'))
  expect(failure.code).toBe('RECOVERY_REVIEW')

@@ -13,6 +13,7 @@ import { atomicMetadata } from './atomic-metadata'
 const exec = promisify(execFile)
 async function canonicalLocation(path:string):Promise<string>{const missing:string[]=[];let current=resolve(path);for(;;){try{return join(await fs.realpath(current),...missing.reverse())}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT'||dirname(current)===current)throw error;missing.push(basename(current));current=dirname(current)}}}
 type StoredWorkspace = TaskWorkspace & { baseline: Snapshot; archive?: { snapshot:Snapshot; revision:string } }
+export type GitAvailability = { available:true } | { available:false; code:'GIT_MISSING'|'GIT_REPOSITORY_REQUIRED'|'GIT_ROOT_REQUIRED'|'GIT_COMMIT_REQUIRED'|'GIT_INACCESSIBLE'; message:string }
 export class TaskWorkspaces {
   private source: CheckpointStore
   private serial = Promise.resolve()
@@ -23,7 +24,21 @@ export class TaskWorkspaces {
   private async read(id: string): Promise<StoredWorkspace> { const value: StoredWorkspace = JSON.parse(await fs.readFile(this.metadata(id), 'utf8'));const expected=storageLocation(this.directory,'worktrees',id,join(this.directory,'worktrees',id));if(value.id!==id||typeof value.path!=='string')throw Error('Invalid owned workspace metadata');if(value.path!==expected){const [actual,registered]=await Promise.all([canonicalLocation(value.path),canonicalLocation(expected)]);if(actual!==registered)throw Error('Invalid owned workspace metadata')} Object.setPrototypeOf(value.baseline.files, null); Object.setPrototypeOf(value.baseline.skipped, null); return value }
   private save(value: StoredWorkspace): Promise<void> { return atomicMetadata(this.metadata(value.id),JSON.stringify(value)) }
   private view({ baseline: _, archive: _archive, ...value }: StoredWorkspace): TaskWorkspace { return value }
-  async available(): Promise<boolean> { try { await this.git(['rev-parse', '--verify', 'HEAD']); const root = await fs.realpath(await this.git(['rev-parse', '--show-toplevel'])); return root.toLowerCase() === (await fs.realpath(this.project)).toLowerCase() } catch { return false } }
+  async availability(): Promise<GitAvailability> {
+    let project:string
+    try { project=await fs.realpath(this.project) }
+    catch { return {available:false,code:'GIT_INACCESSIBLE',message:'The project folder is inaccessible. Reopen it before enabling Agent team.'} }
+    try { await this.git(['--version']) }
+    catch(error) { return (error as NodeJS.ErrnoException).code==='ENOENT' ? {available:false,code:'GIT_MISSING',message:'Git for Windows is unavailable. Install Git, then retry Agent team.'} : {available:false,code:'GIT_INACCESSIBLE',message:'Git could not run. Check its installation and access to this project, then retry Agent team.'} }
+    let root:string
+    try { root=await fs.realpath(await this.git(['rev-parse','--show-toplevel'])) }
+    catch(error) { return /not a git repository/i.test(String((error as {stderr?:string}).stderr||error)) ? {available:false,code:'GIT_REPOSITORY_REQUIRED',message:'Agent team needs a Git repository. Open one at its root; no GitHub login is required.'} : {available:false,code:'GIT_INACCESSIBLE',message:'The repository could not be inspected. Check Git and folder access, then retry Agent team.'} }
+    if(root.toLowerCase()!==project.toLowerCase())return {available:false,code:'GIT_ROOT_REQUIRED',message:`Open the repository root (${root}) as the project before enabling Agent team.`}
+    try { await this.git(['rev-parse','--verify','HEAD']) }
+    catch(error) { return /needed a single revision|unknown revision|ambiguous argument|valid object name|does not have any commits/i.test(String((error as {stderr?:string}).stderr||error)) ? {available:false,code:'GIT_COMMIT_REQUIRED',message:'Make an initial Git commit before enabling Agent team. Uncommitted later changes are supported.'} : {available:false,code:'GIT_INACCESSIBLE',message:'The repository HEAD could not be inspected. Check Git permissions, then retry Agent team.'} }
+    return {available:true}
+  }
+  async available(): Promise<boolean> { return (await this.availability()).available }
   async list(): Promise<TaskWorkspace[]> {
     let names: string[]; try { names = await fs.readdir(this.directory) } catch { return [] }
     return Promise.all(names.filter(name => /^[a-f0-9-]{36}\.json$/.test(name)).map(async name => this.view(await this.read(name.slice(0,-5)))))

@@ -13,18 +13,23 @@ import (
 	"net/http"
 	"slices"
 	"time"
+	"unicode/utf8"
 
+	"github.com/unreallabsai/unreal-agent/harness/llm"
 	"github.com/unreallabsai/unreal-agent/harness/primitives"
 )
 
-func (adapter *adapter) exchange(ctx context.Context, body []byte, cacheKey string) (int, []byte, http.Header, error) {
+func (adapter *adapter) exchange(ctx context.Context, body []byte, cacheKey string, preview func(llm.TextDelta)) (int, []byte, http.Header, error) {
 	events := make(chan primitives.PrimitiveEvent)
 	for attempt := 1; ; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return 0, nil, nil, err
 		}
 		request := adapter.remoteRequest(body, cacheKey)
-		result := adapter.exchangeAttempt(ctx, request, events)
+		if attempt > 1 && preview != nil {
+			preview(llm.TextDelta{Attempt: attempt, Reset: true})
+		}
+		result := adapter.exchangeAttempt(ctx, request, events, attempt, preview)
 		if !result.retry || attempt >= adapter.maxAttempts {
 			return result.status, result.body, result.headers, result.err
 		}
@@ -59,7 +64,7 @@ type responseAttempt struct {
 	retry    bool
 }
 
-func (adapter *adapter) exchangeAttempt(ctx context.Context, request primitives.RemoteRequest, events chan primitives.PrimitiveEvent) responseAttempt {
+func (adapter *adapter) exchangeAttempt(ctx context.Context, request primitives.RemoteRequest, events chan primitives.PrimitiveEvent, attempt int, preview func(llm.TextDelta)) responseAttempt {
 	adapter.remote.SendRequest(ctx, request, events)
 	var result responseAttempt
 	var state responseState
@@ -83,6 +88,20 @@ func (adapter *adapter) exchangeAttempt(ctx context.Context, request primitives.
 				payload := bytes.TrimSpace(primitives.SSEData(output.Data))
 				if len(payload) != 0 && !bytes.Equal(payload, []byte("[DONE]")) {
 					parseErr = state.observe(payload)
+					if parseErr == nil && preview != nil && bytes.Contains(payload, []byte("response.output_text.delta")) {
+						var delta struct {
+							Type        string `json:"type"`
+							Delta       string `json:"delta"`
+							OutputIndex *int   `json:"output_index"`
+						}
+						if json.Unmarshal(payload, &delta) == nil && delta.Type == "response.output_text.delta" && delta.Delta != "" && len(delta.Delta) <= 4096 && utf8.ValidString(delta.Delta) {
+							index := 0
+							if delta.OutputIndex != nil && *delta.OutputIndex >= 0 {
+								index = *delta.OutputIndex
+							}
+							preview(llm.TextDelta{Attempt: attempt, OutputIndex: index, Text: delta.Delta})
+						}
+					}
 				}
 			} else if len(result.body)+len(output.Data) > 1<<20 {
 				parseErr = errors.New("responses API error response exceeds 1 MiB")

@@ -62,7 +62,7 @@ export type OperationLane = { id: string; sessionId: string; type: string; tool?
 export type ExecutionSummary = { operations: OperationLane[]; modelMs: number; toolWallMs: number; toolOverlapMs: number; modelCalls: number; approvalWaitMs?: number; hostWaitMs?: number }
 export type FileEntry = { name: string; path: string; directory: boolean; size: number }
 export type EditableFile = { path: string; revision: string; content: string; workspace: string }
-export type SkillEntry = { name: string; description: string; content: string }
+export type SkillEntry = { name: string; description: string; content: string; source?: 'built-in' | 'project' }
 export type DockerStatus = { ready: boolean; message: string; container?: string; phase?: 'checking'|'available'|'building'|'running'|'unavailable'; failure?: import('./failure').AppFailure }
 export type BridgeSessionConfig = { provider: Provider; model: string; baseUrl: string; thinkingLevel: string; serviceTier?:string; systemPrompt: string; disallowedTools: string[]; parentSessionId?: string; mode?: ExecutionMode; pendingMode?:ExecutionMode; workspaceId?: string; workspace?: 'project' | 'isolated'; queueTaskId?: string; teamEnabled?:boolean; teamManaged?:boolean; goalManaged?:boolean; specialist?:boolean }
 export type GitHubStatus = { installed: boolean; authenticated: boolean; account?: string; message: string }
@@ -85,13 +85,28 @@ export interface DesktopAPI {
   browserInstall(sessionId:string):Promise<void>
   browserConfigure(sessionId:string,grant:import('./browser').BrowserGrant):Promise<void>
   browserAction(sessionId:string,action:import('./browser').BrowserAction):Promise<any>
+  sharedBrowserState():Promise<import('./browser').SharedBrowserState>
+  sharedBrowserCommand(action:import('./browser').SharedBrowserCommand):Promise<import('./browser').SharedBrowserState>
+  sharedBrowserConfigure(grant:import('./browser').BrowserGrant):Promise<void>
+  sharedBrowserShow(id:string|undefined,bounds:{x:number;y:number;width:number;height:number}):Promise<void>
+  sharedBrowserHide():Promise<void>
+  onSharedBrowserChanged(callback:(project:string)=>void):()=>void
   previewPorts(sessionId:string):Promise<Record<string,string>>
+  documentOpenProject(path:string,password?:string):Promise<import('./document').DocumentHandle>
+  documentOpenExternal(password?:string):Promise<import('./document').DocumentHandle|null>
+  documentBytes(id:string):Promise<Uint8Array>
+  documentPage(id:string,page:number):Promise<import('./document').DocumentPage>
+  documentSearch(id:string,query:string,fromPage?:number,limit?:number):Promise<import('./document').DocumentSearchPage>
+  documentOcr(id:string,page:number,language:'eng'|'ara'):Promise<import('./document').DocumentPage>
+  documentClose(id:string):Promise<void>
+  documentAttach(id:string,sessionId:string):Promise<import('./document').DocumentHandle>
   memoryStatus(recordLimit?:number):Promise<import('./memory').MemoryStatus>
   memoryRecords(beforeId?:string,limit?:number):Promise<import('./memory').MemoryRecordPage>
   memoryRecord(id:string):Promise<import('./memory').MemoryRecord>
   memoryStorage():Promise<{databaseBytes:number;modelCacheBytes:number}>
   memoryClearCache():Promise<void>
   memoryConfigure(profile:import('./memory').MemoryProfile):Promise<void>
+  memorySwitchVerified(profile:import('./memory').MemoryProfile,candidateKey?:string):Promise<void>
   memoryVerify():Promise<void>
   memoryEnable(enabled:boolean):Promise<void>
   memoryRetry():Promise<void>

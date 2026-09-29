@@ -5,7 +5,7 @@ import { BrandMark } from './BrandMark'
 import { spatial } from './motion'
 import { ExpressiveButton } from './ExpressiveButton'
 
-export type View = 'control' | 'memory' | 'browser' | 'hooks' | 'context' | 'connections' | 'diagnostics' | 'workflow' | 'review' | 'projects' | 'chat' | 'sessions' | 'files' | 'skills' | 'usage' | 'github' | 'settings' | 'terminal'
+export type View = 'control' | 'memory' | 'browser' | 'documents' | 'hooks' | 'context' | 'connections' | 'diagnostics' | 'workflow' | 'review' | 'projects' | 'chat' | 'sessions' | 'files' | 'skills' | 'usage' | 'github' | 'settings' | 'terminal'
 export const navigation: { id: View; label: string; icon: typeof Folder; group: string }[] = [
   { id: 'chat', label: 'Chat', icon: MessageCircle, group: 'Workspace' },
   { id: 'sessions', label: 'Sessions', icon: Clock3, group: 'Workspace' },
@@ -14,6 +14,7 @@ export const navigation: { id: View; label: string; icon: typeof Folder; group: 
   { id: 'workflow', label: 'Workflow', icon: ListTodo, group: 'Workspace' },
   { id: 'control', label: 'Task controls', icon: SlidersHorizontal, group: 'Workspace' },
   { id: 'browser', label: 'Browser', icon: Globe2, group: 'Tools & knowledge' },
+  { id: 'documents', label: 'Documents', icon: BookOpen, group: 'Tools & knowledge' },
   { id: 'terminal', label: 'Terminal', icon: TerminalSquare, group: 'Tools & knowledge' },
   { id: 'github', label: 'GitHub', icon: GitPullRequest, group: 'Tools & knowledge' },
   { id: 'context', label: 'Context', icon: BookOpen, group: 'Tools & knowledge' },

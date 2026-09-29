@@ -6,14 +6,39 @@ import {join} from 'node:path'
 vi.mock('./hindsight-runtime',()=>({HindsightRuntime:class{state='ready';message='Fixture';request=vi.fn(async()=>({results:[]}));start=vi.fn(async()=>{this.state='ready'});stop=vi.fn(async()=>{this.state='disabled'});snapshot=vi.fn(async()=>{})}}))
 vi.mock('./memory-inference',()=>({MemoryInference:class{token='fixture-token';start=vi.fn(async()=> 'http://127.0.0.1:1234/v1');close=vi.fn(()=>{})}}))
 vi.mock('./docker',()=>({DockerBridge:class{}}))
-vi.mock('./settings',()=>({credentialFor:()=>({})}))
+vi.mock('./settings',()=>({credentialFor:()=>({}),getKey:vi.fn(()=> 'old-key'),saveKey:vi.fn(),clearKey:vi.fn()}))
 import {HindsightMemory} from './hindsight-memory'
+import {getKey,saveKey} from './settings'
 const roots:string[]=[]
 const memories:HindsightMemory[]=[]
 afterEach(async()=>{for(const memory of memories.splice(0))await memory.stop();for(const root of roots.splice(0))await rm(root,{recursive:true,force:true})})
 async function setup(){const root=await mkdtemp(join(tmpdir(),'unrealcode-memory-unit-'));roots.push(root);const memory=new HindsightMemory(root);memories.push(memory);await memory.status('project');(memory as any).value.settings={version:1,enabled:true,projects:['project']};return memory}
 const record={sessionId:'session',turnId:'turn',workspace:'project',content:'Verified test report',sourceRefs:['event:4'],createdAt:new Date().toISOString()}
 const profile={provider:'ollama' as const,model:'fixture',baseUrl:'',thinkingLevel:'low',requestLimit:20,tokenLimit:10000}
+it('keeps the usable memory profile when a proposed destination fails verification or startup',async()=>{
+ const memory=await setup(),value=(memory as any).value
+ value.settings={version:2,enabled:true,globalConsent:true,projects:[],profile,verifiedProfile:(memory as any).fingerprint(profile)}
+ const proposed={...profile,model:'replacement'}
+ const probe=vi.spyOn(memory as any,'probeProfile').mockRejectedValueOnce(Error('model unavailable'))
+ await expect(memory.switchVerified(proposed)).rejects.toThrow('model unavailable')
+ expect((await memory.status('')).settings).toMatchObject({profile,enabled:true,globalConsent:true})
+ probe.mockResolvedValue(undefined)
+ vi.spyOn(memory,'stop').mockResolvedValue()
+ const start=vi.spyOn(memory,'start').mockRejectedValueOnce(Error('service unavailable')).mockResolvedValue()
+ await expect(memory.switchVerified(proposed)).rejects.toThrow('previous profile and knowledge were restored')
+ expect((await memory.status('')).settings).toMatchObject({profile,enabled:true,globalConsent:true})
+ expect(start).toHaveBeenCalledTimes(2)
+})
+it('stages a replacement provider key and restores the old key if service startup fails',async()=>{
+ const memory=await setup(),value=(memory as any).value,old={...profile,provider:'openai' as const}
+ value.settings={version:2,enabled:true,globalConsent:true,projects:[],profile:old,verifiedProfile:(memory as any).fingerprint(old)}
+ vi.spyOn(memory as any,'probeProfile').mockResolvedValue(undefined)
+ vi.spyOn(memory,'stop').mockResolvedValue();vi.spyOn(memory,'start').mockRejectedValueOnce(Error('offline')).mockResolvedValue()
+ await expect(memory.switchVerified({...old,model:'new-model'},'candidate-key')).rejects.toThrow('previous profile and knowledge were restored')
+ expect(vi.mocked(saveKey).mock.calls.slice(-2)).toEqual([['openai','candidate-key'],['openai','old-key']])
+ expect(vi.mocked(getKey)).toHaveBeenCalledWith('openai')
+ expect((await memory.status('')).settings.profile).toEqual(old)
+})
 it('discards queued timeline inference before dispatch when memory is disabled',async()=>{
  const memory=await setup(),value=(memory as any).value
  value.settings={version:2,enabled:true,globalConsent:true,projects:[],profile,verifiedProfile:(memory as any).fingerprint(profile)}

@@ -40,8 +40,8 @@ export async function storageEntries(root:string,path=''){return (await call(roo
 export async function storageHash(root:string,path:string){return (await call(root,path,'hash',{allowGit:true},300000)).digest!}
 export async function storageCopy(root:string,path:string,destinationRoot:string,destinationPath:string){const authority=await rootAuthority(destinationRoot);await call(root,path,'copy',{allowGit:true,destinationRoot:authority.root,destinationIdentity:authority.identity,destinationPath},300000)}
 export async function storageMkdir(root:string,path:string,recursive=false){await call(root,path,recursive?'mkdirAll':'mkdir',{allowGit:true})}
-export async function openConfinedStream(root:string,path:string,write=false){
- const opened=await call(root,path,write?'stream.openWrite':'stream.openRead',{allowGit:true}),handle=opened.handle!;let closed=false
+export async function openConfinedStream(root:string,path:string,write=false,allowGit=true){
+ const opened=await call(root,path,write?'stream.openWrite':'stream.openRead',{allowGit}),handle=opened.handle!;let closed=false
  return {
   async stat(){return {size:opened.size!,isFile:()=>true}},
   async read(buffer:Buffer,offset:number,length:number,_position:null){const value=await request('stream.read',{handle,limit:length}),bytes=Buffer.from(value.data||'','base64');bytes.copy(buffer,offset);return {bytesRead:bytes.length}},

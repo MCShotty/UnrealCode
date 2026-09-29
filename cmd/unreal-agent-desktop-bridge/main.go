@@ -379,7 +379,7 @@ func (a *app) dispatch(req request) (any, error) {
 	case "decision.idle":
 		return a.decisionPending.Load() == 0, nil
 	case "health":
-		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion, "capabilities": []string{"permissions.v1", "files.v1", "sessions.v1", "mcp.v1", "context.v1", "teams.v1", "verification.v1", "history.latest.v1", "lifecycle.v1", "controls.v1", "inference.v1", "hooks.v1", "goal.usage.v1", "questions.v2", "provider.issue.v1", "plan.progress.v1"}}, nil
+		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion, "capabilities": []string{"permissions.v1", "files.v1", "sessions.v1", "mcp.v1", "context.v1", "teams.v1", "verification.v1", "history.latest.v1", "lifecycle.v1", "controls.v1", "inference.v1", "hooks.v1", "goal.usage.v1", "questions.v2", "provider.issue.v1", "plan.progress.v1", "decision.browser.v1", "response.preview.v1", "documents.v1", "browser.shared.v1"}}, nil
 	case "decision.configure":
 		config, err := decodeParams[decisionConfig](req.Params)
 		if err != nil {
@@ -428,6 +428,29 @@ func (a *app) dispatch(req request) (any, error) {
 			return nil, err
 		}
 		a.events.enqueue(id, "decision.result", traceDecision(result, p.Batch, uuid.New().String(), "Repository retrieval relevance"))
+		return result, nil
+	case "decision.browser":
+		p, err := decodeParams[struct {
+			SessionID string        `json:"sessionId"`
+			Batch     decisionBatch `json:"batch"`
+		}](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		id, err := requiredID(p.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		if _, err = a.loadConfig(id); err != nil {
+			return nil, err
+		}
+		a.decisionPending.Add(1)
+		defer a.decisionPending.Add(-1)
+		result, err := a.decision.evaluate(a.ctx, p.Batch)
+		if err != nil {
+			return nil, err
+		}
+		a.events.enqueue(id, "decision.result", traceDecision(result, p.Batch, uuid.New().String(), "BrowserDo page decision"))
 		return result, nil
 	case "decision.extract":
 		params, err := decodeParams[extractParams](req.Params)

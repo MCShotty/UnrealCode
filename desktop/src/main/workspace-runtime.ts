@@ -306,7 +306,7 @@ export class WorkspaceRuntime {
   }
   async configureTeam(sessionId:string,options:TeamOptions):Promise<void>{
     const valid=validateTeamOptions(options)
-    if(valid.allowSpecialists&&!await this.tasks.available())throw new Error('Specialists require a Git repository opened at its root with an initial commit. Disable specialists to continue in this folder.')
+    if(valid.allowSpecialists){const availability=await this.tasks.availability();if(!availability.available)throw new Error(availability.message)}
     if(this.teams.worker(sessionId))throw new Error('Specialist permissions are inherited; nested delegation is disabled')
     const owner=await this.owner(sessionId)
     await owner.checkpoints.exclusive(async()=>{

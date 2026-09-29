@@ -141,6 +141,9 @@ func normalizeDecisionBatch(batch decisionBatch) decisionBatch {
 	normalized := batch
 	normalized.Questions = make(map[string]decisionQuestion, len(batch.Questions))
 	for name, question := range batch.Questions {
+		// Model tool calls often capitalize the primitive as it appears in the
+		// description. TypeSafe's wire types are always lowercase.
+		question.Type = strings.ToLower(strings.TrimSpace(question.Type))
 		if question.Type == "noul" {
 			if guidance, ok := question.Criteria.(string); ok {
 				if strings.TrimSpace(guidance) != "" {

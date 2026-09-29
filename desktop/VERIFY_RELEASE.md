@@ -28,7 +28,7 @@ gh attestation verify .\UnrealCode-Setup-1.0.1.exe `
   --deny-self-hosted-runners
 ```
 
-The release workflow builds the installer from the public Git tag, runs tests
+The release workflow builds the installer from the repository Git tag, runs tests
 and credential/license audits, writes `SHA256SUMS`, creates the attestation,
 then verifies both before uploading the release. The published
 [workflow](../.github/workflows/desktop-release.yml),
@@ -44,6 +44,6 @@ verification fails, do not run the installer; report the discrepancy using
 
 ## Updating an existing installation
 
-Close UnrealCode after saving buffers and settling active tasks, then run the verified installer. Version 1.0.0 needs this manual upgrade to acquire release notifications. Version 1.0.1 checks GitHub when due after startup and once daily by default; disable automatic checks or select a channel under Settings → Recovery. Notifications open the release/changelog page, and do not download or install an executable. The signature checks for automatic installation remain in place.
+Close UnrealCode after saving buffers and settling active tasks, then run the verified installer. Version 1.0.0 needs this manual upgrade to acquire release notifications. An earlier private 1.0.1 installation also requires manual reinstall of the corrected 1.0.1 release; its version string is unchanged and cannot trigger a newer-version notice. Version 1.0.1 checks GitHub when due after startup and once daily by default; this private repository may require the existing host `gh` login. Notifications open the release/changelog page and do not install an executable. The signature checks for automatic installation remain in place.
 
 A local candidate checksum is not the checksum of the GitHub-built release. Always compare against the manifest attached to the release you downloaded.

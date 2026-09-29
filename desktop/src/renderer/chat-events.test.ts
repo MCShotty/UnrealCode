@@ -1,6 +1,11 @@
 import { it,expect } from 'vitest'
 import type { AgentEvent } from '../shared/api'
 import { parseEvents } from './chat-events'
+
+it('retains a bounded incomplete assistant preview as a labelled recorded message',()=>{
+ const entries=parseEvents([{v:1,event:'model.response.incomplete',sessionId:'s',seq:1,recordedAt:new Date().toISOString(),payload:{id:'request',text:'Partial response',status:'incomplete'}}])
+ expect(entries).toMatchObject([{kind:'assistant',status:'incomplete',text:'Partial response'}])
+})
 const event=(seq:number,name:string,payload:unknown):AgentEvent=>({v:1,seq,event:name,sessionId:'s',payload})
 const call=(seq:number,turn='turn')=>event(seq,'session.item',{Kind:'model_response',Data:{TurnID:turn,Response:{Output:[{Type:'tool_call',Data:{CallID:'call',Name:'TeamDispatch',Arguments:'{}'}}]}}})
 const status=(seq:number,states:string[],turn='turn')=>event(seq,'session.item',{Kind:'tool_call_status',Data:{TurnID:turn,CallID:'call',Status:{WaitingFor:states.map((_,i)=>`${turn}-${i}`)},Operations:states.map((state,i)=>({ID:`${turn}-${i}`,Status:state}))}})

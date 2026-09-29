@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
+    "@napi-rs/canvas": "1.0.9",
     "@xterm/xterm": "^6.0.0",
     "ajv": "8.20.0",
     "electron-updater": "6.8.9",
@@ -31,10 +32,12 @@
     "monaco-editor": "0.57.0",
     "motion": "^13.4.4",
     "node-pty": "^1.1.0",
+    "pdfjs-dist": "6.3.289",
     "playwright-core": "1.63.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "react-markdown": "^10.1.0"
+    "react-markdown": "^10.1.0",
+    "tesseract.js": "7.0.0"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
@@ -78,6 +81,10 @@
         "to": "licenses"
       },
       {
+        "from": "builtin-skills",
+        "to": "builtin-skills"
+      },
+      {
         "from": "../",
         "to": "backend",
         "filter": [
@@ -90,6 +97,7 @@
           "harness/**/*",
           "internal/**/*",
           "desktop/worker/**/*",
+          "desktop/builtin-skills/**/*",
           "desktop/third-party-licenses/**/*",
           "!**/__pycache__/**",
           "!**/*.pyc"
@@ -101,7 +109,9 @@
       }
     ],
     "asarUnpack": [
-      "node_modules/node-pty/**/*"
+      "node_modules/node-pty/**/*",
+      "node_modules/@napi-rs/canvas/**/*",
+      "node_modules/@napi-rs/canvas-win32-x64-msvc/**/*"
     ],
     "win": {
       "target": "nsis",

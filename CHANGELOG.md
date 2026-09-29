@@ -2,6 +2,15 @@
 
 ## 1.0.1 — 2026-09-29
 
+### Replacement build (same version, private release)
+
+- **Added:** live in-app project browser tabs, separate per-project sign-ins, user takeover/handback, exact-origin agent grants, and a bounded BrowserDo action using the configured Jev engine only with project and origin cloud consent. The previous isolated Playwright browser remains available for specialist workers and recovery.
+- **Added:** app-wide built-in PDF reading, PDF parsing, OCR, Markdown, and browser-use skills. The PDF reader offers page navigation, zoom, search, selectable text, page references, and locally processed English/Arabic OCR with checksum-pinned language data. Agent document tools remain project-bound or require an explicitly attached external PDF.
+- **Changed:** Agent team (subagents) terminology and prerequisite guidance distinguish Git installation, repository root, and initial commit. A clean worktree or GitHub login is not required.
+- **Changed:** assistant text from delta-capable providers appears while generating. Final responses remain authoritative; bounded partial text is labelled incomplete on failure. Newly arrived nonstreaming answers receive a brief entrance effect.
+- **Fixed:** mixed-case Jev Choice/Noul/Score types, premature memory-provider replacement and failed-key rollback, raw/empty compact timeline entries, misleading clean Git status after errors, clipped Settings tabs, inconsistent Workflow/Diagnostics tab selection, and overly wide Context layout.
+- **Known limitations:** Same-version replacement cannot be announced to an existing 1.0.1 installation; reinstall manually. The installer remains unsigned. BrowserDo stops before consequential actions and may return uncertain; use a precise browser action or take over. PDF editing and form submission remain outside this version.
+
 ### Added
 
 - App-wide Hindsight memory with cross-project recall, source attribution, an explicit scope/destination consent step, and a resumable migration of existing records.
