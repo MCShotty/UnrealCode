@@ -24,9 +24,33 @@ try {
   await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 0 }); dialog.showMessageBoxSync = () => 1 })
   await page.evaluate(path => window.unreal.openProject(path, true), project)
   await page.reload()
-  await page.getByRole('heading', { name: 'What are we building?' }).waitFor()
+  await page.getByRole('navigation', { name: 'Main navigation' }).waitFor()
   await app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.setContentSize(1400, 900) })
   const nav = page.getByRole('navigation', { name: 'Main navigation' })
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  const visitAnimated = async label => {
+    await page.evaluate(() => {
+      const samples = []
+      let active = true
+      const sample = () => {
+        samples.push([...document.querySelectorAll('.view-frame')].map(node => Number(getComputedStyle(node).opacity)))
+        if (active) requestAnimationFrame(sample)
+      }
+      requestAnimationFrame(sample)
+      window.__viewMotion = { samples, stop: () => { active = false; return samples } }
+    })
+    await nav.getByRole('button', { name: label, exact: true }).click()
+    await page.getByRole('heading', { name: label, exact: true }).waitFor()
+    if (label === 'Files') await page.getByText('Loading files…', { exact: true }).waitFor({ state: 'hidden' })
+    if (label === 'Sessions') await page.getByText('Loading sessions…', { exact: true }).waitFor({ state: 'hidden' })
+    await page.waitForTimeout(300)
+    const samples = await page.evaluate(() => window.__viewMotion.stop())
+    assert(samples.some(frame => frame.some(opacity => opacity > .02 && opacity < .98)), `${label} must fade in or out`)
+    assert(samples.every(frame => frame.length <= 1), `${label} must not overlap another page`)
+  }
+  await visitAnimated('Files')
+  await visitAnimated('Sessions')
+  await visitAnimated('Files')
   assert.equal(await nav.getByRole('button', { name: 'Abilities', exact: true }).count(), 1)
   assert.equal(await nav.getByRole('button', { name: 'Connections', exact: true }).count(), 0)
   await nav.getByRole('button', { name: 'Abilities', exact: true }).click()
