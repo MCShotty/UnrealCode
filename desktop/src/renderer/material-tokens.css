@@ -1,5 +1,5 @@
 /* Reference palette → Material system roles → product/component aliases.
-   The blue/red/gray brand remains fixed; tonal roles adapt to the theme. */
+   Brand marks retain their own colors; interface accents adapt to the theme. */
 :root {
   --md-ref-blue: #0027cc;
   --md-ref-red: #d10d0d;
@@ -32,36 +32,36 @@
   --md-comp-page-padding: clamp(20px, 3vw, 40px);
 }
 :root, [data-theme="dark"] {
-  /* Steel neutrals let cobalt carry the identity instead of tinting every pane. */
-  --md-sys-color-surface: #10161b;
-  --md-sys-color-surface-container-lowest: #0b1014;
-  --md-sys-color-surface-container-low: #161d23;
-  --md-sys-color-surface-container: #202930;
-  --md-sys-color-surface-container-high: #29343d;
-  --md-sys-color-surface-container-highest: #35424c;
-  --md-sys-color-on-surface: #f2f5f7;
-  --md-sys-color-on-surface-variant: #b4bec6;
-  --md-sys-color-primary: #9bb5ff;
-  --md-sys-color-on-primary: #00216e;
-  --md-sys-color-primary-container: #193571;
-  --md-sys-color-on-primary-container: #e4ebff;
-  --md-sys-color-secondary-container: #303d47;
-  --md-sys-color-on-secondary-container: #e1e7eb;
-  --md-sys-color-outline: #82919d;
-  --md-sys-color-outline-variant: #3b4954;
-  --md-sys-color-error: #ffaaa4;
-  --md-sys-color-error-container: #4e2426;
+  /* Neutral graphite surfaces with a warm coral action hierarchy. */
+  --md-sys-color-surface: #151514;
+  --md-sys-color-surface-container-lowest: #0f0f0e;
+  --md-sys-color-surface-container-low: #1c1b1a;
+  --md-sys-color-surface-container: #242321;
+  --md-sys-color-surface-container-high: #302e2b;
+  --md-sys-color-surface-container-highest: #3b3834;
+  --md-sys-color-on-surface: #f5f0ec;
+  --md-sys-color-on-surface-variant: #c8bdb6;
+  --md-sys-color-primary: #ffb695;
+  --md-sys-color-on-primary: #54260e;
+  --md-sys-color-primary-container: #623626;
+  --md-sys-color-on-primary-container: #ffdecf;
+  --md-sys-color-secondary-container: #3c332f;
+  --md-sys-color-on-secondary-container: #e7d8d0;
+  --md-sys-color-outline: #a39186;
+  --md-sys-color-outline-variant: #514943;
+  --md-sys-color-error: #ffb4ab;
+  --md-sys-color-error-container: #552c2b;
   --md-sys-color-on-error-container: #ffdad6;
   --md-sys-color-success: #81cea1;
   --md-sys-color-warning: #e2bd68;
-  --md-sys-color-tertiary: #bac8d4;
-  --md-sys-color-scrim: #060b10b8;
-  --md-comp-filled-button-outline: #7f9cff;
-  --md-comp-filled-button-hover: #2445d3;
+  --md-sys-color-tertiary: #dac4a9;
+  --md-sys-color-scrim: #080807b8;
+  --md-comp-filled-button-outline: #ffb695;
+  --md-comp-filled-button-hover: #ff9e7b;
   --md-comp-code-added: #81cea122;
-  --md-comp-code-removed: #ffaaa422;
-  --md-comp-terminal-black: #82919d;
-  --md-comp-terminal-white: #f2f5f7;
+  --md-comp-code-removed: #ffb4ab22;
+  --md-comp-terminal-black: #a39186;
+  --md-comp-terminal-white: #f5f0ec;
   --md-comp-terminal-cyan: #9fcbd7;
   --md-comp-terminal-magenta: #d6b3d6;
   --md-sys-elevation-2: 0 8px 28px #0004;
@@ -103,9 +103,8 @@
   color-scheme: light;
 }
 :root, [data-theme] {
-  /* Saturated brand surfaces are separate from accessible blue text/focus. */
-  --md-comp-filled-button-container: var(--md-ref-blue);
-  --md-comp-filled-button-content: var(--md-ref-white);
+  --md-comp-filled-button-container: var(--md-sys-color-primary);
+  --md-comp-filled-button-content: var(--md-sys-color-on-primary);
   --bg: var(--md-sys-color-surface);
   --panel: var(--md-sys-color-surface-container-low);
   --panel-2: var(--md-sys-color-surface-container);

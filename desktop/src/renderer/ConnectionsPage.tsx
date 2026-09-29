@@ -15,7 +15,7 @@ export function ConnectionsPage({ onAttach }: { onAttach(text:string):void }) {
     return window.unreal.connectionGrant({connectionId:item.id,hostTrusted:item.kind==='host',tools:selected.map(tool=>tool.remoteName),toolRevisions:Object.fromEntries(selected.map(tool=>[tool.remoteName,tool.revision])),resources:item.grant?.resources||false,prompts:item.grant?.prompts||false,...patch})
   }
   return <div className="page-content connections-page">
-    <div className="page-heading"><div><h1>Connections</h1><p>Choose project tools and where their servers run. External calls always show an approval.</p></div><button className="secondary-button" disabled={busy} onClick={()=>void run(refresh)}>Refresh</button></div>
+    <div className="page-heading"><div><h2>MCP servers</h2><p>Choose project tools and where their servers run. External calls always show an approval.</p></div><button className="secondary-button" disabled={busy} onClick={()=>void run(refresh)}>Refresh</button></div>
     {error&&<p role="alert" className="error-inline">{error}</p>}
     <div className="connections-grid"><section className="settings-section"><h2>{items.some(item=>item.id===config.id)?'Edit connection':'Add connection'}</h2>
       <label>Name<input value={config.name} onChange={e=>setConfig({...config,name:e.target.value})}/></label>

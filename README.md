@@ -132,6 +132,8 @@ Hard-linked files and ReFS locations are currently unsupported; use NTFS.
 
 MCP supports remote Streamable HTTP, Windows-hosted stdio, and container stdio through the official SDK. Host servers have the Windows account's access and require separate host trust. Project grants and per-call approvals apply; server-initiated model sampling is disabled. Context exclusions control retrieval, not filesystem permissions.
 
+In the current development UI, **Abilities** contains separate **Skills** and **MCPs** sections. Use Skills to inspect built-in guidance or create a project skill; use MCPs to add a server and review its project grants. `/skills` and `/mcp` open the corresponding section directly. Dark mode uses graphite surfaces and warm coral actions; Light and Follow Windows remain available in Appearance settings.
+
 ### Optional Windows computer use
 
 The [Windows computer-use MCP add-on](integrations/windows-computer-use/README.md)

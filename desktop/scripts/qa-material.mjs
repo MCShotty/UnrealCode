@@ -61,18 +61,21 @@ try {
   await api('command', { name: 'rename', args: 'Explore the Fieldnotes workspace', sessionId: id })
   await composer.fill('Keep this draft while I inspect the workspace.')
   await shot('chat-dark'); await audit('chat-dark')
-  await page.locator('.tool-summary').first().click(); assert.equal(await page.locator('.tool-summary').first().getAttribute('aria-expanded'), 'true')
+  const work = page.locator('.tool-summary').first().locator('xpath=ancestor::section[contains(@class,"work-section")]')
+  if (await work.locator('.work-disclosure').getAttribute('aria-expanded') === 'false') await work.locator('.work-disclosure').click()
   await page.locator('.tool-summary').first().click()
-  await page.locator('.model-picker summary').click(); await page.locator('.model-picker-panel input').fill('future-model'); await page.locator('.model-picker-panel select').focus(); await page.keyboard.press('Escape')
+  await page.getByRole('dialog', { name: 'Tool Activity' }).waitFor()
+  await page.getByRole('button', { name: 'Close tool activity' }).click()
+  await page.locator('.model-picker > summary').click(); await page.getByPlaceholder('Search models').fill('future-model'); await page.locator('.model-picker-panel select').first().focus(); await page.keyboard.press('Escape')
   assert.equal(await page.locator('.model-picker').getAttribute('open'), null)
   assert.equal((await api('sessionConfig', id)).model, 'material-fixture')
   await page.keyboard.press('Control+k'); await page.getByRole('textbox', { name: 'Search commands' }).fill('Go to Hooks'); await page.keyboard.press('Enter'); await page.getByRole('heading', { name: 'Project hooks' }).waitFor()
   await page.getByRole('button', { name: 'Chat', exact: true }).click(); await composer.waitFor(); assert.equal(await composer.inputValue(), 'Keep this draft while I inspect the workspace.')
   report.checks.push('Suggestion creates an editable draft, real read tool, tool expansion, model picker boundaries, command palette and draft preservation')
-  for (const label of ['Sessions', 'Files', 'Review', 'Workflow', 'Task controls', 'Browser', 'Terminal', 'GitHub', 'Context', 'Skills', 'Memory', 'Connections', 'Hooks', 'Projects', 'Usage', 'Diagnostics', 'Settings', 'Chat']) {
+  for (const label of ['Sessions', 'Files', 'Review', 'Workflow', 'Task controls', 'Browser', 'Terminal', 'GitHub', 'Context', 'Abilities', 'Memory', 'Hooks', 'Projects', 'Usage', 'Diagnostics', 'Settings', 'Chat']) {
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: label, exact: true }).click()
     if (label === 'Chat') await composer.waitFor()
-    else await page.getByRole('heading', { name: { Browser: 'Dedicated browser', Context: 'Context inspector', Memory: 'Project memory', Hooks: 'Project hooks' }[label] || label, exact: true }).waitFor()
+    else await page.getByRole('heading', { name: { Context: 'Context inspector', Memory: 'App-wide memory', Hooks: 'Project hooks' }[label] || label, exact: true }).waitFor()
     await settleView()
     if (label === 'Files') {
       await page.locator('.file-row').filter({ hasText: 'README.md' }).click()
@@ -85,9 +88,20 @@ try {
       assert(matches, 'Monaco must use the shared surface token'); await shot('editor-dark')
     }
     if (label === 'Terminal') { await page.locator('.xterm-screen').waitFor(); await shot('terminal-dark') }
+    if (label === 'Abilities') {
+      const skills = page.getByRole('tab', { name: /Skills/ })
+      const mcps = page.getByRole('tab', { name: /MCPs/ })
+      assert.equal(await skills.getAttribute('aria-selected'), 'true')
+      await skills.focus(); await page.keyboard.press('ArrowRight')
+      assert.equal(await mcps.getAttribute('aria-selected'), 'true')
+      await page.getByRole('heading', { name: 'MCP servers', exact: true }).waitFor()
+      assert.equal(await page.locator('.nav-item[aria-current="page"]').getAttribute('aria-label'), 'Abilities')
+      await page.keyboard.press('ArrowLeft')
+      assert.equal(await skills.getAttribute('aria-selected'), 'true')
+    }
     await page.waitForFunction(label => document.querySelector('.nav-item[aria-current="page"]')?.getAttribute('aria-label') === label, label)
   }
-  report.checks.push('All 18 navigation destinations render')
+  report.checks.push('All 17 navigation destinations render; Skills and MCPs share Abilities')
   await page.getByRole('button', { name: 'Settings', exact: true }).click(); await page.getByRole('heading', { name: 'Settings', exact: true }).waitFor()
   const appearanceTab = page.getByRole('tab', { name: 'Appearance', exact: true })
   await appearanceTab.click()

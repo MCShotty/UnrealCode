@@ -131,7 +131,7 @@ try {
         await page.getByText('/desktop/node_modules/', { exact: false }).first().waitFor({ timeout: 10000 })
         result.diffPreview = (await page.locator('.file-preview pre').innerText()).includes('desktop/node_modules')
       }
-      await page.getByRole('button', { name: 'Skills', exact: true }).click()
+      await page.getByRole('button', { name: 'Abilities', exact: true }).click()
       await page.getByRole('heading', { name: 'Skills' }).waitFor()
       result.skills = await page.locator('.skill-row').count()
       await page.getByRole('button', { name: 'Settings', exact: true }).click()
@@ -163,7 +163,7 @@ try {
       await page.getByRole('button', { name: 'Chat', exact: true }).click()
     }
     if (process.argv.includes('--skills')) {
-      await page.getByRole('button', { name: 'Skills', exact: true }).click()
+      await page.getByRole('button', { name: 'Abilities', exact: true }).click()
       await page.getByRole('button', { name: 'New skill' }).click()
       await page.getByRole('button', { name: 'Save', exact: true }).click()
       await page.locator('.skill-row').first().waitFor({ timeout: 10000 })
