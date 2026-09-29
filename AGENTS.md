@@ -1,5 +1,13 @@
 # Working on UnrealCode
 
+## Authorized 1.0.2 work
+
+The owner requested a bug hunt, persistent warning controls, and mainlining this work as **1.0.2**. Include the preceding Git/browser fixes. Run the desktop and packaged regressions, reconcile remote main, create a reviewed PR, and merge after checks pass. Preserve all existing tags and release assets. The prior one-time 1.0.1 CI bypass does not apply to 1.0.2; report any external CI or release blocker explicitly. The repository was verified public on 2026-09-29.
+
+Use `--repo MCShotty/UnrealCode` explicitly for every `gh` command: GitHub CLI may otherwise select the upstream `unreallabsai/unreal-agent` repository in this fork checkout.
+
+Warning presentation is controlled by `warningNotifications`; only allowlisted advisory scopes are mutable. Provider/task failures, integrity/resource failures, approvals and required input remain visible. The preference is saved through the typed settings API and settings-change event. Run `node scripts/qa-102.mjs --packaged` for delayed PDF/OCR/PR replies, warning persistence and recovery navigation, plus `node scripts/qa-git-browser.mjs --packaged`.
+
 ## Published release and release boundary
 
 The original private [v1.0.1 release](https://github.com/MCShotty/UnrealCode/releases/tag/v1.0.1)

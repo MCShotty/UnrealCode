@@ -56,9 +56,13 @@ export function GitHubPage({ project, onOpenProject }: { project:string; onOpenP
   }, [project])
   useEffect(() => { void refresh().catch((reason) => setError(String(reason)));return()=>{loadId.current++} }, [refresh])
   useEffect(() => {
+    let live=true
+    const request=loadId.current
+    setDetail(null)
     if (selected === null) { setDetail(null); return }
-    void api.githubPullRequest(selected).then(setDetail).catch((reason) => setError(String(reason)))
-  }, [selected])
+    void api.githubPullRequest(selected).then(value=>{if(live&&request===loadId.current)setDetail(value)}).catch((reason) => {if(live&&request===loadId.current)setError(String(reason))})
+    return()=>{live=false}
+  }, [selected,project])
   const run = async (label: string, operation: () => Promise<unknown>): Promise<void> => {
     setBusy(true); setError(''); setNotice('')
     try { await operation(); setNotice(label); await refresh() }

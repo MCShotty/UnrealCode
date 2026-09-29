@@ -9,7 +9,10 @@ type PdfModule=typeof import('pdfjs-dist')
 export function DocumentPage({sessionId,onAttach}:{sessionId?:string;onAttach(reference:string):void}){
  const [path,setPath]=useState(''),[password,setPassword]=useState(''),[handle,setHandle]=useState<DocumentHandle>(),[pdf,setPdf]=useState<Awaited<ReturnType<PdfModule['getDocument']>['promise']>>(),[page,setPage]=useState(1),[zoom,setZoom]=useState(1),[text,setText]=useState<PageText>(),[search,setSearch]=useState(''),[matches,setMatches]=useState<DocumentSearchPage>(),[language,setLanguage]=useState<'eng'|'ara'>('eng'),[ocr,setOcr]=useState<PageText>(),[busy,setBusy]=useState(false),[error,setError]=useState('')
  const canvas=useRef<HTMLCanvasElement>(null),overlay=useRef<HTMLDivElement>(null),generation=useRef(0),attached=useRef(new Set<string>())
- const run=async(work:()=>Promise<void>)=>{setBusy(true);setError('');try{await work()}catch(reason){setError(reason instanceof Error?reason.message:String(reason))}finally{setBusy(false)}}
+ const selection=useRef({id:handle?.id,page,revision:0}),pending=useRef(false)
+ if(selection.current.id!==handle?.id||selection.current.page!==page)selection.current={id:handle?.id,page,revision:selection.current.revision+1}
+ useEffect(()=>()=>{selection.current={...selection.current,revision:selection.current.revision+1}},[])
+ const run=async(work:()=>Promise<void>)=>{if(pending.current)return;pending.current=true;setBusy(true);setError('');try{await work()}catch(reason){setError(reason instanceof Error?reason.message:String(reason))}finally{pending.current=false;setBusy(false)}}
  const load=async(value:DocumentHandle)=>{
   const bytes=await window.unreal.documentBytes(value.id),module=await import('pdfjs-dist')
   module.GlobalWorkerOptions.workerSrc=workerUrl
@@ -19,7 +22,8 @@ export function DocumentPage({sessionId,onAttach}:{sessionId?:string;onAttach(re
   setPdf(document);setHandle(value);setPage(1);setZoom(1);setText(undefined);setMatches(undefined);setOcr(undefined);setPassword('')
  }
  useEffect(()=>()=>{generation.current++;void pdf?.loadingTask.destroy().catch(()=>{});if(handle&&!attached.current.has(handle.id))void window.unreal.documentClose(handle.id)},[handle?.id])
- useEffect(()=>{if(!pdf||!handle)return;const version=++generation.current;let rendering:{cancel():void;promise:Promise<void>}|undefined
+ useEffect(()=>{setText(undefined);setOcr(undefined)},[handle?.id,page])
+ useEffect(()=>{if(!pdf||!handle)return;const version=++generation.current;let rendering:{cancel():void;promise:Promise<void>}|undefined,textLayer:{cancel():void}|undefined
   void (async()=>{
    const sheet=await pdf.getPage(page),viewport=sheet.getViewport({scale:Math.min(3,Math.max(.4,zoom))}),target=canvas.current,layer=overlay.current
    if(!target||!layer||version!==generation.current)return
@@ -28,15 +32,19 @@ export function DocumentPage({sessionId,onAttach}:{sessionId?:string;onAttach(re
    rendering=sheet.render({canvasContext:target.getContext('2d')!,canvas:target,viewport});await rendering.promise
    if(version!==generation.current)return
    const module=await import('pdfjs-dist');const content=await sheet.getTextContent()
-   await new module.TextLayer({textContentSource:content,container:layer,viewport}).render()
-   if(version===generation.current)setText(await window.unreal.documentPage(handle.id,page))
+   if(version!==generation.current)return
+   const layerTask=new module.TextLayer({textContentSource:content,container:layer,viewport});textLayer=layerTask
+   await layerTask.render()
+   if(version!==generation.current)return
+   const extracted=await window.unreal.documentPage(handle.id,page)
+   if(version===generation.current)setText(extracted)
   })().catch(reason=>{if(version===generation.current&&reason?.name!=='RenderingCancelledException')setError(String(reason))})
-  return()=>{generation.current++;rendering?.cancel()}
+  return()=>{generation.current++;rendering?.cancel();textLayer?.cancel()}
  },[pdf,handle?.id,page,zoom])
  const openProject=()=>run(async()=>load(await window.unreal.documentOpenProject(path,password||undefined)))
  const openExternal=()=>run(async()=>{const chosen=await window.unreal.documentOpenExternal(password||undefined);if(chosen)await load(chosen)})
  const find=()=>run(async()=>{if(!handle)return;const result=await window.unreal.documentSearch(handle.id,search,1,30);setMatches(result);if(result.matches[0])setPage(result.matches[0].page)})
- const recognize=()=>run(async()=>{if(handle)setOcr(await window.unreal.documentOcr(handle.id,page,language))})
+ const recognize=()=>run(async()=>{if(!handle)return;const requested=selection.current;const result=await window.unreal.documentOcr(handle.id,page,language);if(selection.current===requested)setOcr(result)})
  return <div className="page-content document-page"><div className="page-heading"><div><h1>Documents</h1><p>Read PDF pages locally. OCR text is labelled separately from embedded text.</p></div>{busy&&<ProgressIndicator label="Processing document"/>}</div>
   <div className="document-open"><label>Project PDF path<input value={path} onChange={event=>setPath(event.target.value)} placeholder="docs/report.pdf"/></label><label>Password, if required<input type="password" autoComplete="off" value={password} onChange={event=>setPassword(event.target.value)}/></label><button className="primary-button" disabled={busy||!path.trim()} onClick={()=>void openProject()}><FileSearch size={16}/> Open project PDF</button><button className="secondary-button" disabled={busy} onClick={()=>void openExternal()}><FolderOpen size={16}/> Choose external PDF</button></div>
   {error&&<p className="error-inline" role="alert">{error}</p>}

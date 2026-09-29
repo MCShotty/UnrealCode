@@ -56,6 +56,8 @@ jobs:
       - run: node scripts/audit-release.mjs
       - run: node scripts/qa.mjs --no-docker --credentials --packaged
       - run: node scripts/qa-release-notifications.mjs --packaged
+      - run: node scripts/qa-git-browser.mjs --packaged
+      - run: node scripts/qa-102.mjs --packaged
       - name: Write and verify SHA-256 manifest
         run: |
           node scripts/sha256-release.mjs --write

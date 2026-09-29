@@ -17,6 +17,7 @@ export type Settings = {
   theme: 'dark' | 'light' | 'system'
   layout: { sessionWidth: number; activityWidth: number; sessions: boolean; activity: boolean; focus: boolean }
   notifications: boolean
+  warningNotifications: boolean
   automaticUpdateChecks?: boolean
   updateChannel?: 'stable'|'preview'
   executionMode: ExecutionMode
@@ -33,7 +34,7 @@ export type Settings = {
 }
 export const settingsFields = [
   'recentProjects','trustedProjects','provider','model','thinkingLevel','systemPrompt','projectInstructions','theme',
-  'layout','notifications','automaticUpdateChecks','updateChannel','executionMode','taskIsolation','autoCompaction','disallowedTools','baseUrl',
+  'layout','notifications','warningNotifications','automaticUpdateChecks','updateChannel','executionMode','taskIsolation','autoCompaction','disallowedTools','baseUrl',
   'decisionEngine','decisionSetupSeen','decisionModel','decisionCloudProjects','decisionCloudDeclinedProjects','glinerEnabled'
 ] as const satisfies readonly (keyof Settings)[]
 export const settingsLayoutFields = ['sessionWidth','activityWidth','sessions','activity','focus'] as const satisfies readonly (keyof Settings['layout'])[]
@@ -245,6 +246,7 @@ export interface DesktopAPI {
   checkpointRemove(id: string): Promise<void>
   checkpointStorage(): Promise<{ bytes: number; count: number }>
   getSettings(): Promise<Settings>
+  onSettingsChanged(callback:(settings:Settings)=>void):()=>void
   updateSettings(patch: Partial<Settings>): Promise<Settings>
   saveKey(provider: string, key: string): Promise<void>
   hasKey(provider: string): Promise<boolean>

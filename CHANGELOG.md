@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.0.2 — 2026-09-29
+
+### Added
+
+- Persistent warning popup control in Settings → Appearance and a **Silence warnings** action on advisory notices. Task errors, data failures, approvals and required answers remain visible; inline status and support diagnostics are retained.
+
+### Changed
+
+- Browser tabs, navigation, address entry and agent access use a compact responsive layout, with a useful first-page guide and a separate grant dialog.
+- GitHub repository readiness is shown separately from CLI login. Non-Git projects remain usable in Chat and Files without repeated background Git error popups.
+
+### Fixed
+
+- Late PDF extraction replacing the selected page text; OCR from a previous page appearing under the current page; obsolete PDF text layers continuing to render.
+- Delayed GitHub pull-request details replacing a more recently selected review.
+- Recovery **Open settings** targeting an invalid tab, and a completed recovery action dismissing a newer issue.
+- Appearance and warning preference changes unnecessarily reconfiguring decision and MCP services.
+- Non-Git folders being reported as clean repositories and Git actions appearing available before repository prerequisites were satisfied.
+
+### Known limitations
+
+- Windows installers remain unsigned and require manual installation. Warning muting changes popup presentation only.
+- Automated UI evidence uses hidden Windows test windows; native desktop placement and assistive-technology acceptance are not established by those checks.
+
 ## 1.0.1 — 2026-09-29
 
 ### Replacement build (same version, private release)
