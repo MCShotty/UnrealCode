@@ -2,22 +2,24 @@
 
 ## Published release and release boundary
 
-The current private [v1.0.1 release](https://github.com/MCShotty/UnrealCode/releases/tag/v1.0.1)
-is an **unsigned** Windows NSIS installer from annotated tag `v1.0.1` at
+The original private [v1.0.1 release](https://github.com/MCShotty/UnrealCode/releases/tag/v1.0.1)
+was an **unsigned** Windows NSIS installer from annotated tag `v1.0.1` at
 `05ad90458f201f8522b518f8c02650be0f1ab34a`. Published installer SHA-256:
 `5b0c6390527aecf93d3155c7398d1ebc21cf1884e10ace9360654cfa5a64e9e5`.
 The exact merged commit passed nonpublishing preflight `36492958580`; tagged
 workflow `36493471147` built, audited, attested and published the release.
 The downloaded assets were verified again for checksum, repository/workflow,
 tag, source commit, GitHub-hosted runner and `NotSigned` status. GitHub's Latest
-release is v1.0.1. See [published evidence](desktop/RELEASE_VERIFICATION_1.0.1.md).
-The owner explicitly authorized a **private, same-version replacement of v1.0.1**
-for the current repair task. The hash and workflow above describe the existing
-release until cutover; after a verified replacement they become superseded
-evidence. Archive its assets and provenance before changing the annotated tag
-or release. A guarded tag workflow must build and attest without publishing;
-verify the new installer and manifest before replacing draft-release assets.
-If cutover fails, restore the original tag and assets. Existing 1.0.1 installs
+release was v1.0.1. See [original evidence](desktop/RELEASE_VERIFICATION_1.0.1.md).
+The owner explicitly authorized a **private, same-version replacement of v1.0.1**.
+After GitHub Actions blocked all jobs before runner startup because of account
+billing, the owner instructed us to bypass those checks and replace the release.
+PR #3 was merged into `main` at `948ce88f36588851a0449e983651a200801bf238`.
+The original tag, installer, checksum, metadata, and attestation result were
+archived locally before cutover. The replacement is a locally built, unsigned
+installer with a SHA-256 manifest and **no GitHub Artifact Attestation**. Do
+not claim GitHub-hosted provenance for this replacement. If cutover fails,
+restore the archived original tag and assets. Existing 1.0.1 installs
 require manual reinstall because version checks cannot announce a same-version
 replacement. Release discovery and installation remain manual.
 
@@ -63,7 +65,7 @@ natural humor when appropriate. Report concrete evidence and limitations.
 
 The owner explicitly authorized documenting, committing, pushing, merging and publishing 1.0.1 after its acceptance gates passed. This superseded the earlier 1.0.1 publication hold and applied only to this version. PR #1 included the accumulated implementation, theme polish, bug fixes and release notifications; PR #2 stabilized the offscreen acceptance capture. Both merged after hosted checks passed. The unrelated untracked `docs/orbit-garden-demo.html` remains untouched. v1.0.0's tag and asset identities/digests are unchanged.
 
-For a separately authorized future release, merge its reviewed PR after Windows, backend and Go CI passes. Run the nonpublishing release workflow on the exact merged `main` commit before creating its version tag. Publish only the workflow-built installer and checksum manifest after provenance verification; verify the downloaded published artifact again. Do not substitute a local candidate for the attested hosted artifact. See `CHANGELOG.md`, `desktop/ACCEPTANCE_1.0.1.md`, `desktop/RELEASE_NOTES_1.0.1.md`, and `desktop/RELEASE_VERIFICATION_1.0.1.md` for scope and evidence. Future versions require separate authorization.
+For a separately authorized future release, merge its reviewed PR after Windows, backend and Go CI passes. Run the nonpublishing release workflow on the exact merged `main` commit before creating its version tag. Publish only the workflow-built installer and checksum manifest after provenance verification; verify the downloaded published artifact again. The owner's one-time bypass applies only to this private 1.0.1 replacement. See `CHANGELOG.md`, `desktop/ACCEPTANCE_1.0.1.md`, `desktop/RELEASE_NOTES_1.0.1.md`, and `desktop/RELEASE_VERIFICATION_1.0.1.md` for scope and evidence. Future versions require separate authorization.
 
 Memory enablement is app-wide after explicit destination/scope consent. Shared records retain their source project; unintegrated specialists remain task-scoped. Migrations preserve backups, corrections, tombstones and legacy banks. Timeline inference is advisory, runs at most once per 20 seconds per conversation with two global slots, and never edits approved plans. Preserve exact provider rejection metadata and recorded failures; do not automatically retry refusals or substitute providers.
 
@@ -75,14 +77,15 @@ The current task adds `desktop/builtin-skills/` to the app and Docker backend, a
 
 The bridge negotiates `decision.browser.v1`, `response.preview.v1`, `documents.v1`, and `browser.shared.v1`. Provider deltas are transient; final responses remain canonical, and a failed stream retains a bounded incomplete preview. The threaded history cache projects concise timeline stages without copying raw chat/tool text into the compact rail. Model-profile changes test a candidate before replacing the working memory profile and restore the old profile and key on failure.
 
-Run `npm run typecheck`, `npm test -- --testTimeout=15000`, `node scripts/qa-shared-documents.mjs --packaged`, `node scripts/qa.mjs --no-docker --credentials --packaged`, and `npm run licenses:generate` from `desktop/`. Go checks run in the pinned Go image or CI; Docker and Windows packaging must be verified before tag movement. The one-time replacement requires an archived original tag/assets, a merged exact commit, a guarded tag build without auto-publication, checksum and GitHub attestation verification, then deliberate replacement of the private release assets. Leave unrelated `docs/orbit-garden-demo.html` untouched.
+Run `npm run typecheck`, `npm test -- --testTimeout=15000`, `node scripts/qa-shared-documents.mjs --packaged`, `node scripts/qa.mjs --no-docker --credentials --packaged`, and `npm run licenses:generate` from `desktop/`. Go checks run in the pinned Go image or CI. The one-time replacement uses the archived original tag/assets, a local build from merged source, a SHA-256 manifest, explicit unattested labeling, and downloaded-asset comparison. Leave unrelated `docs/orbit-garden-demo.html` untouched.
 
 ## Product and architecture
 
 UnrealCode is a Windows Electron/React coding application backed by the Unreal
 Agent Go harness in Docker. It is not an Unreal Engine plugin or a Claude Code
-wrapper. The 1.0 installer is unsigned and distributed with checksums and a
-GitHub build-provenance attestation. The owner tested the earlier preview on
+wrapper. The 1.0 installer is unsigned. The original 1.0.0 and 1.0.1 installers
+had GitHub build attestations; the locally built 1.0.1 replacement has only its
+published checksum manifest. The owner tested the earlier preview on
 another machine; that does not establish a fresh-machine test of the exact
 tagged installer.
 

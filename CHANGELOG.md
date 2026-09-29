@@ -9,7 +9,7 @@
 - **Changed:** Agent team (subagents) terminology and prerequisite guidance distinguish Git installation, repository root, and initial commit. A clean worktree or GitHub login is not required.
 - **Changed:** assistant text from delta-capable providers appears while generating. Final responses remain authoritative; bounded partial text is labelled incomplete on failure. Newly arrived nonstreaming answers receive a brief entrance effect.
 - **Fixed:** mixed-case Jev Choice/Noul/Score types, premature memory-provider replacement and failed-key rollback, raw/empty compact timeline entries, misleading clean Git status after errors, clipped Settings tabs, inconsistent Workflow/Diagnostics tab selection, and overly wide Context layout.
-- **Known limitations:** Same-version replacement cannot be announced to an existing 1.0.1 installation; reinstall manually. The installer remains unsigned. BrowserDo stops before consequential actions and may return uncertain; use a precise browser action or take over. PDF editing and form submission remain outside this version.
+- **Known limitations:** Same-version replacement cannot be announced to an existing 1.0.1 installation; reinstall manually. The installer remains unsigned. GitHub Actions billing blocked the replacement's hosted build and attestation; the owner explicitly authorized a locally built, unattested replacement. BrowserDo stops before consequential actions and may return uncertain; use a precise browser action or take over. PDF editing and form submission remain outside this version.
 
 ### Added
 
@@ -38,7 +38,7 @@
 
 ### Upgrade and known limitations
 
-- **Unsigned Windows installer.** SHA-256 hashes and GitHub Artifact Attestations verify integrity/provenance, not Windows publisher trust. See [verification instructions](desktop/VERIFY_RELEASE.md).
+- **Unsigned Windows installer.** SHA-256 hashes verify against the release manifest, not publisher trust. The replacement 1.0.1 build has no GitHub Artifact Attestation. See [verification instructions](desktop/VERIFY_RELEASE.md).
 - **Install 1.0.1 manually**, including when upgrading from 1.0.0. Release notifications open GitHub; they do not download or execute installers. Automatic checks can be disabled in Settings → Recovery.
 - Docker Desktop's Linux engine remains required. Optional memory/browser/model runtimes download separately.
 - Memory remains optional. Accept global scope before migrating existing project memories. Disabled memory stays disabled, and unintegrated worker findings remain task-scoped.

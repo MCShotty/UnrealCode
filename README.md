@@ -13,7 +13,7 @@ Bring your own provider, open a project, and work with an agent that can inspect
 
 UnrealCode is a general-purpose coding application. It does not require Unreal Engine. Its execution engine is the [Unreal Agent Go harness](https://github.com/unreallabsai/unreal-agent) from Unreal Labs; the desktop application adds the interface, project controls, provider setup, integrations, and recovery workflows.
 
-> **Windows distribution:** Releases use an unsigned installer, a SHA-256 manifest, a Git tag, and a GitHub Actions build-provenance attestation. [Verify the release](desktop/VERIFY_RELEASE.md) before installing. Windows will still report an unknown publisher. This repository and its 1.0.1 release are currently private; access requires repository permission. Release checks can use the existing host `gh` login for that private listing. Downloads and installation remain manual. See the [changelog](CHANGELOG.md) and [Releases page](https://github.com/MCShotty/UnrealCode/releases).
+> **Windows distribution:** Releases use an unsigned installer, a SHA-256 manifest, and a Git tag. The corrected private 1.0.1 replacement was built locally because GitHub Actions would not start runners; unlike the original release, it has no GitHub Artifact Attestation. [Verify the release](desktop/VERIFY_RELEASE.md) before installing. Windows will still report an unknown publisher. Repository access is required. Release checks can use the existing host `gh` login for that private listing. Downloads and installation remain manual. See the [changelog](CHANGELOG.md) and [Releases page](https://github.com/MCShotty/UnrealCode/releases).
 
 ## New in 1.0.1
 
@@ -176,9 +176,10 @@ The build creates a local NSIS installer under `desktop/dist/`; it does not publ
 
 ## Release provenance, signing, and privacy
 
-The Windows installer is unsigned. Its SHA-256 manifest and GitHub Artifact
-Attestation establish integrity and build provenance, not a trusted Windows
-publisher. Use the [verification guide](desktop/VERIFY_RELEASE.md) for each
+The Windows installer is unsigned. Its SHA-256 manifest checks the downloaded
+bytes against the release manifest. The corrected 1.0.1 replacement has no
+GitHub build attestation; the original 1.0.1 and 1.0.0 releases did. Use the
+[verification guide](desktop/VERIFY_RELEASE.md) for each
 download. The [code signing policy](CODE_SIGNING_POLICY.md) records the deferred
 SignPath option; no installer is represented as signed before its actual
 signature is checked. [Privacy and data flows](PRIVACY.md) explains local storage

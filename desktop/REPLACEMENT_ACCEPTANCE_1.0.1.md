@@ -1,8 +1,9 @@
 # 1.0.1 replacement acceptance record
 
-This is local candidate evidence from 2026-09-29. The hosted merged-commit and
-tagged-artifact checks, published checksum, and release cutover are separate
-gates. The original private 1.0.1 installer is archived locally with its
+This is local candidate evidence from 2026-09-29. GitHub Actions blocked every
+PR job before runner startup because of account billing. The owner explicitly
+instructed us to bypass hosted checks and replace the private release with a
+locally built, unattested installer. The original private 1.0.1 installer is archived locally with its
 manifest, release metadata, annotated tag, and verified attestation record.
 
 ## Local checks
@@ -39,16 +40,15 @@ BrowserDo's focused fixture used two Jev decisions for an acted-and-verified
 step, compared with zero for a direct browser action; no token-saving claim is
 made.
 
-## Before release replacement
+## Release replacement boundary
 
-Run hosted PR checks and a nonpublishing release preflight against the exact
-merged `main` commit. Move the annotated tag only after that succeeds. The
-guarded tagged workflow must build and attest without changing the existing
-release. Verify its downloaded installer, SHA-256 manifest, repository,
-workflow, source ref and commit, GitHub-hosted runner, and unsigned status.
-Only then replace the private release assets, verify the downloaded published
-assets again, and mark the original checksum as superseded in the final
-verification record. Restore the archived tag and assets if cutover fails.
+PR #3 was merged into `main` at `948ce88f36588851a0449e983651a200801bf238`
+under the owner's explicit bypass. Build the installer locally from merged
+source, record its SHA-256, and label the release as **unattested**. Preserve
+the archived original until the replacement installer and manifest are
+uploaded and downloaded again. Restore the original tag and assets if cutover
+fails. Mark the original checksum as superseded in the final verification
+record.
 
 The existing installation cannot notify users about a replacement with the
 same version; installation is manual. Windows publisher signing and a fresh

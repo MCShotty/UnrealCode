@@ -1,6 +1,6 @@
 # UnrealCode 1.0.1
 
-The installer is unsigned; upgrades remain manual. Verify its SHA-256 manifest and GitHub build attestation before installing. This is a corrected **same-version replacement** of the private 1.0.1 release. Existing 1.0.1 installations cannot receive a newer-version notice for it and require a manual reinstall; 1.0.0 also requires a manual upgrade.
+The installer is unsigned; upgrades remain manual. Verify its SHA-256 manifest before installing. This corrected **same-version replacement** was built locally after GitHub Actions refused to start runners for the private repository; **it has no GitHub Artifact Attestation**. Existing 1.0.1 installations cannot receive a newer-version notice for it and require a manual reinstall; 1.0.0 also requires a manual upgrade.
 
 ## Changes
 
