@@ -6,6 +6,7 @@ This update repairs stale document/review results, quiets optional warnings, and
 - **Browser:** a compact responsive tab bar and address toolbar, a useful first-page guide, and a separate Agent access dialog with reliable focus restoration.
 - **Git:** plain folders remain usable without repeated background Git error notices. Repository readiness and GitHub login are reported separately; unavailable status is never called a clean working tree.
 - **PDFs and OCR:** delayed results stay with their original page, and obsolete text layers are cancelled during navigation.
+- **Document concurrency:** queued requests retain their reserved slot, preserving the two-worker limit under competing arrivals.
 - **Reviews:** delayed pull-request details no longer replace a newer selection.
 - **Recovery:** Open settings reaches the provider tab, and finishing one recovery action cannot dismiss a newer issue. Appearance changes do not reconfigure decision/MCP services.
 
