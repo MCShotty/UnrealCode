@@ -15,11 +15,14 @@ The owner explicitly authorized a **private, same-version replacement of v1.0.1*
 After GitHub Actions blocked all jobs before runner startup because of account
 billing, the owner instructed us to bypass those checks and replace the release.
 PR #3 was merged into `main` at `948ce88f36588851a0449e983651a200801bf238`.
+The replacement was published at `2026-09-29T12:15:18Z` from source commit
+`bb0990db2d754a815d26fe6caf8f4811b7d7241a` and annotated tag object
+`6365e3a33660869a0be9cf8b113aeea98eb3fb53`. Installer SHA-256:
+`34e7dee4d4d4ada48c229f5f61d93812e5a7b0e99c70ea91bc7ab83d23d99db3`.
 The original tag, installer, checksum, metadata, and attestation result were
-archived locally before cutover. The replacement is a locally built, unsigned
-installer with a SHA-256 manifest and **no GitHub Artifact Attestation**. Do
-not claim GitHub-hosted provenance for this replacement. If cutover fails,
-restore the archived original tag and assets. Existing 1.0.1 installs
+archived locally before cutover. The replacement is locally built and unsigned,
+with a SHA-256 manifest and **no GitHub Artifact Attestation**. Do not claim
+GitHub-hosted provenance for this replacement. Existing 1.0.1 installs
 require manual reinstall because version checks cannot announce a same-version
 replacement. Release discovery and installation remain manual.
 

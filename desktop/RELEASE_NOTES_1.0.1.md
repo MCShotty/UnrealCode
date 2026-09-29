@@ -28,4 +28,4 @@ Global memory is optional and uses the separately configured model. The provider
 
 Timeline observations use registered timestamp filenames and are included in private backups. SQLite remains a rebuildable cache with one writer and two readers. Cache rebuilding does not regenerate historical model summaries.
 
-See the [changelog](https://github.com/MCShotty/UnrealCode/blob/v1.0.1/CHANGELOG.md), [verification guide](https://github.com/MCShotty/UnrealCode/blob/v1.0.1/desktop/VERIFY_RELEASE.md), and [replacement acceptance evidence](https://github.com/MCShotty/UnrealCode/blob/v1.0.1/desktop/REPLACEMENT_ACCEPTANCE_1.0.1.md). The published artifact hash appears in the release manifest. v1.0.0's tag and release assets are unchanged.
+See the [changelog](https://github.com/MCShotty/UnrealCode/blob/v1.0.1/CHANGELOG.md), [verification guide](https://github.com/MCShotty/UnrealCode/blob/v1.0.1/desktop/VERIFY_RELEASE.md), and [final replacement verification](https://github.com/MCShotty/UnrealCode/blob/main/desktop/RELEASE_VERIFICATION_1.0.1.md). The published artifact hash appears in the release manifest. v1.0.0's tag and release assets are unchanged.

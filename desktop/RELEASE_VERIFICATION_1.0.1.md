@@ -1,12 +1,24 @@
-# Original UnrealCode 1.0.1 verification (historical)
+# UnrealCode 1.0.1 replacement verification
 
-This record describes the first private 1.0.1 publication. Its installer,
+## Published replacement — 2026-09-29
+
+- [Private release](https://github.com/MCShotty/UnrealCode/releases/tag/v1.0.1): published and confirmed as GitHub's Latest release at `2026-09-29T12:15:18Z`.
+- Source and `main` commit: `bb0990db2d754a815d26fe6caf8f4811b7d7241a`, following merged [PR #3](https://github.com/MCShotty/UnrealCode/pull/3). Annotated `v1.0.1` tag object: `6365e3a33660869a0be9cf8b113aeea98eb3fb53`.
+- Installer asset ID `598134572`: `UnrealCode-Setup-1.0.1.exe`, 172,866,985 bytes, SHA-256 `34e7dee4d4d4ada48c229f5f61d93812e5a7b0e99c70ea91bc7ab83d23d99db3`.
+- Manifest asset ID `598134571`: `SHA256SUMS`, SHA-256 `cdfd0e2d130b30c19c7975df0a2e90501a76948d9fc4365c2015a9b7cae95a04`.
+- A fresh download from the published release matched the manifest and local build. Authenticode status was `NotSigned`.
+- **No GitHub Artifact Attestation exists for this replacement.** GitHub Actions rejected every PR job before runner startup because of account billing. The owner explicitly instructed bypassing the checks and replacing the private release with a local build. The SHA-256 comparison establishes byte agreement with the published manifest; it does not prove GitHub-hosted build provenance.
+- The original installer, checksum, release metadata, annotated tag text, and original attestation verification were archived locally before cutover. The original installer hash `5b0c6390527aecf93d3155c7398d1ebc21cf1884e10ace9360654cfa5a64e9e5` is **superseded**.
+- `v1.0.0` remains unchanged. Existing 1.0.1 installations require manual reinstall because the version number did not increase.
+
+See [replacement acceptance](REPLACEMENT_ACCEPTANCE_1.0.1.md) for local test scope and limits. The following section is preserved as historical evidence for the original 1.0.1 installer only.
+
+## Original 1.0.1 publication (historical)
+
+This section describes the first private 1.0.1 publication. Its installer,
 manifest, release metadata, annotated tag, and attestation evidence were
-archived before the authorized same-version replacement. Its checksum becomes
-superseded evidence once the replacement is verified. See
-[replacement acceptance](REPLACEMENT_ACCEPTANCE_1.0.1.md) for candidate checks;
-the final published checksum must be recorded after the tagged build and asset
-cutover.
+archived before the authorized same-version replacement. Its checksum is
+superseded evidence and must not be used to verify the replacement.
 
 Verified on 2026-09-29 (Asia/Riyadh). GitHub publication time: 2026-09-28 22:42:25 UTC.
 

@@ -3,8 +3,9 @@
 This is local candidate evidence from 2026-09-29. GitHub Actions blocked every
 PR job before runner startup because of account billing. The owner explicitly
 instructed us to bypass hosted checks and replace the private release with a
-locally built, unattested installer. The original private 1.0.1 installer is archived locally with its
-manifest, release metadata, annotated tag, and verified attestation record.
+locally built, unattested installer. The original private 1.0.1 installer is
+archived locally with its manifest, release metadata, annotated tag, and
+verified attestation record.
 
 ## Local checks
 
@@ -13,7 +14,7 @@ manifest, release metadata, annotated tag, and verified attestation record.
 | TypeScript and desktop suite | `npm run typecheck` passed; 479 tests passed, 4 conditional skips. |
 | Go | `go test ./...` passed in Go 1.27.1 Docker before packaging; focused changed-package race tests and `go vet ./cmd/... ./harness/... ./internal/...` passed. A later unscoped local vet traversed ignored `desktop/dist` backend copies, so source-root vet is the relevant result. |
 | Docker | `Dockerfile.desktop` built `unrealcode:1.0.1-local`; bridge package checks passed. |
-| Windows package | Unsigned NSIS candidate built (172,866,702 bytes); Authenticode reported `NotSigned`. Local candidate SHA-256: `3cceeb66aabe88e6375c444b8cf3dd12fdcaa53c6f6499ef252165926dcd8498`. This is not the future hosted artifact hash. |
+| Windows package | Unsigned NSIS candidate built (172,866,702 bytes); Authenticode reported `NotSigned`. Pre-publish candidate SHA-256: `3cceeb66aabe88e6375c444b8cf3dd12fdcaa53c6f6499ef252165926dcd8498`. The final build from the documentation-updated source has a different hash below. |
 | Packaged app | Hidden-window QA opened a disposable project, live shared browser tab and PDF. It verified origin grant, blocked redirect/frame escape, takeover, revocation, rendered page/search, bounded extraction, and English plus Arabic OCR data loading. |
 | Agent team | Packaged fixture verified parallel workers, inherited restrictions, cancellation, conflict review/integration, queue ordering, restart, request limits, and usage totals. |
 | Memory settings | Packaged fixture passed dark/light axe checks, short-window scrolling, and 200% scaling. Profile-switch rollback is covered by focused desktop tests. |
@@ -43,12 +44,14 @@ made.
 ## Release replacement boundary
 
 PR #3 was merged into `main` at `948ce88f36588851a0449e983651a200801bf238`
-under the owner's explicit bypass. Build the installer locally from merged
-source, record its SHA-256, and label the release as **unattested**. Preserve
-the archived original until the replacement installer and manifest are
-uploaded and downloaded again. Restore the original tag and assets if cutover
-fails. Mark the original checksum as superseded in the final verification
-record.
+under the owner's explicit bypass. A disclosure-only commit produced source
+commit `bb0990db2d754a815d26fe6caf8f4811b7d7241a`; the final local build
+from that commit was published with SHA-256
+`34e7dee4d4d4ada48c229f5f61d93812e5a7b0e99c70ea91bc7ab83d23d99db3`.
+The published installer was downloaded again and matched its manifest; it is
+unsigned and **unattested**. The original checksum is superseded, and its files
+remain in the private local archive. See
+[release verification](RELEASE_VERIFICATION_1.0.1.md) for asset and tag IDs.
 
 The existing installation cannot notify users about a replacement with the
 same version; installation is manual. Windows publisher signing and a fresh
