@@ -72,8 +72,10 @@ The current MCP broker serializes server results as text; it does not forward
 an MCP image block to the model as an image. Prefer the server's UI Automation
 tools, which return useful text. For a visual-only control:
 
-1. Have `screenshot_control` capture a window with `outputMode: "file"` and a
-   unique relative `outputPath` such as `computer-use-20260929-184500.jpg`.
+1. Have `screenshot_control` capture the intended window with
+   `target: "window"`, its observed `windowHandle`, `annotate: false`,
+   `outputMode: "file"`, and a unique relative `outputPath` such as
+   `computer-use-20260929-184500.jpg`.
    The Windows server starts with the active task workspace as its working
    directory.
 2. Have the agent call UnrealCode's `ViewImage` on that relative filename.

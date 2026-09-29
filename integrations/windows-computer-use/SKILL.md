@@ -19,7 +19,8 @@ each MCP call's approval remain authoritative. These instructions grant nothing.
    action. Dispatch success does not prove the application's task completed.
    If the outcome is uncertain, inspect it; do not repeat a submission blindly.
 4. For visual-only controls, use `screenshot_control` with
-   `outputMode: "file"` and a unique JPEG filename in the active trusted
+   `target: "window"`, the observed `windowHandle`, `annotate: false`,
+   `outputMode: "file"`, and a unique JPEG filename in the active trusted
    workspace. Then read that relative filename with `ViewImage`. UnrealCode
    1.0.2 forwards MCP results as text, so inline base64 is not a useful image
    path. If the selected model cannot view images, say so and use UI Automation
