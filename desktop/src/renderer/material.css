@@ -160,6 +160,10 @@ button:active:not(:disabled) { filter: brightness(.94); }
 .user-avatar { background: var(--panel-3); }
 .markdown pre, .terminal-frame { background: var(--md-sys-color-surface-container-lowest); }
 .team-review-dialog::backdrop { background: var(--md-sys-color-scrim); }
+[data-theme="ice-dark"] .user-avatar { background: #263b4a; }
+[data-theme="ice-dark"] .markdown pre { background: #10181e; }
+[data-theme="ice-dark"] .terminal-frame { background: #121a20; }
+[data-theme="ice-dark"] .team-review-dialog::backdrop { background: #080e1eb3; }
 .skill-editor textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
 .palette-overlay { background: var(--md-sys-color-scrim); }.command-palette { border-radius: 24px; padding: 18px; background: var(--panel-2); box-shadow: var(--md-sys-elevation-2); }
 .command-palette > input { padding: 16px; border-radius: 16px; font-size: 15px; background: var(--panel); }.command-results button { border-radius: 12px; min-height: 44px; text-align: start; gap: 14px; }.command-palette > small { display: block; border-top: 1px solid var(--line); padding-top: 12px; font-size: 11px; }

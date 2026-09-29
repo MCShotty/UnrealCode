@@ -14,7 +14,7 @@ export type Settings = {
   thinkingLevel: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   systemPrompt: string
   projectInstructions: Record<string, string>
-  theme: 'dark' | 'light' | 'system'
+  theme: 'dark' | 'ice-dark' | 'light' | 'system'
   layout: { sessionWidth: number; activityWidth: number; sessions: boolean; activity: boolean; focus: boolean }
   notifications: boolean
   warningNotifications: boolean

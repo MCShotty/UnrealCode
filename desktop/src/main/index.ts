@@ -30,7 +30,7 @@ import { mkdirSync, realpathSync } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import { join,basename } from 'node:path'
 import { promisify } from 'node:util'
-import type { AgentEvent, BridgeSessionConfig, DecisionBatch, DecisionStatus, Provider } from '../shared/api'
+import type { AgentEvent, BridgeSessionConfig, DecisionBatch, DecisionStatus, Provider, Settings } from '../shared/api'
 import { DockerBridge } from './docker'
 import { codexStatus, credentialFor, getSettings, hasKey, rememberProject, saveKey, updateSettings, migrateLegacySettings, setDecisionConsent, saveAdminKey, hasAdminKey, clearAdminKey, defaultSettings } from './settings'
 import { AccountUsageService } from './account-usage'
@@ -91,6 +91,16 @@ const evaluations = new Evaluations(join(app.getPath('userData'), 'evaluations')
 let sessionUsage = new SessionUsageService(bridge)
 const execFileAsync = promisify(execFile)
 let window: BrowserWindow | null = null
+let appliedTheme: Settings['theme'] = 'system'
+function windowBackgroundColor(): string {
+  const scheme = appliedTheme === 'system' ? (nativeTheme.shouldUseDarkColors ? 'dark' : 'light') : appliedTheme
+  return scheme === 'ice-dark' ? '#10161b' : scheme === 'light' ? '#f0f3f5' : '#151514'
+}
+function applyWindowTheme(theme: Settings['theme']): void {
+  appliedTheme = theme
+  nativeTheme.themeSource = theme === 'ice-dark' ? 'dark' : theme
+  window?.setBackgroundColor(windowBackgroundColor())
+}
 let checkpoints: CheckpointService | null = null
 const connectionVault = new ConnectionVault(join(app.getPath('userData'), 'connection-secrets.json'))
 let connections: McpBroker
@@ -629,8 +639,7 @@ function registerIPC(): void {
     const previous=getSettings()
     const next = updateSettings(patch)
     releaseNotifications?.configure(notificationPreferences())
-    nativeTheme.themeSource = next.theme
-    window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#10161b' : '#f0f3f5')
+    applyWindowTheme(next.theme)
     window?.webContents.send('settings:changed',next)
     if (bridge.status().ready && (['decisionEngine','decisionModel','glinerEnabled'] as const).some(key=>previous[key]!==next[key])) {
       if (next.decisionEngine === 'jev' && !next.decisionCloudProjects.includes(bridge.projectPath) && !next.decisionCloudDeclinedProjects.includes(bridge.projectPath)) await requestDecisionConsent(bridge.projectPath)
@@ -926,7 +935,7 @@ function createWindow(): void {
     width: 1500, height: 940, minWidth: 1000, minHeight: 650,
     // Explicit automation option for CI and non-disruptive local smoke checks.
     show: !backgroundCheck,
-    title: 'UnrealCode', backgroundColor: nativeTheme.shouldUseDarkColors ? '#10161b' : '#f0f3f5',
+    title: 'UnrealCode', backgroundColor: windowBackgroundColor(),
     icon: join(app.isPackaged ? process.resourcesPath : join(__dirname, '../..'), 'assets', 'unrealcode-icon.png'),
     webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: !backgroundCheck, offscreen: backgroundCheck }
   })
@@ -949,8 +958,8 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   try { await recoverStartup() } catch { /* Show recovery controls without overwriting prior data. */ }
-  nativeTheme.themeSource = recoveryState.migrationError ? 'system' : getSettings().theme
-  nativeTheme.on('updated', () => window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#10161b' : '#f0f3f5'))
+  applyWindowTheme(recoveryState.migrationError ? 'system' : getSettings().theme)
+  nativeTheme.on('updated', () => window?.setBackgroundColor(windowBackgroundColor()))
   app.setAppUserModelId('ai.mcshotty.unrealcode')
   registerIPC()
   registerRecoveryIPC()
