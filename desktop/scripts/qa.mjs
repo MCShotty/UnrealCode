@@ -13,7 +13,12 @@ const screenshots = join(qaData, 'screens')
 mkdirSync(screenshots)
 const qaWorkspace = process.argv.includes('--skills') || process.argv.includes('--temp-workspace') || process.argv.includes('--github-actions') ? mkdtempSync(join(tmpdir(), 'unrealcode-workspace-qa-')) : null
 const launchEnv = { ...process.env, UNREAL_DESKTOP_USER_DATA: qaData, UNREAL_DESKTOP_BACKGROUND_CHECK: '1', ELECTRON_DISABLE_SECURITY_WARNINGS: 'true' }
-if (process.argv.includes('--no-docker')) launchEnv.PATH = `${process.env.SystemRoot || 'C:\\Windows'}\\System32;${process.env.SystemRoot || 'C:\\Windows'}`
+if (process.argv.includes('--no-docker')) {
+  // Windows environment names are case-insensitive. Keeping both Path and
+  // PATH can let the inherited Docker path win, defeating this fixture.
+  for(const key of Object.keys(launchEnv))if(key.toLowerCase()==='path')delete launchEnv[key]
+  launchEnv.PATH = `${process.env.SystemRoot || 'C:\\Windows'}\\System32;${process.env.SystemRoot || 'C:\\Windows'}`
+}
 const instance = await electron.launch({ executablePath, args: packaged ? [] : ['.'], cwd: packaged ? dirname(executablePath) : desktop, env: launchEnv })
 let qaContainer = ''
 try {
@@ -31,8 +36,8 @@ try {
   if (process.argv.includes('--no-docker')) {
     result.dockerStatus = await page.evaluate(() => window.unreal.dockerStatus())
     const failure = result.dockerStatus.failure
-    const requiredAction = { DOCKER_MISSING: 'docker-help', DOCKER_UNAVAILABLE: 'docker-open', DOCKER_WINDOWS_ENGINE: 'docker-help', DOCKER_CONTEXT: 'docker-help' }[failure?.code]
-    if (result.dockerStatus.ready || result.dockerStatus.phase !== 'unavailable' || !requiredAction || !failure.actions.includes(requiredAction) || !failure.actions.includes('retry')) throw new Error(`Missing actionable Docker guidance: ${failure?.code || 'no failure'}`)
+    const requiredAction = { DOCKER_MISSING: 'docker-help', DOCKER_UNAVAILABLE: 'docker-open', DOCKER_WINDOWS_ENGINE: 'docker-help', DOCKER_CONTEXT: 'docker-help', DOCKER_TIMEOUT:'docker-open' }[failure?.code]
+    if (result.dockerStatus.ready || result.dockerStatus.phase !== 'unavailable' || !requiredAction || !failure.actions.includes(requiredAction) || !failure.actions.includes('retry')) throw new Error(`Missing actionable Docker guidance: ${failure?.code || 'no failure'}; ${failure?.details||result.dockerStatus.message}`)
   }
   if (process.argv.includes('--credentials')) {
     await page.evaluate(() => window.unreal.saveKey('openai', 'qa-only-value-not-a-real-key'))

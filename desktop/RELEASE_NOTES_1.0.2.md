@@ -6,6 +6,7 @@ This update repairs stale document/review results, quiets optional warnings, and
 - **Warning dismissal:** an unchanged advisory stays dismissed for the app session instead of reappearing on every background poll.
 - **Browser:** a compact responsive tab bar and address toolbar, a useful first-page guide, and a separate Agent access dialog with reliable focus restoration.
 - **Git:** plain folders remain usable without repeated background Git error notices. Repository readiness and GitHub login are reported separately; unavailable status is never called a clean working tree.
+- **Docker:** a stalled dependency check now explains the timeout and offers Open Docker Desktop and Retry checks.
 - **PDFs and OCR:** delayed results stay with their original page, and obsolete text layers are cancelled during navigation.
 - **Document concurrency:** queued requests retain their reserved slot, preserving the two-worker limit under competing arrivals.
 - **Reviews:** delayed pull-request details no longer replace a newer selection.

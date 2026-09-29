@@ -8,7 +8,7 @@ const advisoryScopes=new Set(['decision.error','usage:snapshot','models:discover
 const criticalCodes=new Set(['DISK_FULL','MEMORY_LIMIT','ACCESS_DENIED','METADATA_DAMAGED','METADATA_TOO_LARGE','CACHE_DAMAGED','RECOVERY_REVIEW'])
 export function isWarningFailure(failure:AppFailure):boolean{
   if(criticalCodes.has(failure.code)||failure.providerIssue)return false
-  return advisoryScopes.has(failure.scope)||(failure.scope==='docker'&&['DOCKER_UNAVAILABLE','DOCKER_MISSING','DOCKER_WINDOWS_ENGINE','DOCKER_CONTEXT'].includes(failure.code))
+  return advisoryScopes.has(failure.scope)||(failure.scope==='docker'&&['DOCKER_UNAVAILABLE','DOCKER_MISSING','DOCKER_WINDOWS_ENGINE','DOCKER_CONTEXT','DOCKER_TIMEOUT'].includes(failure.code))
 }
 export function showFailureNotice(failure:AppFailure,warningsEnabled=true):boolean{
   return failure.code!=='CANCELLED'&&(warningsEnabled||!isWarningFailure(failure))

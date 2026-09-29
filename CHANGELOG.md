@@ -18,6 +18,7 @@
 - Delayed GitHub pull-request details replacing a more recently selected review.
 - Recovery **Open settings** targeting an invalid tab, and a completed recovery action dismissing a newer issue.
 - Dismissed, unchanged background warnings reappearing on the next poll and covering release notices.
+- Docker dependency checks timing out with a generic error instead of an explanation and startup/retry actions.
 - Appearance and warning preference changes unnecessarily reconfiguring decision and MCP services.
 - Non-Git folders being reported as clean repositories and Git actions appearing available before repository prerequisites were satisfied.
 

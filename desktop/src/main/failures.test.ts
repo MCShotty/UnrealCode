@@ -51,6 +51,13 @@ it('uses native error codes before incidental provider-like words and numbers in
  expect(classifyFailure(Object.assign(new Error('missing Dockerfile.desktop'),{code:'ENOENT',path:'I:/bundle/Dockerfile.desktop'}),'docker-build').code).not.toBe('DOCKER_MISSING')
  expect(classifyFailure(Object.assign(new Error('spawn docker ENOENT'),{code:'ENOENT',path:'docker'}),'migration').code).toBe('DOCKER_MISSING')
 })
+it('explains a timed-out Docker dependency check using the child-process timeout evidence',()=>{
+ const error=Object.assign(new Error('Command failed: C:\\Docker\\docker.exe info --format {{.OSType}}'),{killed:true,signal:'SIGTERM'})
+ const failure=classifyFailure(error,'docker')
+ expect(failure.code).toBe('DOCKER_TIMEOUT')
+ expect(failure.actions).toEqual(expect.arrayContaining(['docker-open','retry']))
+ expect(classifyFailure(error,'editor:save').code).not.toBe('DOCKER_TIMEOUT')
+})
 it.each(['history-cache','history cache','docker-build','provider-request'])('keeps resource exhaustion actionable in %s',scope=>{
  expect(classifyFailure(Object.assign(new Error('write failed'),{code:'ENOSPC'}),scope).code).toBe('DISK_FULL')
  expect(classifyFailure(Object.assign(new Error('allocation failed'),{code:'ENOMEM'}),scope).code).toBe('MEMORY_LIMIT')
