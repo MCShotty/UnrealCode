@@ -14,7 +14,7 @@ const resources = process.env.UNREALCODE_QA_EXECUTABLE ? join(dirname(resolve(pr
 if (!existsSync(join(resources, 'app.asar'))) throw new Error('Build the Windows package before auditing')
 const entries=createRequire(import.meta.url)('@electron/asar').listPackage(join(resources,'app.asar')).map(path=>path.replaceAll('\\','/'))
 for(const name of ['@axe-core','axe-core','playwright','electron-builder','vitest'])if(entries.some(path=>path.includes(`/node_modules/${name}/`)))throw new Error(`Development-only dependency was packaged: ${name}`)
-for (const path of ['backend/LICENSE', 'licenses/NPM_NOTICES.txt', 'licenses/openai-openapi-LICENSE.txt', 'licenses/microsoft-terminal-LICENSE.txt', '../LICENSE.electron.txt', '../LICENSES.chromium.html']) {
+for (const path of ['backend/LICENSE', 'licenses/NPM_NOTICES.txt', 'licenses/openai-openapi-LICENSE.txt', 'licenses/microsoft-terminal-LICENSE.txt', 'licenses/jev-browser-LICENSE.txt', 'licenses/tessdata-fast-LICENSE.txt', 'licenses/skia-LICENSE.txt', '../LICENSE.electron.txt', '../LICENSES.chromium.html']) {
   if (!existsSync(join(resources, path))) throw new Error(`Missing packaged license notice: ${path}`)
 }
 const lock = JSON.parse(readFileSync(join(root, 'desktop/package-lock.json'), 'utf8'))
@@ -22,11 +22,14 @@ const notices = readFileSync(join(resources, 'licenses/NPM_NOTICES.txt'), 'utf8'
 let reviewedPackages = 0
 for (const [location, metadata] of Object.entries(lock.packages)) {
   if (!location.startsWith('node_modules/') || metadata.dev) continue
+  // npm omits native binaries for other platforms from this Windows install.
+  if (metadata.optional && !existsSync(join(root, 'desktop', location))) continue
   const playwrightApache=location==='node_modules/playwright-core' && metadata.version==='1.63.0' && metadata.license==='Apache-2.0'
+  const documentApache=['node_modules/pdfjs-dist','node_modules/tesseract.js','node_modules/tesseract.js-core','node_modules/idb-keyval','node_modules/wasm-feature-detect'].includes(location) && metadata.license==='Apache-2.0'
   const apacheElection = location === 'node_modules/dompurify' && metadata.license === '(MPL-2.0 OR Apache-2.0)'
   const argparsePython = location === 'node_modules/argparse' && metadata.version === '2.0.1' && metadata.license === 'Python-2.0'
   const saxBlueOak=location==='node_modules/sax' && metadata.version==='1.6.1' && metadata.license==='BlueOak-1.0.0'
-  if (!['MIT', 'ISC', '0BSD', 'BSD-2-Clause', 'BSD-3-Clause'].includes(metadata.license) && !playwrightApache && !apacheElection && !argparsePython && !saxBlueOak) throw new Error(`Unreviewed license: ${location}`)
+  if (!['MIT', 'ISC', '0BSD', 'BSD-2-Clause', 'BSD-3-Clause'].includes(metadata.license) && !playwrightApache && !documentApache && !apacheElection && !argparsePython && !saxBlueOak) throw new Error(`Unreviewed license: ${location}`)
   if (!notices.includes(`===== ${location.slice('node_modules/'.length)} ${metadata.version} (${metadata.license}) =====`)) throw new Error(`Missing npm notice: ${location}`)
   reviewedPackages++
 }

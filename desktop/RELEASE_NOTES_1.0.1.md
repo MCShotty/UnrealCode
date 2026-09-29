@@ -1,8 +1,14 @@
 # UnrealCode 1.0.1
 
-The installer is unsigned; upgrades remain manual. Verify its SHA-256 manifest and GitHub build attestation before installing. Version 1.0.0 requires a manual upgrade to receive the new release-notification feature.
+The installer is unsigned; upgrades remain manual. Verify its SHA-256 manifest and GitHub build attestation before installing. This is a corrected **same-version replacement** of the private 1.0.1 release. Existing 1.0.1 installations cannot receive a newer-version notice for it and require a manual reinstall; 1.0.0 also requires a manual upgrade.
 
 ## Changes
+
+- Live in-app browser tabs use separate project sign-ins. Users can browse without a chat; agent observation, interaction, and Jev BrowserDo need exact-origin grants and explicit tab handback. BrowserDo uses the selected Jev engine only with project and origin cloud consent, and stops for uncertain or consequential actions. The old isolated browser remains available for worker tasks and recovery.
+- Built-in, read-only PDF reading/parsing, OCR, Markdown, and browser-use skills work across projects. The PDF reader has page navigation, zoom, search, selectable text, and English/Arabic OCR. Document agent tools remain trusted-project-bound or require an explicitly attached external PDF.
+- Streamed assistant text appears while supported providers emit deltas. Failed streams retain a labelled, bounded incomplete response; final responses remain authoritative. Nonstreaming answers receive a brief entrance effect.
+- Agent team (subagents) now explains Git prerequisites separately from GitHub login and dirty changes. Jev Choice/Noul/Score names normalize to the TypeSafe wire format, retaining probabilities and measured usage.
+- Memory-provider switches test the candidate before replacing a working profile and restore the previous model/key if startup fails. Compact activity uses a concise typed stage rail rather than raw transcripts or empty operation payloads. Git failure states no longer masquerade as clean repositories.
 
 - Release notifications check GitHub when due after startup and at most once daily. Choose Stable/Preview, disable automatic checks, or check manually under Settings → Recovery. A dismissible notice opens the release/changelog page; installers are never downloaded or executed automatically by this unsigned build.
 - Files & skills now opens in a contained picker with separate file and skill views, keyboard controls, and a compact bottom sheet at narrow widths.
@@ -22,4 +28,4 @@ Global memory is optional and uses the separately configured model. The provider
 
 Timeline observations use registered timestamp filenames and are included in private backups. SQLite remains a rebuildable cache with one writer and two readers. Cache rebuilding does not regenerate historical model summaries.
 
-See the [changelog](https://github.com/MCShotty/UnrealCode/blob/v1.0.1/CHANGELOG.md), [verification guide](https://github.com/MCShotty/UnrealCode/blob/v1.0.1/desktop/VERIFY_RELEASE.md), and [acceptance evidence](https://github.com/MCShotty/UnrealCode/blob/v1.0.1/desktop/ACCEPTANCE_1.0.1.md). Local candidate checksums are separate from the published artifact hash below. v1.0.0's tag and release assets are unchanged.
+See the [changelog](https://github.com/MCShotty/UnrealCode/blob/v1.0.1/CHANGELOG.md), [verification guide](https://github.com/MCShotty/UnrealCode/blob/v1.0.1/desktop/VERIFY_RELEASE.md), and [replacement acceptance evidence](https://github.com/MCShotty/UnrealCode/blob/v1.0.1/desktop/REPLACEMENT_ACCEPTANCE_1.0.1.md). The published artifact hash appears in the release manifest. v1.0.0's tag and release assets are unchanged.

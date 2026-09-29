@@ -31,10 +31,11 @@ function grantOrigin(value:string):string{
  return origin
 }
 export function normalizeBrowserGrant(value:BrowserGrant):BrowserGrant{
- if(!value||typeof value.enabled!=='boolean'||!Array.isArray(value.origins)||value.origins.length>50||!Array.isArray(value.interactOrigins)||value.interactOrigins.length>50||!Array.isArray(value.ports)||value.ports.length>10||value.ports.some(port=>!Number.isInteger(port)||port<1024||port>65535))throw Error('Invalid browser permissions')
+ if(!value||typeof value.enabled!=='boolean'||!Array.isArray(value.origins)||value.origins.length>50||!Array.isArray(value.interactOrigins)||value.interactOrigins.length>50||value.cloudOrigins!==undefined&&(!Array.isArray(value.cloudOrigins)||value.cloudOrigins.length>50)||!Array.isArray(value.ports)||value.ports.length>10||value.ports.some(port=>!Number.isInteger(port)||port<1024||port>65535))throw Error('Invalid browser permissions')
  const origins=[...new Set(value.origins.map(grantOrigin))],interactOrigins=[...new Set(value.interactOrigins.map(grantOrigin))]
- if(interactOrigins.some(origin=>!origins.includes(origin)))throw Error('Interaction needs a granted origin')
- return {enabled:value.enabled,origins,interactOrigins,ports:[...new Set(value.ports)]}
+ const cloudOrigins=value.cloudOrigins?.map(grantOrigin)
+ if(interactOrigins.some(origin=>!origins.includes(origin))||cloudOrigins?.some(origin=>!origins.includes(origin)))throw Error('Interaction and cloud analysis need a granted observation origin')
+ return {enabled:value.enabled,origins,interactOrigins,ports:[...new Set(value.ports)],...(cloudOrigins?{cloudOrigins:[...new Set(cloudOrigins)]}:{})}
 }
 function intersection(a:BrowserGrant,b:BrowserGrant):BrowserGrant{return {enabled:a.enabled&&b.enabled,origins:a.origins.filter(origin=>b.origins.includes(origin)),interactOrigins:a.interactOrigins.filter(origin=>b.interactOrigins.includes(origin)),ports:a.ports.filter(port=>b.ports.includes(port))}}
 export class ProjectBrowser {

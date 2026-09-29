@@ -20,6 +20,7 @@ if (!workerData.reader) {
   if(!db.prepare('PRAGMA table_info(events)').all().some(column=>column.name==='original'))db.exec("ALTER TABLE events ADD COLUMN original TEXT NOT NULL DEFAULT ''")
 } else db.exec('PRAGMA query_only=ON')
 const activityModule=require('./activity-projection.cjs')
+const timelineProjection=require('./timeline-projection.cjs')
 if(!workerData.reader)activityModule.initialize(db)
 const activity=activityModule.service(db)
 if(!workerData.reader&&db.prepare('PRAGMA user_version').get().user_version<4){
@@ -100,7 +101,7 @@ function run(method,p){
   })
   if(method==='timeline.put')return transaction(()=>{db.prepare('DELETE FROM timeline_summaries WHERE project=? AND session=?').run(p.project,p.session);const put=db.prepare('INSERT INTO timeline_summaries VALUES(?,?,?,?,?)');for(const row of p.rows)put.run(p.project,p.session,row.id,row.toSeq,JSON.stringify(row))})
   if(method==='timeline.summaries')return db.prepare('SELECT payload FROM timeline_summaries WHERE project=? AND session=? AND seq<? ORDER BY seq DESC LIMIT 50').all(p.project,p.session,p.before||Number.MAX_SAFE_INTEGER).map(row=>JSON.parse(row.payload)).reverse()
-  if(method==='timeline.evidence')return db.prepare("SELECT seq,kind,at,original FROM events WHERE project=? AND session=? AND seq<? AND (original<>'' OR kind IN ('session.idle','session.needs_input','permission.requested','verification.result')) ORDER BY seq DESC LIMIT 60").all(p.project,p.session,p.before||Number.MAX_SAFE_INTEGER).reverse().map(row=>({seq:row.seq,kind:row.kind,at:row.at,text:(row.original||row.kind).slice(0,550)}))
+  if(method==='timeline.evidence')return db.prepare("SELECT seq,at,payload FROM events WHERE project=? AND session=? AND seq<? AND kind IN ('session.item','model.request.started','operation.started','operation.update','verification.result','permission.requested','session.needs_input','question.updated','session.idle') ORDER BY seq DESC LIMIT 600").all(p.project,p.session,p.before||Number.MAX_SAFE_INTEGER).map(row=>{const safe=timelineProjection.project(JSON.parse(row.payload));return safe?{seq:row.seq,at:row.at,...safe}:null}).filter(Boolean).slice(0,60).reverse()
   if(method==='page'){
     const limit=Math.min(1000,Math.max(1,p.limit||500)),before=p.before||Number.MAX_SAFE_INTEGER
     const rows=p.around?db.prepare('SELECT payload,seq FROM events WHERE project=? AND session=? AND seq>=? ORDER BY seq LIMIT ?').all(p.project,p.session,Math.max(1,p.around-100),limit):db.prepare('SELECT payload,seq FROM events WHERE project=? AND session=? AND seq<? ORDER BY seq DESC LIMIT ?').all(p.project,p.session,before,limit).reverse()

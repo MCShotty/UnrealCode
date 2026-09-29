@@ -10,6 +10,8 @@
 !desktop/
 !desktop/worker/
 !desktop/worker/**
+!desktop/builtin-skills/
+!desktop/builtin-skills/**
 !desktop/third-party-licenses/
 !desktop/third-party-licenses/**
 !LICENSE

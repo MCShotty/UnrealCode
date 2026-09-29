@@ -1,1 +1,2 @@
 harness/contextbuilder/prompts/*.md text eol=lf
+desktop/test-fixtures/*.pdf binary

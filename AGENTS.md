@@ -2,7 +2,7 @@
 
 ## Published release and release boundary
 
-The current public [v1.0.1 release](https://github.com/MCShotty/UnrealCode/releases/tag/v1.0.1)
+The current private [v1.0.1 release](https://github.com/MCShotty/UnrealCode/releases/tag/v1.0.1)
 is an **unsigned** Windows NSIS installer from annotated tag `v1.0.1` at
 `05ad90458f201f8522b518f8c02650be0f1ab34a`. Published installer SHA-256:
 `5b0c6390527aecf93d3155c7398d1ebc21cf1884e10ace9360654cfa5a64e9e5`.
@@ -11,9 +11,15 @@ workflow `36493471147` built, audited, attested and published the release.
 The downloaded assets were verified again for checksum, repository/workflow,
 tag, source commit, GitHub-hosted runner and `NotSigned` status. GitHub's Latest
 release is v1.0.1. See [published evidence](desktop/RELEASE_VERIFICATION_1.0.1.md).
-Preserve both published tags and their assets. Release discovery is available
-in 1.0.1; downloads and installation remain manual, including the first upgrade
-from 1.0.0.
+The owner explicitly authorized a **private, same-version replacement of v1.0.1**
+for the current repair task. The hash and workflow above describe the existing
+release until cutover; after a verified replacement they become superseded
+evidence. Archive its assets and provenance before changing the annotated tag
+or release. A guarded tag workflow must build and attest without publishing;
+verify the new installer and manifest before replacing draft-release assets.
+If cutover fails, restore the original tag and assets. Existing 1.0.1 installs
+require manual reinstall because version checks cannot announce a same-version
+replacement. Release discovery and installation remain manual.
 
 ### Preserved 1.0.0 evidence
 
@@ -31,8 +37,9 @@ Hashes and attestations establish integrity and build provenance; they do not
 provide Windows Authenticode publisher trust. The published installer reports
 `NotSigned` (the local 1.0 preflight app EXE did too), so in-app auto-updates
 remain disabled. Never describe this release as signed or suggest that Windows
-warnings are removed. Preserve public repository visibility; do not move
-`v1.0.0` or `v1.0.1`, or replace their release assets.
+warnings are removed. The repository is currently private. Do not move
+`v1.0.0` or replace its assets. The one-time v1.0.1 replacement authorization
+does not apply to any later version.
 The owner's authorization for this release does not automatically authorize a
 later version. Before future publication, use a new reviewed commit and tag,
 run the nonpublishing release workflow on `main`, and verify the downloaded
@@ -60,7 +67,15 @@ For a separately authorized future release, merge its reviewed PR after Windows,
 
 Memory enablement is app-wide after explicit destination/scope consent. Shared records retain their source project; unintegrated specialists remain task-scoped. Migrations preserve backups, corrections, tombstones and legacy banks. Timeline inference is advisory, runs at most once per 20 seconds per conversation with two global slots, and never edits approved plans. Preserve exact provider rejection metadata and recorded failures; do not automatically retry refusals or substitute providers.
 
-Release discovery lives in Electron main and uses the fixed public GitHub releases endpoint without credentials. Automatic checks default on, run when due after startup and at most daily across restarts; manual checks remain possible when automation is off. Persist retry times, ETags and per-version dismissal. Validate versions, channel, installer/checksum assets and owned release URLs. Unsigned builds offer **View release & changelog**, not automatic download/install. Keep the signed updater's checksum/publisher gates. New network checks must never block startup, tools or steering. The checker cache is rebuildable, stored under a timestamp location in app data, and excluded from private content backups.
+Release discovery lives in Electron main and uses the fixed GitHub releases endpoint. It first checks anonymously; a private-repository 404 may use the existing host `gh auth token` solely for that GitHub API request. Never pass that token to the renderer or Docker. Automatic checks default on, run when due after startup and at most daily across restarts; manual checks remain possible when automation is off. Persist retry times, ETags and per-version dismissal. Validate versions, channel, installer/checksum assets and owned release URLs. Unsigned builds offer **View release & changelog**, not automatic download/install. Keep the signed updater's checksum/publisher gates. New network checks must never block startup, tools or steering. The checker cache is rebuildable and excluded from private content backups.
+
+### Same-version 1.0.1 replacement candidate
+
+The current task adds `desktop/builtin-skills/` to the app and Docker backend, a PDF.js/Tesseract.js document reader with checksum-pinned English/Arabic OCR, and main-owned `WebContentsView` project browser tabs. Main-agent access to shared tabs requires project and exact-origin observation/interaction grants plus handback; worker browsers remain isolated. BrowserDo uses the existing Jev broker only with the global Jev selection and project plus origin cloud consent. Web content is data and never grants permissions. Browser cookies and document extraction caches do not enter ordinary backups or support exports; restored browser grants are disabled.
+
+The bridge negotiates `decision.browser.v1`, `response.preview.v1`, `documents.v1`, and `browser.shared.v1`. Provider deltas are transient; final responses remain canonical, and a failed stream retains a bounded incomplete preview. The threaded history cache projects concise timeline stages without copying raw chat/tool text into the compact rail. Model-profile changes test a candidate before replacing the working memory profile and restore the old profile and key on failure.
+
+Run `npm run typecheck`, `npm test -- --testTimeout=15000`, `node scripts/qa-shared-documents.mjs --packaged`, `node scripts/qa.mjs --no-docker --credentials --packaged`, and `npm run licenses:generate` from `desktop/`. Go checks run in the pinned Go image or CI; Docker and Windows packaging must be verified before tag movement. The one-time replacement requires an archived original tag/assets, a merged exact commit, a guarded tag build without auto-publication, checksum and GitHub attestation verification, then deliberate replacement of the private release assets. Leave unrelated `docs/orbit-garden-demo.html` untouched.
 
 ## Product and architecture
 
@@ -73,7 +88,7 @@ tagged installer.
 
 | Location | Responsibility |
 | --- | --- |
-| `desktop/src/main/` | Electron authority boundary: credentials, trust, Docker, Git/gh, MCP, workspace/checkpoint/recovery services. |
+| `desktop/src/main/` | Electron authority boundary: credentials, trust, Docker, Git/gh, MCP, document workers, shared browser tabs, workspace/checkpoint/recovery services. |
 | `desktop/src/preload/index.ts` | Narrow renderer API. Add typed operations rather than exposing Node or arbitrary IPC. |
 | `desktop/src/shared/` | Protocol, settings, workspace, connection, team, and recovery types. |
 | `desktop/src/renderer/` | React interface, Monaco, terminal, review, usage and activity views. |
@@ -82,6 +97,7 @@ tagged installer.
 | `harness/` | Upstream coordinator, context, LLM adapters, operations, tools, and session persistence. |
 | `internal/openaiapi/` | Generated client. Follow `third_party/openai-openapi/README.md` to regenerate; do not hand-edit generated bindings. |
 | `desktop/worker/` | Optional local decision/entity worker and tests. |
+| `desktop/builtin-skills/` | App-wide read-only PDF, OCR, Markdown, and browser guidance copied into the packaged app and backend image. |
 | `desktop/scripts/` | Packaging, notices, audits, fixture QA, and benchmarks. |
 | `.github/workflows/desktop-release.yml` | Authoritative Windows release build, attestation, and publication from a matching tag. The inherited `release.yml` is upstream-only and skips this repository. |
 | `desktop/assets/brand/` | Solid UC vector mark, theme variants, and PNG exports. |

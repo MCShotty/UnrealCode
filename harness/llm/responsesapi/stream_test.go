@@ -37,7 +37,8 @@ func TestResponsesStreamingReturnsTerminalResponse(t *testing.T) {
 	adapter := newTestAdapterWithConfig(t, Config{Endpoint: server.URL, Trace: func(e Exchange) { traced = e }})
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	got, err := adapter.Respond(ctx, validRequest(), llm.RequestOptions{})
+	var previews []llm.TextDelta
+	got, err := adapter.Respond(ctx, validRequest(), llm.RequestOptions{OnTextDelta: func(delta llm.TextDelta) { previews = append(previews, delta) }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,6 +51,9 @@ func TestResponsesStreamingReturnsTerminalResponse(t *testing.T) {
 	}
 	if string(traced.ResponseBody) != completedResponse || traced.StatusCode != 200 {
 		t.Fatal("trace did not contain terminal response")
+	}
+	if len(previews) != 1 || previews[0].Text != "not authoritative" || previews[0].Attempt != 1 {
+		t.Fatalf("transient text previews = %#v", previews)
 	}
 }
 

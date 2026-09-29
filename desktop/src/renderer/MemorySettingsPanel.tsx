@@ -88,11 +88,11 @@ export function MemorySettingsPanel({ settings, projectPath, active }: {
     if (!profile.model.trim()) { setError('Enter a model ID first.'); return }
     setBusy(true); setError(''); setNotice('')
     try {
-      await savePendingKey()
-      if (!configured) await window.unreal.memoryConfigure(profile)
-      await window.unreal.memoryVerify()
-      await window.unreal.memoryEnable(true)
+      const candidateKey=keyInput.current?.value.trim()||undefined
+      if (!configured||candidateKey) await window.unreal.memorySwitchVerified(profile,candidateKey)
+      else { await window.unreal.memoryVerify(); await window.unreal.memoryEnable(true) }
       await refresh()
+      if(candidateKey){clearKeyInput();setAccess({available:true,message:'Saved API key available.'})}
       edited.current = false
       setNotice('Memory model verified. App-wide memory is on.')
     } catch (reason) {

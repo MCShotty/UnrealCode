@@ -90,7 +90,10 @@ jobs:
           retention-days: 14
 
   publish:
-    if: github.ref_type == 'tag'
+    # v1.0.1 is a one-owner, privately authorized replacement. Its moved tag
+    # must build and attest first; an existing release is updated only after
+    # the new assets and provenance are verified and the old assets archived.
+    if: github.ref_type == 'tag' && github.ref_name != 'v1.0.1'
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 10

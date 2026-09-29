@@ -53,6 +53,11 @@ export function parseEvents(events: AgentEvent[]): ParsedEntry[] {
   }
   for (const event of events) {
     sequence = event.seq
+    if(event.event==='model.response.incomplete'){
+      const text=string(field(event.payload,'text')).slice(0,16384)
+      if(text)result.push({id:`${event.seq}:incomplete`,seq:event.seq,kind:'assistant',title:'UnrealCode',text,timestamp:formatTime(event.recordedAt),status:'incomplete'})
+      continue
+    }
     if (event.event === 'session.needs_input') {
       result.push({ id: `${event.seq}:question`, kind: 'question', title: 'Your input is needed', text: string(field(event.payload, 'question')), timestamp: formatTime(event.recordedAt), raw: event.payload })
       continue

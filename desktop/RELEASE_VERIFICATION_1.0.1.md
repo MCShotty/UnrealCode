@@ -1,4 +1,12 @@
-# Published UnrealCode 1.0.1 verification
+# Original UnrealCode 1.0.1 verification (historical)
+
+This record describes the first private 1.0.1 publication. Its installer,
+manifest, release metadata, annotated tag, and attestation evidence were
+archived before the authorized same-version replacement. Its checksum becomes
+superseded evidence once the replacement is verified. See
+[replacement acceptance](REPLACEMENT_ACCEPTANCE_1.0.1.md) for candidate checks;
+the final published checksum must be recorded after the tagged build and asset
+cutover.
 
 Verified on 2026-09-29 (Asia/Riyadh). GitHub publication time: 2026-09-28 22:42:25 UTC.
 

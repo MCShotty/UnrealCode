@@ -34,11 +34,12 @@ type eventLog struct {
 }
 
 type queuedEvent struct {
-	id      session.ID
-	kind    string
-	payload any
-	at      time.Time
-	barrier chan struct{}
+	id        session.ID
+	kind      string
+	payload   any
+	at        time.Time
+	transient bool
+	barrier   chan struct{}
 }
 
 type eventState struct {
@@ -65,6 +66,17 @@ func (l *eventLog) enqueue(id session.ID, kind string, payload any) {
 	l.queueMu.Unlock()
 }
 
+// A transient preview is delivered live but never written to the replay log.
+// Drop excess previews rather than letting UI presentation delay model work.
+func (l *eventLog) preview(id session.ID, kind string, payload any) {
+	l.queueMu.Lock()
+	if len(l.queue) < 1024 {
+		l.queue = append(l.queue, queuedEvent{id: id, kind: kind, payload: payload, at: time.Now().UTC(), transient: true})
+		l.queueCond.Signal()
+	}
+	l.queueMu.Unlock()
+}
+
 func (l *eventLog) writeQueue() {
 	for {
 		l.queueMu.Lock()
@@ -77,6 +89,13 @@ func (l *eventLog) writeQueue() {
 		l.queueMu.Unlock()
 		if value.barrier != nil {
 			close(value.barrier)
+			continue
+		}
+		if value.transient {
+			payload, err := json.Marshal(value.payload)
+			if err == nil {
+				_ = l.output.write(event{Version: protocolVersion, Event: value.kind, SessionID: string(value.id), RecordedAt: value.at, Payload: jsontext.Value(payload)})
+			}
 			continue
 		}
 		if err := l.appendAt(value.id, value.kind, value.payload, 0, value.at); err != nil {

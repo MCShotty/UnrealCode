@@ -14,7 +14,7 @@ afterEach(async()=>{await closeHistoryCaches();vi.restoreAllMocks();for(const ro
 async function teamFixture(){
  const root=await fs.mkdtemp(join(tmpdir(),'unrealcode-team-commit-'));roots.push(root);const project=join(root,'project');await fs.mkdir(project)
  const runtime=new WorkspaceRuntime(project,join(root,'profile'),{event:()=>{},changed:()=>{},notify:()=>{},configure:async()=>{},hasTerminal:()=>false}),id=randomUUID()
- vi.spyOn(runtime.tasks,'available').mockResolvedValue(true);vi.spyOn(runtime,'owner').mockResolvedValue(runtime)
+ vi.spyOn(runtime.tasks,'availability').mockResolvedValue({available:true});vi.spyOn(runtime,'owner').mockResolvedValue(runtime)
  await runtime.teams.configure(id,{...defaultTeamOptions,allowSpecialists:false,policy:'off'})
  return {runtime,id,enabled:{...defaultTeamOptions,allowSpecialists:true,policy:'manual' as const}}
 }

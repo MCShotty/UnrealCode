@@ -23,6 +23,7 @@ RUN --mount=type=secret,id=host_ca,required=false \
     if [ -s /run/secrets/host_ca ]; then cp /run/secrets/host_ca /usr/local/share/ca-certificates/host.crt && update-ca-certificates; fi
 COPY --from=build /out/unreal-agent-desktop-bridge /usr/local/bin/unreal-agent-desktop-bridge
 COPY desktop/worker/decision_worker.py /usr/local/lib/unrealcode/decision_worker.py
+COPY desktop/builtin-skills/ /usr/local/share/unrealcode/skills/
 COPY LICENSE /usr/share/doc/unreal-agent/LICENSE
 COPY desktop/third-party-licenses/ /usr/share/doc/unrealcode/third-party-licenses/
 ENV HOME=/home/agent SHELL=/bin/bash UNREAL_DESKTOP_STATE=/state

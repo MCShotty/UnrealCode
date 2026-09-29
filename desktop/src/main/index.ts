@@ -4,6 +4,9 @@ import {TimelineService} from './timeline'
 import {modelCatalog,recordModelRejection} from './model-catalog'
 import { modelCapabilities } from './model-capabilities'
 import { HindsightMemory } from './hindsight-memory'
+import {DocumentReader} from './document-reader'
+import {SharedProjectBrowser} from './shared-browser'
+import {browserDo} from './jev-browser-adapter'
 import { settledMemoryReply } from './memory-retention'
 import { historyCache, closeHistoryCaches, resetHistoryCaches } from './history-cache'
 import { timestampPath, timestampName, storageLocation } from './storage-locations'
@@ -13,6 +16,10 @@ import { randomUUID,createHash } from 'node:crypto'
 const imageInputs=new Map<string,{project:string;data:string;createdAt:number}>()
 let memoryService:HindsightMemory|undefined
 let timelineService:TimelineService|undefined
+let documentReader:DocumentReader|undefined
+function documents(){return documentReader||=(new DocumentReader(app.getPath('userData')))}
+const sharedBrowsers=new Map<string,SharedProjectBrowser>()
+function sharedBrowser(root:string):SharedProjectBrowser{let browser=sharedBrowsers.get(root);if(!browser){browser=new SharedProjectBrowser(root,app.getPath('userData'));browser.onChanged=()=>window?.webContents.send('shared-browser:changed',root);sharedBrowsers.set(root,browser)}return browser}
 function timeline(){return timelineService||=(new TimelineService(memory,()=>window?.webContents.send('workflow:changed',selected?.project||'')))}
 const hookControllers=new Map<string,AbortController>()
 const browserControllers=new Map<string,AbortController>()
@@ -28,7 +35,7 @@ import { DockerBridge } from './docker'
 import { codexStatus, credentialFor, getSettings, hasKey, rememberProject, saveKey, updateSettings, migrateLegacySettings, setDecisionConsent, saveAdminKey, hasAdminKey, clearAdminKey, defaultSettings } from './settings'
 import { AccountUsageService } from './account-usage'
 import { SessionUsageService } from './session-usage'
-import { deleteSkill, gitChanges, gitDiff, listFiles, listSkills, readFile, saveSkill } from './files'
+import { deleteSkill, gitChanges, gitDiff, listFiles, listAvailableSkills, readFile, saveSkill } from './files'
 import { readBoundedRegularFile } from './bounded-file-read'
 import { checkedImageDimensions } from './image-header'
 import { convertWebp } from './webp-converter'
@@ -56,6 +63,7 @@ import { DockerRecoveryVolumes } from './recovery-volumes'
 import { Storage } from './storage'
 import { Updates } from './updates'
 import {ReleaseNotifications} from './release-notifications'
+import {releaseFetch} from './private-release-fetch'
 import { recordFailure,supportDocument } from './support'
 import { drainMetadata } from './atomic-metadata'
 import type { RecoveryStatus } from '../shared/recovery'
@@ -109,7 +117,7 @@ const updates = new Updates()
 let releaseNotifications:ReleaseNotifications|undefined
 function notificationPreferences(){if(recoveryState.migrationError)return {automaticChecks:false,channel:'stable' as const};const s=getSettings();return {automaticChecks:s.automaticUpdateChecks!==false,channel:s.updateChannel||'stable' as const}}
 function releaseNotices(){
- if(!releaseNotifications){releaseNotifications=new ReleaseNotifications(storageLocation(app.getPath('userData'),'update-notifications','releases',undefined,'.json'),app.getVersion(),(...args)=>fetch(...args),()=>window?.webContents.send('updates:changed',updateState()));void releaseNotifications.initialize(notificationPreferences(),app.isPackaged&&!process.env.UNREAL_DESKTOP_BACKGROUND_CHECK).catch(()=>{})}
+ if(!releaseNotifications){releaseNotifications=new ReleaseNotifications(storageLocation(app.getPath('userData'),'update-notifications','releases',undefined,'.json'),app.getVersion(),releaseFetch,()=>window?.webContents.send('updates:changed',updateState()));void releaseNotifications.initialize(notificationPreferences(),app.isPackaged&&!process.env.UNREAL_DESKTOP_BACKGROUND_CHECK).catch(()=>{})}
  return releaseNotifications
 }
 function updateState():import('../shared/recovery').UpdateState{return updates.supportsInstallation()?{...updates.view(),delivery:'signed',automaticChecks:notificationPreferences().automaticChecks}:releaseNotices().view()}
@@ -304,7 +312,7 @@ async function handleHostEvent(owner: WorkspaceRuntime, event: AgentEvent): Prom
   if (!['host.request','host.read','host.team','host.model','host.control','host.hook'].includes(event.event)) return
   const operation = event.payload as HostOperation
   const browserKey=`${owner.project}:${event.sessionId}:${operation.operationId}`
-  const browserController=event.event==='host.control'&&operation.tool==='Browser'?new AbortController():undefined
+  const browserController=event.event==='host.control'&&['Browser','BrowserDo'].includes(operation.tool)?new AbortController():undefined
   if(browserController)browserControllers.set(browserKey,browserController)
   let responseBridge:DockerBridge|undefined
   let result: import('../shared/connections').HostResult
@@ -341,14 +349,43 @@ async function handleHostEvent(owner: WorkspaceRuntime, event: AgentEvent): Prom
         const action=args as unknown as import('../shared/browser').BrowserAction;if(action.type==='screenshot'&&!(await modelCapabilities(config.provider,config.model,config.baseUrl)).vision)throw Error('Image input support is not verified for this model. Use a browser snapshot or select a verified vision model.');const readOnly=['snapshot','screenshot'].includes(action.type)
         if(!readOnly&&config.mode==='plan')throw Error('Plan mode permits existing-page observation only')
         if(['upload','download'].includes(action.type)&&config.disallowedTools.includes('ApplyPatch'))throw Error('File transfer is restricted for this session')
-        const browser=target.browser
-        const execute=async(signal?:AbortSignal)=>{const combined=signal?AbortSignal.any([signal,browserController!.signal]):browserController!.signal;const response=await browser.call(event.sessionId,action,combined);return action.type==='screenshot'?{text:JSON.stringify({kind:'unrealcode.browser.image',image:`data:image/png;base64,${response.image}`})}:{text:JSON.stringify(response)}}
-        const targetURL=action.url||(await target.browser.state(event.sessionId)).tabs.find(tab=>tab.id===action.tabId)?.url||'',local=/^https?:\/\/(localhost|127\.0\.0\.1)(?=[:/]|$)/.test(targetURL)
+        const browser=config.specialist?target.browser:sharedBrowser(owner.project)
+        const execute=async(signal?:AbortSignal)=>{const combined=signal?AbortSignal.any([signal,browserController!.signal]):browserController!.signal;const response=config.specialist?await target.browser.call(event.sessionId,action,combined):await sharedBrowser(owner.project).agent(action,target.project,combined);return action.type==='screenshot'?{text:JSON.stringify({kind:'unrealcode.browser.image',image:`data:image/png;base64,${response.image}`})}:{text:JSON.stringify(response)}}
+        const targetURL=action.url||(await browser.state()).tabs.find(tab=>tab.id===action.tabId)?.url||'',local=/^https?:\/\/(localhost|127\.0\.0\.1)(?=[:/]|$)/.test(targetURL)
         browserController!.signal.throwIfAborted()
-        result=readOnly||config.mode==='agent'&&local?await execute():await hostOperations.run(owner.project,operation,'Dedicated project browser',execute)
+        const consequential=config.specialist?['upload','download','press'].includes(action.type):await sharedBrowser(owner.project).actionNeedsReview(action)
+        result=readOnly||config.mode==='agent'&&local&&!consequential?await execute():await hostOperations.run(owner.project,operation,'Shared project browser',execute)
         await target.bridge.request('host.respond',{requestId:operation.requestId,sessionId:event.sessionId,operationId:operation.operationId,...result}).catch(()=>{});return
       }
       else if(operation.tool==='BrowserPreview')value={addresses:await (config.specialist&&config.parentSessionId?(await owner.owner(config.parentSessionId)).bridge:target.bridge).previewAddresses(),workspace:target.project}
+      else if(operation.tool==='BrowserDo'){
+        const tabId=String(args.tabId||''),goal=String(args.goal||''),settings=getSettings(),browser=sharedBrowser(owner.project)
+        if(config.specialist)value={status:'blocked',info:'Specialist browser state is isolated. Use direct Browser actions in the worker browser.'}
+        else if(settings.decisionEngine!=='jev')value={status:'blocked',info:`The global decision engine is ${settings.decisionEngine}. Use direct Browser tools; BrowserDo does not switch engines.`}
+        else if(!settings.decisionCloudProjects.includes(owner.project)||!browser.canAnalyse(tabId))value={status:'blocked',info:'Grant TypeSafe decisions for this project and Jev cloud analysis for this tab and every frame origin.'}
+        else{
+          const decision=await configureDecision(target.bridge,owner.project)
+          if(!decision.available)value={status:'blocked',info:decision.message}
+          else{
+            const driver={agent:async(action:import('../shared/browser').BrowserAction,path:string,signal?:AbortSignal)=>{
+              if(action.type==='snapshot')return browser.agent(action,path,signal)
+              if(config.mode==='plan')throw Error('Plan mode allows observation only')
+              const execute=()=>browser.agent(action,path,signal)
+              const browserState=await browser.state(),actionURL=browserState.tabs.find(tab=>tab.id===action.tabId)?.url||''
+              const local=/^https?:\/\/(localhost|127\.0\.0\.1)(?=[:/]|$)/.test(actionURL)
+              if(config.mode==='agent'&&local&&!await browser.actionNeedsReview(action))return execute()
+              const reviewed=await hostOperations.run(owner.project,{...operation,tool:`BrowserDo ${action.type}`,arguments:action},'Shared browser action',async()=>({text:JSON.stringify(await execute())}))
+              if(reviewed.error)throw Error(reviewed.text)
+              return JSON.parse(reviewed.text)
+            }}
+            value=await browserDo(driver,target.project,tabId,goal,args.values as Record<string,string>||{},batch=>target.bridge.request<import('../shared/api').DecisionResult>('decision.browser',{sessionId:event.sessionId,batch},120000),browserController!.signal)
+          }
+        }
+      }
+      else if(operation.tool==='DocumentInspect')value=args.documentId?documents().agentDocument(String(args.documentId),target.project,event.sessionId):await documents().openProject(target.project,String(args.path||''))
+      else if(operation.tool==='DocumentRead'){documents().agentDocument(String(args.documentId||''),target.project,event.sessionId);value=await documents().page(String(args.documentId),Number(args.page))}
+      else if(operation.tool==='DocumentSearch'){documents().agentDocument(String(args.documentId||''),target.project,event.sessionId);value=await documents().search(String(args.documentId),String(args.query||''),Number(args.fromPage)||1,30)}
+      else if(operation.tool==='DocumentOCR'){documents().agentDocument(String(args.documentId||''),target.project,event.sessionId);value=await documents().ocrPage(String(args.documentId),Number(args.page),args.language as 'eng'|'ara')}
       else if(operation.tool==='MemoryRecall')value=await memory().recall(owner.project,String(args.query||''),target.project)
       else if(operation.tool==='MemoryReflect')value=await memory().reflect(owner.project,String(args.query||''),target.project)
       else if(operation.tool==='BackgroundStatus')value=await target.jobs.list(event.sessionId)
@@ -430,7 +467,7 @@ async function openWorkspace(requested: string): Promise<ReturnType<DockerBridge
   let current = workspaces.get(canonical)
   if (!current) {
     current = new WorkspaceRuntime(canonical, app.getPath('userData'), {
-      event: (event) => { if(event.event==='model.request.completed'){const p=event.payload as any;if(p.failure&&typeof p.model==='string')recordModelRejection(p.provider,p.model,p.failure)} const display=withEventFailure(event);window?.webContents.send('agent:event', display);if(display.failure){recordFailure(event.event,{code:display.failure.code,reference:display.failure.reference});window?.webContents.send('app:failure',display.failure);} if (current) {if(!recoveryState.busy&&['session.item','session.idle','verification.result','session.needs_input'].includes(event.event))timeline().changed(current,event.sessionId);void handleHostEvent(current,event).catch(()=>{});if(event.event==='session.idle'&&memoryService)void retainMemory(current,event).catch(()=>{})} },
+      event: (event) => { if(event.event==='model.request.completed'){const p=event.payload as any;if(p.failure&&typeof p.model==='string')recordModelRejection(p.provider,p.model,p.failure)} const display=withEventFailure(event);window?.webContents.send('agent:event', display);if(display.failure){recordFailure(event.event,{code:display.failure.code,reference:display.failure.reference});window?.webContents.send('app:failure',display.failure);} if (current) {if(!recoveryState.busy&&['session.item','session.idle','verification.result','session.needs_input','operation.started','operation.update','question.updated'].includes(event.event))timeline().changed(current,event.sessionId);void handleHostEvent(current,event).catch(()=>{});if(event.event==='session.idle'&&memoryService)void retainMemory(current,event).catch(()=>{})} },
       recall:async(prompt,workspace)=>{if(!memoryService)return '';try{const result=await memoryService.recall(canonical,prompt.slice(0,8000),workspace);return JSON.stringify(result)}catch{return 'Project memory is unavailable. Verify against current files and recorded sessions.'}},
       changed: () => window?.webContents.send('workflow:changed', canonical),
       hasTerminal: () => selected?.project === canonical && terminals.size > 0,
@@ -695,6 +732,13 @@ function registerIPC(): void {
   handle('memory:records',(_event,before?:string,limit?:number)=>memory().recordsPage('',before,limit))
   handle('memory:record',(_event,id:string)=>memory().readRecord('',id))
   handle('memory:configure',(_event,profile:import('../shared/memory').MemoryProfile)=>memory().configure(profile))
+  handle('memory:switch-verified',async(_event,profile:import('../shared/memory').MemoryProfile,candidateKey?:string)=>{
+    const previous=(await memory().status('',0)).settings.profile
+    if(!previous||previous.provider!==profile?.provider||previous.model!==profile?.model||previous.baseUrl!==profile?.baseUrl){
+      await remotePreview('Change app-wide memory model',`New destination: ${profile?.provider}/${profile?.model}\nUseful outcomes and bounded activity from trusted projects will be processed by this model. Existing memories stay in the app-wide bank; the previous working profile is restored if verification or startup fails.`)
+    }
+    return memory().switchVerified(profile,candidateKey)
+  })
   handle('memory:verify',()=>memory().verify())
   handle('memory:enable',async(_event,enabled:boolean)=>{if(typeof enabled!=='boolean')throw Error('Choose whether to enable memory');if(enabled){const status=await memory().status('');if(!status.settings.globalConsent)await remotePreview('Enable app-wide memory',`Memory processing: ${status.settings.profile?.provider}/${status.settings.profile?.model}\nUseful outcomes and bounded live activity from trusted projects will be processed by this model. Relevant memories can be recalled across chats and projects with source labels. Existing records will be migrated; chat logs remain authoritative.`)}return memory().enable('',enabled)})
   handle('memory:retry',()=>memory().retry(''))
@@ -706,6 +750,11 @@ function registerIPC(): void {
   handle('memory:export',async()=>{const result=await dialog.showSaveDialog(window!,{title:'Export private app-wide memory',defaultPath:`UnrealCode-memory-${timestampName()}.json`,filters:[{name:'JSON',extensions:['json']}]});if(result.canceled||!result.filePath)return null;await fs.writeFile(result.filePath,await memory().export(''),{mode:0o600});return result.filePath})
   const planningOwner=async(id:string)=>{const owner=await runtime().owner(id);await owner.bridge.request('session.config',{sessionId:id});return owner}
   handle('browser:state',async(_event,id:string)=>(await planningOwner(id)).browser.state(id))
+  handle('browser:shared-state',()=>sharedBrowser(runtime().project).state())
+  handle('browser:shared-command',(_event,command:import('../shared/browser').SharedBrowserCommand)=>sharedBrowser(runtime().project).command(command))
+  handle('browser:shared-configure',async(_event,grant:import('../shared/browser').BrowserGrant)=>{const valid=normalizeBrowserGrant(grant);await remotePreview('Grant agent access to shared browser tabs',`Project: ${runtime().project}\nObservation origins: ${valid.origins.join(', ')||'none'}\nInteraction origins: ${valid.interactOrigins.join(', ')||'none'}\nJev cloud page analysis origins: ${valid.cloudOrigins?.join(', ')||'none'}\nA granted origin may expose signed-in pages to the agent; cloud analysis sends bounded, redacted page descriptors to the selected Jev model. Page content cannot grant more access.`);await sharedBrowser(runtime().project).configure(valid)})
+  handle('browser:shared-show',(_event,id:string|undefined,bounds:{x:number;y:number;width:number;height:number})=>sharedBrowser(runtime().project).show(window!,id,bounds))
+  handle('browser:shared-hide',()=>{for(const browser of sharedBrowsers.values())browser.hide()})
   handle('browser:install',async(_event,id:string)=>(await planningOwner(id)).browser.install())
   handle('browser:action',async(_event,id:string,action:import('../shared/browser').BrowserAction)=>(await planningOwner(id)).browser.call(id,action))
   handle('browser:configure',async(_event,id:string,grant:import('../shared/browser').BrowserGrant)=>{
@@ -759,7 +808,7 @@ function registerIPC(): void {
     if(name==='fork'){const result=await owner.fork(id!);return {sessionId:result.sessionId,view:'chat'}}
     if(name==='resume'){await owner.open(id!);return {view:'chat',message:'Session resumed'}}
     if(name==='compact'){await owner.compactContext(id!);return {view:'context',message:'Context summary created'}}
-    if(name==='skills'&&args){const skill=(await listSkills(project())).find(x=>x.name===args);if(!skill)throw Error('Choose an existing project skill');return {view:'chat',prompt:`Use the project skill ${skill.name}. Read its current instructions using SkillUse.`}}
+    if(name==='skills'&&args){const skill=(await listAvailableSkills(project())).find(x=>x.name===args);if(!skill)throw Error('Choose an available skill');return {view:'chat',prompt:`Use the ${skill.source} skill ${skill.name}. Read its current instructions using SkillUse.`}}
     if(name==='init')return {view:'chat',prompt:'Inspect this project and propose an AGENTS.md containing accurate build, test, architecture and contribution instructions. Show the proposed content for review before writing it.'}
     if(name==='goal'&&args){await (await planningOwner(id!)).planning.goal(id!,{objective:args,requestLimit:50,tokenLimit:250000,elapsedMinutes:30});return {view:'control',message:'Objective saved paused. Review its limits and choose Resume.'}}
     const routes:Partial<Record<typeof name,string>>={model:'workflow',agents:'control',tasks:'control',permissions:'chat',status:'control',usage:'usage',context:'context',review:'review',diff:'review',checkpoint:'review',rewind:'review',skills:'skills',mcp:'connections',memory:'memory',browser:'browser',hooks:'hooks',goal:'control',help:'help',new:'new'}
@@ -834,9 +883,17 @@ function registerIPC(): void {
   handle('files:read', (_event, relative: string) => readFile(project(), relative))
   handle('files:changes', () => gitChanges(project()))
   handle('files:diff', (_event, relative: string) => gitDiff(project(), relative))
-  handle('skills:list', () => listSkills(project()))
+  handle('skills:list', () => listAvailableSkills(project()))
   handle('skills:save', (_event, name: string, content: string) => idleMutation((root) => saveSkill(root, name, content)))
   handle('skills:delete', (_event, name: string) => idleMutation((root) => deleteSkill(root, name)))
+  handle('document:open-project',(_event,path:string,password?:string)=>documents().openProject(project(),path,password))
+  handle('document:open-external',async(_event,password?:string)=>{const choice=await dialog.showOpenDialog(window!,{title:'Open PDF',properties:['openFile'],filters:[{name:'PDF documents',extensions:['pdf']}]});return choice.canceled||!choice.filePaths[0]?null:documents().openExternal(choice.filePaths[0],password)})
+  handle('document:bytes',(_event,id:string)=>documents().bytes(id))
+  handle('document:page',(_event,id:string,page:number)=>documents().page(id,page))
+  handle('document:search',(_event,id:string,query:string,fromPage?:number,limit?:number)=>documents().search(id,query,fromPage,limit))
+  handle('document:ocr',(_event,id:string,page:number,language:'eng'|'ara')=>documents().ocrPage(id,page,language))
+  handle('document:close',(_event,id:string)=>documents().close(id))
+  handle('document:attach',async(_event,id:string,sessionId:string)=>{const owner=await runtime().owner(sessionId);if(owner.project!==project())throw Error('Choose a conversation in this project first');return documents().attach(id,owner.project,sessionId)})
 
   handle('terminal:start', () => { const owner = runtime().active; return owner.checkpoints.exclusive(async () => {
     const container = owner.bridge.containerName
@@ -901,5 +958,5 @@ app.whenReady().then(async () => {
 })
 
 let shutdownReady=false,shutdownPending=false
-app.on('before-quit', event => {if(shutdownReady)return;event.preventDefault();if(shutdownPending)return;shutdownPending=true;releaseNotifications?.close();timelineService?.close();closeTerminals();hostOperations?.cancelAll();for(const map of [hookControllers,browserControllers])for(const controller of map.values())controller.abort();evaluations.stopAll();void (async()=>{await Promise.allSettled([memoryService?.stop(),connections?.close(),...[...workspaces.values()].map(owner=>owner.stopAll())]);await timelineService?.settled();await releaseNotifications?.settled();await drainMetadata();await closeHistoryCaches()})().finally(()=>{closeProjectFiles();shutdownReady=true;app.quit()})})
+app.on('before-quit', event => {if(shutdownReady)return;event.preventDefault();if(shutdownPending)return;shutdownPending=true;releaseNotifications?.close();timelineService?.close();documentReader?.closeAll();for(const browser of sharedBrowsers.values())browser.close();closeTerminals();hostOperations?.cancelAll();for(const map of [hookControllers,browserControllers])for(const controller of map.values())controller.abort();evaluations.stopAll();void (async()=>{await Promise.allSettled([memoryService?.stop(),connections?.close(),...[...workspaces.values()].map(owner=>owner.stopAll())]);await timelineService?.settled();await releaseNotifications?.settled();await drainMetadata();await closeHistoryCaches()})().finally(()=>{closeProjectFiles();shutdownReady=true;app.quit()})})
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
