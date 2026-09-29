@@ -9,7 +9,11 @@ const root=mkdtempSync(join(tmpdir(),'unrealcode-release-notice-')),profile=join
 writeFileSync(join(profile,'settings.json'),JSON.stringify({decisionSetupSeen:true,theme:'dark',systemPrompt:'Preserved upgrade fixture instructions',provider:'ollama',model:'legacy-fixture'}))
 writeFileSync(join(profile,'data-version.json'),JSON.stringify({schema:1,version:'1.0.0'}))
 const packaged=process.argv.includes('--packaged'),executablePath=resolve(process.env.UNREALCODE_QA_EXECUTABLE||(packaged?'dist/win-unpacked/UnrealCode.exe':'node_modules/electron/dist/electron.exe'))
-const launch=()=>electron.launch({executablePath,args:packaged?[]:['.'],env:{...process.env,UNREAL_DESKTOP_USER_DATA:profile,UNREAL_DESKTOP_BACKGROUND_CHECK:'1'},cwd:process.cwd()})
+const launchEnv={...process.env,UNREAL_DESKTOP_USER_DATA:profile,UNREAL_DESKTOP_BACKGROUND_CHECK:'1'}
+// Release-notice layout must not depend on a runner's Docker daemon state.
+for(const key of Object.keys(launchEnv))if(key.toLowerCase()==='path')delete launchEnv[key]
+launchEnv.PATH=`${process.env.SystemRoot||'C:\\Windows'}\\System32;${process.env.SystemRoot||'C:\\Windows'}`
+const launch=()=>electron.launch({executablePath,args:packaged?[]:['.'],env:launchEnv,cwd:process.cwd()})
 // Resizing an offscreen surface can briefly invalidate Chromium's copy target.
 // Wait for rendered frames and retry only that transient capture failure.
 async function captureSettled(app,page){
@@ -34,9 +38,6 @@ try{
  await page.getByRole('button',{name:'Check for updates',exact:true}).click();const notice=page.getByRole('complementary',{name:'New UnrealCode release'});await notice.waitFor();assert.equal(await notice.evaluate(el=>el.contains(document.activeElement)),false)
  await notice.getByRole('button',{name:'View release & changelog',exact:true}).click();assert.deepEqual(await app.evaluate(()=>globalThis.__openedRelease),['https://github.com/MCShotty/UnrealCode/releases/tag/v9.9.9'])
  assert.equal(await page.getByRole('button',{name:'Restart and install',exact:true}).count(),0);assert.equal(await page.getByRole('button',{name:'Download 9.9.9',exact:true}).count(),0)
- assert.equal(await page.evaluate(async()=>{try{await window.unreal.updateDownload();return false}catch{return true}}),true)
- assert.equal(await page.evaluate(async()=>{try{await window.unreal.updateInstall();return false}catch{return true}}),true)
- if(await page.getByRole('button',{name:'Dismiss issue'}).count())await page.getByRole('button',{name:'Dismiss issue'}).click()
  for(const theme of ['dark','light']){
   await page.getByRole('tab',{name:'Appearance',exact:true}).click();await page.getByLabel('Theme',{exact:true}).selectOption(theme);const save=page.getByRole('button',{name:'Save settings',exact:true});if(await save.isVisible())await save.click();await page.getByRole('tab',{name:'Recovery',exact:true}).click();await page.emulateMedia({reducedMotion:'reduce'});await app.evaluate(({BrowserWindow})=>{const w=BrowserWindow.getAllWindows()[0];w.setMinimumSize(400,400);w.setSize(1200,900);w.webContents.setZoomFactor(1.5)})
   await page.waitForFunction(theme=>document.documentElement.dataset.theme===theme,theme)
@@ -46,6 +47,10 @@ try{
  await notice.getByRole('button',{name:'Dismiss',exact:true}).focus();await page.keyboard.press('Enter');await notice.waitFor({state:'detached'})
  await page.getByRole('tab',{name:'Appearance',exact:true}).click();await page.getByLabel('Theme',{exact:true}).selectOption('dark');await page.getByRole('button',{name:'Save settings',exact:true}).click()
  assert.equal(await page.evaluate(async()=>(await window.unreal.getSettings()).automaticUpdateChecks),false)
+ // These deliberately raise error notices, which take visual priority over
+ // release notices. Exercise them after the release layout assertions.
+ assert.equal(await page.evaluate(async()=>{try{await window.unreal.updateDownload();return false}catch{return true}}),true)
+ assert.equal(await page.evaluate(async()=>{try{await window.unreal.updateInstall();return false}catch{return true}}),true)
  report.checks.push('legacy settings preserved; automatic preference defaults and opt-out','manual check while automatic disabled','nonmodal notice preserves focus and wraps at 150 percent','dark/light/reduced motion','owned release URL opened without credentials','unsigned download/install refused','provider form save preserves update opt-out')
  assert.deepEqual(await app.evaluate(()=>globalThis.__releaseCalls.map(row=>row.auth)),[false]);await app.close();app=await launch();page=await app.firstWindow();await page.getByRole('heading',{name:'Open a workspace'}).waitFor()
  await page.waitForFunction(async()=>{const s=await window.unreal.updateStatus();return s.version==='9.9.9'&&s.dismissed})
