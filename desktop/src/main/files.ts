@@ -60,9 +60,15 @@ export async function readFile(root: string, requested: string): Promise<string>
   return bytes.toString('utf8')
 }
 
-export async function gitChanges(root: string): Promise<string[]> {
-  const { stdout } = await execFileAsync('git', ['status', '--short', '--untracked-files=normal'], { cwd: root, windowsHide: true, timeout: 10000, maxBuffer: 1024 * 1024 })
-  return stdout.split(/\r?\n/).filter(Boolean).slice(0, 200)
+export async function gitChanges(root: string): Promise<string[] | null> {
+  try {
+    const { stdout } = await execFileAsync('git', ['status', '--short', '--untracked-files=normal'], { cwd: root, windowsHide: true, timeout: 10000, maxBuffer: 1024 * 1024 })
+    return stdout.split(/\r?\n/).filter(Boolean).slice(0, 200)
+  } catch (error) {
+    const failure=error as NodeJS.ErrnoException & {stderr?:string;path?:string}
+    if (/fatal:\s*not a git repository/i.test(String(failure.stderr||failure.message)) || failure.code==='ENOENT' && failure.path==='git') return null
+    throw error
+  }
 }
 
 export async function gitDiff(root: string, requested: string): Promise<string> {

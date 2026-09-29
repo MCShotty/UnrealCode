@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { deleteSkill, gitDiff, listFiles, listSkills, readFile, saveSkill } from './files'
+import { execFileSync } from 'node:child_process'
+import { deleteSkill, gitChanges, gitDiff, listFiles, listSkills, readFile, saveSkill } from './files'
 
 const created: string[] = []
 async function workspace(): Promise<string> {
@@ -13,6 +14,16 @@ async function workspace(): Promise<string> {
 afterEach(async () => { for (const path of created.splice(0)) await fs.rm(path, { recursive: true, force: true }) })
 
 describe('trusted project file access', () => {
+  it('distinguishes a non-Git folder from a clean or uncommitted repository',async()=>{
+    const root=await workspace(),file=join(root,'hello.txt')
+    await fs.writeFile(file,'hello')
+    expect(await gitChanges(root)).toBeNull()
+    const git=(...args:string[])=>execFileSync('git',['-C',root,...args],{windowsHide:true,stdio:'ignore'})
+    git('init')
+    expect(await gitChanges(root)).toContain('?? hello.txt')
+    git('add','hello.txt');git('-c','user.name=Fixture','-c','user.email=fixture@localhost','commit','-m','Initial')
+    expect(await gitChanges(root)).toEqual([])
+  })
   it('returns relative paths when the project is reached through an alias', async () => {
     const root = await workspace(), aliases = await workspace(), alias = join(aliases, 'project')
     await fs.writeFile(join(root, 'hello.txt'), 'hello')

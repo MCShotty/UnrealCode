@@ -23,18 +23,21 @@ export class DocumentReader {
  constructor(private profile:string){}
  private async slot(signal?:AbortSignal):Promise<()=>void>{
   signal?.throwIfAborted()
-  if(this.running>=2){
-   if(this.waiting.length>=16)throw Error('Document reader is busy; retry after active parsing finishes')
-   await new Promise<void>((resolve,reject)=>{
-    const wake=()=>{signal?.removeEventListener('abort',cancel);resolve()}
-    const cancel=()=>{const index=this.waiting.indexOf(wake);if(index>=0)this.waiting.splice(index,1);reject(new Error('Document operation cancelled'))}
-    this.waiting.push(wake)
-    signal?.addEventListener('abort',cancel,{once:true})
-   })
-  }
-  signal?.throwIfAborted()
-  this.running++
-  return()=>{this.running--;this.waiting.shift()?.()}
+  const lease=()=>{let released=false;return()=>{
+   if(released)return;released=true
+   const next=this.waiting.shift()
+   // Transfer the reserved slot directly; a new request cannot steal it
+   // before the queued request resumes on its next microtask.
+   if(next)next();else this.running--
+  }}
+  if(this.running<2){this.running++;return lease()}
+  if(this.waiting.length>=16)throw Error('Document reader is busy; retry after active parsing finishes')
+  return new Promise<()=>void>((resolve,reject)=>{
+   const wake=()=>{signal?.removeEventListener('abort',cancel);resolve(lease())}
+   const cancel=()=>{const index=this.waiting.indexOf(wake);if(index>=0)this.waiting.splice(index,1);reject(new Error('Document operation cancelled'))}
+   this.waiting.push(wake)
+   signal?.addEventListener('abort',cancel,{once:true})
+  })
  }
  private async worker<T>(method:WorkerMethod,options:Record<string,unknown>,signal?:AbortSignal):Promise<T>{
   const release=await this.slot(signal)

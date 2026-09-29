@@ -12,7 +12,7 @@ import type { HistoryPage } from '../shared/history'
 import { createHash, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
-import type { AgentEvent, BridgeSessionConfig, Checkpoint, SessionInfo } from '../shared/api'
+import type { AgentEvent, BridgeSessionConfig, Checkpoint, SessionInfo, GitAvailability } from '../shared/api'
 import type { ContextSelection, ContextView, HandoffPreview } from '../shared/workflow'
 import { DockerBridge } from './docker'
 import { SessionUsageService } from './session-usage'
@@ -36,6 +36,7 @@ type Hooks = { recall?(prompt:string,workspace:string):Promise<string>; event(ev
 type QueueLaunch = { taskId:string; attemptId:string; workspaceChoice?:'project'|'isolated' }
 
 export class WorkspaceRuntime {
+  gitAvailability(): Promise<GitAvailability> { return this.tasks.availability() }
   readonly conversationUI:ConversationUIStore
   readonly planning: TaskPlanning
   readonly teamPreferences: TeamPreferenceStore

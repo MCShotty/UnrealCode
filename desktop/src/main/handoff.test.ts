@@ -16,3 +16,7 @@ it('builds editable textual continuity without copying provider tool-call histor
   expect(summary).not.toContain('private attachment')
   expect(summary).not.toContain('provider-specific-id')
 })
+it('does not call an unavailable Git status a clean working tree',()=>{
+  expect(handoffSummary([],null)).toContain('Git changes unavailable')
+  expect(handoffSummary([],null)).not.toContain('No current Git changes.')
+})

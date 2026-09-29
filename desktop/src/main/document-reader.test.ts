@@ -31,7 +31,7 @@ it('reads and searches bounded PDF text off the Electron main thread',async()=>{
  await expect(reader.page(handle.id,2)).rejects.toThrow('Choose a page')
  reader.close(handle.id)
  await expect(reader.page(handle.id,1)).rejects.toThrow('no longer open')
-})
+},45000) // Cold native PDF imports plus several worker calls can exceed 15s on hosted Windows.
 it('opens a project PDF through the confined stream reader',async()=>{
  const root=await mkdtemp(join(tmpdir(),'unrealcode-document-project-'));roots.push(root)
  await writeFile(join(root,'project.pdf'),smallPdf('Project stream'))
@@ -49,6 +49,22 @@ it('cancels queued document work without consuming a worker slot',async()=>{
  releaseOne()
  const releaseThree=await slot()
  releaseThree();releaseTwo()
+})
+it('reserves a released document slot for the queued request and releases it only once',async()=>{
+ const reader=new DocumentReader(tmpdir())
+ const slot=(reader as unknown as {slot():Promise<()=>void>}).slot.bind(reader)
+ const first=await slot(),second=await slot(),queued=slot()
+ first()
+ let newcomerStarted=false
+ const newcomer=slot().then(release=>{newcomerStarted=true;return release})
+ const queuedRelease=await queued
+ await Promise.resolve()
+ expect(newcomerStarted).toBe(false)
+ queuedRelease();queuedRelease()
+ const nextRelease=await newcomer
+ expect((reader as unknown as {running:number}).running).toBe(2)
+ nextRelease();second()
+ expect((reader as unknown as {running:number}).running).toBe(0)
 })
 it('requires an in-memory password for an encrypted PDF and rejects malformed input',async()=>{
  const root=await mkdtemp(join(tmpdir(),'unrealcode-document-edge-'));roots.push(root)

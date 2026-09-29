@@ -626,11 +626,13 @@ function registerIPC(): void {
   handle('session:event-window',async(_event,id:string,sequence:number)=>{if(!Number.isSafeInteger(sequence)||sequence<1)throw new Error('Invalid event sequence');return (await runtime().historyPage(id,{around:sequence,limit:1000})).events})
   handle('settings:get', () => recoveryState.migrationError ? defaultSettings() : getSettings())
   handle('settings:update', async (_event, patch) => {
+    const previous=getSettings()
     const next = updateSettings(patch)
     releaseNotifications?.configure(notificationPreferences())
     nativeTheme.themeSource = next.theme
     window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#10161b' : '#f0f3f5')
-    if (bridge.status().ready) {
+    window?.webContents.send('settings:changed',next)
+    if (bridge.status().ready && (['decisionEngine','decisionModel','glinerEnabled'] as const).some(key=>previous[key]!==next[key])) {
       if (next.decisionEngine === 'jev' && !next.decisionCloudProjects.includes(bridge.projectPath) && !next.decisionCloudDeclinedProjects.includes(bridge.projectPath)) await requestDecisionConsent(bridge.projectPath)
       await Promise.all([...workspaces.values()].map((owner) => owner.configureAll()))
     }
@@ -881,6 +883,7 @@ function registerIPC(): void {
     await shell.openExternal(url.href)
   })
   handle('files:read', (_event, relative: string) => readFile(project(), relative))
+  handle('git:availability', () => runtime().gitAvailability())
   handle('files:changes', () => gitChanges(project()))
   handle('files:diff', (_event, relative: string) => gitDiff(project(), relative))
   handle('skills:list', () => listAvailableSkills(project()))

@@ -188,3 +188,7 @@ and when configured providers, connections, and other services receive informati
 ### Current limits
 
 Windows + Docker is the supported target. Native execution, macOS/Linux desktop support, full language servers/debugging, an extension marketplace, and Claude subscription integration are outside this release. Recovery import currently requires the original Windows profile/app-data and project paths. Trusted publisher identity and automatic installation remain unavailable for unsigned builds. Full assistive-technology acceptance has not been established.
+
+### Warning popups
+
+Settings → Appearance → **Show warning popups** controls optional and background warnings. You can also select **Silence warnings** on an advisory notice. The preference survives restart. Failed tasks, data problems, approvals and required answers stay visible; muting does not remove inline feature status or support diagnostics.

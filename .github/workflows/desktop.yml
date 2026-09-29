@@ -29,12 +29,17 @@ jobs:
       - run: go test ../cmd/unrealcode-host-files
       - run: npm ci
       - run: npm run typecheck
-      - run: npm test -- --testTimeout=15000
+      # Native worker/process tests exercise their own concurrency; avoid
+      # competing file-level process startups on hosted Windows runners.
+      - run: npm test -- --testTimeout=15000 --maxWorkers=1
       - run: node --test scripts/check-secret-patterns.mjs
       - run: npm run build:win
       - run: node scripts/audit-release.mjs
       - run: node scripts/qa.mjs --no-docker --credentials --packaged
       - run: node scripts/qa-release-notifications.mjs --packaged
+      - run: node scripts/qa-git-browser.mjs --packaged
+      - run: node scripts/qa-102.mjs --packaged
+      - run: node scripts/qa-shared-documents.mjs --packaged
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: windows-candidate
