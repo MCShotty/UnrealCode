@@ -1,6 +1,6 @@
 import {_electron as electron} from 'playwright'
 import {createServer} from 'node:http'
-import {mkdtempSync,writeFileSync,rmSync} from 'node:fs'
+import {mkdtempSync,writeFileSync,rmSync,copyFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join,resolve,dirname} from 'node:path'
 
@@ -15,6 +15,7 @@ function pdf(text){
 const desktop=resolve(import.meta.dirname,'..'),packaged=process.argv.includes('--packaged'),executablePath=packaged?resolve(process.env.UNREALCODE_QA_EXECUTABLE||join(desktop,'dist/win-unpacked/UnrealCode.exe')):join(desktop,'node_modules/electron/dist/electron.exe')
 const root=mkdtempSync(join(tmpdir(),'unrealcode-shared-qa-')),profile=join(root,'profile'),workspace=join(root,'project')
 const {mkdirSync}=await import('node:fs');mkdirSync(workspace);writeFileSync(join(workspace,'fixture.pdf'),pdf('Hello packaged PDF'))
+copyFileSync(join(desktop,'test-fixtures/password.pdf'),join(workspace,'protected.pdf'))
 let otherAddress=''
 const otherServer=createServer((_request,response)=>{response.setHeader('Content-Type','text/html');response.end('<h1>Ungrantable test origin</h1>')})
 await new Promise(resolve=>otherServer.listen(0,'127.0.0.1',resolve))
@@ -71,6 +72,12 @@ try{
  const handle=openedDocument.value
  const extracted=await page.evaluate(id=>window.unreal.documentPage(id,1),handle.id)
  if(extracted.text!=='Hello packaged PDF')throw Error(`PDF worker returned unexpected text: ${extracted.text}`)
+ await page.getByLabel('Project PDF path').fill('protected.pdf')
+ await page.getByLabel('Password, if required').fill('fixture-password')
+ await page.getByRole('button',{name:'Open project PDF'}).click()
+ await page.waitForFunction(()=>document.querySelector('.document-toolbar strong')?.getAttribute('title')==='protected.pdf',{}, {timeout:10000})
+ await page.waitForFunction(()=>document.querySelector('.document-sheet canvas')?.width>100)
+ if(await page.getByLabel('Password, if required').inputValue())throw Error('PDF password was not cleared after opening')
  let ocr
  if(process.env.UNREAL_QA_OCR==='1'){
   ocr=await page.evaluate(id=>window.unreal.documentOcr(id,1,'eng'),handle.id)
@@ -79,5 +86,5 @@ try{
   if(arabic.language!=='ara'||arabic.method!=='ocr')throw Error('Packaged Arabic OCR data did not load')
  }
  if(errors.length)throw Error(`Renderer errors: ${errors.join(' | ')}`)
- console.log(JSON.stringify({sharedBrowser:true,webContentsViews:viewCount,projectOriginGrant:true,redirectIsolation:true,frameIsolation:true,takeover:true,revocation:true,pdfPages:handle.pages,pdfText:extracted.text,ocr:ocr?{language:ocr.language,confidence:ocr.confidence}:undefined}))
+ console.log(JSON.stringify({sharedBrowser:true,webContentsViews:viewCount,projectOriginGrant:true,redirectIsolation:true,frameIsolation:true,takeover:true,revocation:true,pdfPages:handle.pages,pdfText:extracted.text,passwordPdf:true,ocr:ocr?{language:ocr.language,confidence:ocr.confidence}:undefined}))
 }finally{if(instance)await instance.close().catch(()=>{});await new Promise(resolve=>server.close(resolve));await new Promise(resolve=>otherServer.close(resolve));rmSync(root,{recursive:true,force:true})}

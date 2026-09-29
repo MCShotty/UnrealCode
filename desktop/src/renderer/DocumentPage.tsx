@@ -16,7 +16,7 @@ export function DocumentPage({sessionId,onAttach}:{sessionId?:string;onAttach(re
  const load=async(value:DocumentHandle)=>{
   const bytes=await window.unreal.documentBytes(value.id),module=await import('pdfjs-dist')
   module.GlobalWorkerOptions.workerSrc=workerUrl
-  const document=await module.getDocument({data:bytes,disableFontFace:true}).promise
+  const document=await module.getDocument({data:bytes,password:password||undefined,disableFontFace:true}).promise
   await pdf?.loadingTask.destroy().catch(()=>{})
   if(handle&&!attached.current.has(handle.id))await window.unreal.documentClose(handle.id)
   setPdf(document);setHandle(value);setPage(1);setZoom(1);setText(undefined);setMatches(undefined);setOcr(undefined);setPassword('')

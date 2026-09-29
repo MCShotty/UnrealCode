@@ -60,6 +60,7 @@ jobs:
       - run: node scripts/qa-release-notifications.mjs --packaged
       - run: node scripts/qa-git-browser.mjs --packaged
       - run: node scripts/qa-102.mjs --packaged
+      - run: node scripts/qa-shared-documents.mjs --packaged
       - name: Write and verify SHA-256 manifest
         run: |
           node scripts/sha256-release.mjs --write

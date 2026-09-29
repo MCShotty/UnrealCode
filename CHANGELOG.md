@@ -14,6 +14,7 @@
 ### Fixed
 
 - Late PDF extraction replacing the selected page text; OCR from a previous page appearing under the current page; obsolete PDF text layers continuing to render.
+- Password-protected PDFs passing worker verification but failing to display because the viewer did not receive the in-memory password.
 - A document-worker queue race that could exceed the two-worker limit when a new request arrived during a queued slot handoff.
 - Delayed GitHub pull-request details replacing a more recently selected review.
 - Recovery **Open settings** targeting an invalid tab, and a completed recovery action dismissing a newer issue.
