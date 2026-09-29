@@ -183,6 +183,7 @@ const api: DesktopAPI = {
   },
   listFiles: (relative) => invoke('files:list', relative),
   readFile: (relative) => invoke('files:read', relative),
+  gitAvailability: () => invoke('git:availability'),
   gitChanges: () => invoke('files:changes'),
   gitDiff: (relative) => invoke('files:diff', relative),
   listSkills: () => invoke('skills:list'),

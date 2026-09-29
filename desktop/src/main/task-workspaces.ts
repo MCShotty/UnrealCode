@@ -8,12 +8,12 @@ import { CheckpointStore, type Snapshot } from './checkpoints'
 import { editorPath } from './editor-files'
 import { projectWrite,projectDelete,projectPrune } from './project-fs'
 import type { TaskWorkspace, WorkspacePreview } from '../shared/task-workspaces'
+import type { GitAvailability } from '../shared/api'
 import { atomicMetadata } from './atomic-metadata'
 
 const exec = promisify(execFile)
 async function canonicalLocation(path:string):Promise<string>{const missing:string[]=[];let current=resolve(path);for(;;){try{return join(await fs.realpath(current),...missing.reverse())}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT'||dirname(current)===current)throw error;missing.push(basename(current));current=dirname(current)}}}
 type StoredWorkspace = TaskWorkspace & { baseline: Snapshot; archive?: { snapshot:Snapshot; revision:string } }
-export type GitAvailability = { available:true } | { available:false; code:'GIT_MISSING'|'GIT_REPOSITORY_REQUIRED'|'GIT_ROOT_REQUIRED'|'GIT_COMMIT_REQUIRED'|'GIT_INACCESSIBLE'; message:string }
 export class TaskWorkspaces {
   private source: CheckpointStore
   private serial = Promise.resolve()

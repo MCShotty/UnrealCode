@@ -169,12 +169,12 @@ function FileBrowser(): ReactNode {
   const [mode, setMode] = useState<'explorer' | 'changes'>('explorer')
   const [folder, setFolder] = useState('')
   const [entries, setEntries] = useState<FileEntry[]>([])
-  const [changes, setChanges] = useState<string[]>([])
+  const [changes, setChanges] = useState<string[] | null>(null)
   const [selected, setSelected] = useState<string>('')
   const [content, setContent] = useState('')
   const [error, setError] = useState('')
   useEffect(() => { void api.listFiles(folder).then(setEntries).catch((reason) => setError(String(reason))) }, [folder])
-  useEffect(() => { void api.gitChanges().then(setChanges).catch((reason) => setError(String(reason))) }, [])
+  useEffect(() => { void api.gitChanges().then(setChanges).catch((reason) => {setChanges(null);setError(String(reason))}) }, [])
   const open = async (entry: FileEntry): Promise<void> => {
     if (entry.directory) { setFolder(entry.path); setSelected(''); setContent(''); return }
     setSelected(entry.path)
@@ -186,9 +186,9 @@ function FileBrowser(): ReactNode {
     try { setContent(await api.gitDiff(path)); setError('') } catch (reason) { setContent(''); setError(String(reason)) }
   }
   return <div className="page-content files-page">
-    <div className="page-heading"><div><h1>Files</h1><p>Browse project files and inspect Git changes.</p></div><div className="segmented"><button className={mode === 'explorer' ? 'selected' : ''} onClick={() => { setMode('explorer'); setSelected(''); setContent('') }}>Explorer</button><button className={mode === 'changes' ? 'selected' : ''} onClick={() => { setMode('changes'); setSelected(''); setContent('') }}>Changes <span>{changes.length}</span></button></div></div>
+    <div className="page-heading"><div><h1>Files</h1><p>Browse project files and inspect Git changes.</p></div><div className="segmented"><button className={mode === 'explorer' ? 'selected' : ''} onClick={() => { setMode('explorer'); setSelected(''); setContent('') }}>Explorer</button><button className={mode === 'changes' ? 'selected' : ''} onClick={() => { setMode('changes'); setSelected(''); setContent('') }}>Changes {changes!==null&&<span>{changes.length}</span>}</button></div></div>
     <div className="file-layout"><div className="file-list">
-      {mode === 'explorer' ? <><div className="file-breadcrumb"><button onClick={() => setFolder('')}><Folder size={15}/> Project</button>{folder && <><ChevronRight size={14}/><span>{folder}</span></>}</div>{folder && <button className="file-row" onClick={() => setFolder(folder.split('/').slice(0,-1).join('/'))}><ArrowLeft size={16}/> ..</button>}{entries.map((entry) => <button className={`file-row ${selected === entry.path ? 'selected' : ''}`} key={entry.path} onClick={() => void open(entry)}>{entry.directory ? <Folder size={17}/> : <FileText size={17}/>}<span>{entry.name}</span>{entry.directory && <ChevronRight size={15}/>}</button>)}</> : <>{changes.map((line) => <button className={`file-row ${selected === line.slice(3) ? 'selected' : ''}`} key={line} onClick={() => void openChange(line)}><GitBranch size={17}/><span>{line.slice(3)}</span><small>{line.slice(0,2)}</small></button>)}{changes.length === 0 && <p className="muted-copy pad">No Git changes found.</p>}</>}
+      {mode === 'explorer' ? <><div className="file-breadcrumb"><button onClick={() => setFolder('')}><Folder size={15}/> Project</button>{folder && <><ChevronRight size={14}/><span>{folder}</span></>}</div>{folder && <button className="file-row" onClick={() => setFolder(folder.split('/').slice(0,-1).join('/'))}><ArrowLeft size={16}/> ..</button>}{entries.map((entry) => <button className={`file-row ${selected === entry.path ? 'selected' : ''}`} key={entry.path} onClick={() => void open(entry)}>{entry.directory ? <Folder size={17}/> : <FileText size={17}/>}<span>{entry.name}</span>{entry.directory && <ChevronRight size={15}/>}</button>)}</> : changes===null?<p className="muted-copy pad">Git changes are unavailable for this folder. Files remain available in Explorer.</p>:<>{changes.map((line) => <button className={`file-row ${selected === line.slice(3) ? 'selected' : ''}`} key={line} onClick={() => void openChange(line)}><GitBranch size={17}/><span>{line.slice(3)}</span><small>{line.slice(0,2)}</small></button>)}{changes.length === 0 && <p className="muted-copy pad">Working tree is clean.</p>}</>}
     </div><div className="file-preview"><div className="preview-title">{selected || (mode === 'changes' ? 'Select a changed path' : 'Select a file')}</div>{error ? <p className="error-inline">{error}</p> : <pre>{content || (mode === 'changes' ? 'Select a path to inspect its Git diff.' : 'Choose a text file to preview its contents.')}</pre>}</div></div>
   </div>
 }
@@ -619,7 +619,7 @@ export default function App(): ReactNode {
         {view === 'context' && <ContextInspector onPreferences={saveSettings} sessionId={activeId||undefined} onFile={path => { void Promise.all([api.editorRead(path),api.editorBase(path)]).then(([file,base])=>{changeEditor(file.workspace,value=>({tabs:value.tabs.some(tab=>tab.path===path)?value.tabs:[...value.tabs,{...file,saved:file.content,base}],active:path}));setEditingWorkspace(file.workspace);setView('files')}).catch(reason=>setError(String(reason))) }}/> }
         {view === 'skills' && <SkillsPage/>}
         {view === 'usage' && <UsageDashboard onSettings={() => setView('settings')}/>}
-        {view === 'github' && <GitHubPage onOpenProject={async (path) => openProject(path)}/>}
+        {view === 'github' && <GitHubPage project={projectPath} onOpenProject={async (path) => openProject(path)}/>}
         {view === 'settings' && <SettingsPage settings={settings} onSave={saveSettings} projectPath={projectPath} initialTab={settingsTab} onTabChange={setSettingsTab}/>}
         {view === 'terminal' && <TerminalView/>}
       </motion.div>}

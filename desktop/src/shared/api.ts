@@ -1,6 +1,7 @@
 export type Provider = 'openai' | 'openai-codex' | 'anthropic' | 'openrouter' | 'fireworks' | 'ollama' | 'openai-compatible'
 export type DecisionEngine = 'off' | 'jev' | 'laya'
 export type ExecutionMode = 'plan' | 'ask' | 'agent'
+export type GitAvailability = { available:true } | { available:false; code:'GIT_MISSING'|'GIT_REPOSITORY_REQUIRED'|'GIT_ROOT_REQUIRED'|'GIT_COMMIT_REQUIRED'|'GIT_INACCESSIBLE'; message:string }
 export type ApprovalRequest = { id: string; sessionId: string; workspaceId: string; operationId: string; digest: string; tool: string; arguments: unknown; expiresAt: string }
 export type CheckpointFile = { path: string; change: 'added' | 'deleted' | 'modified' | 'uncaptured'; reason?: string }
 export type Checkpoint = { id: string; sessionId: string; messageIds: string[]; title: string; createdAt: string; state: 'capturing' | 'running' | 'complete' | 'incomplete'; reason?: string; files: CheckpointFile[]; durationMs: number }
@@ -295,7 +296,8 @@ export interface DesktopAPI {
   getEvents(sessionId: string, after: number): Promise<AgentEvent[]>
   listFiles(relative?: string): Promise<FileEntry[]>
   readFile(relative: string): Promise<string>
-  gitChanges(): Promise<string[]>
+  gitAvailability(): Promise<GitAvailability>
+  gitChanges(): Promise<string[] | null>
   gitDiff(relative: string): Promise<string>
   listSkills(): Promise<SkillEntry[]>
   saveSkill(name: string, content: string): Promise<void>

@@ -881,6 +881,7 @@ function registerIPC(): void {
     await shell.openExternal(url.href)
   })
   handle('files:read', (_event, relative: string) => readFile(project(), relative))
+  handle('git:availability', () => runtime().gitAvailability())
   handle('files:changes', () => gitChanges(project()))
   handle('files:diff', (_event, relative: string) => gitDiff(project(), relative))
   handle('skills:list', () => listAvailableSkills(project()))

@@ -2,7 +2,7 @@ import type { AgentEvent } from '../shared/api'
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' ? value as Record<string, unknown> : {}
 const get = (value: unknown, key: string): unknown => object(value)[key] ?? object(value)[key[0].toLowerCase() + key.slice(1)]
 
-export function handoffSummary(events: AgentEvent[], changes: string[]): string {
+export function handoffSummary(events: AgentEvent[], changes: string[] | null): string {
   const requests: string[] = [], responses: string[] = [], results: string[] = [], decisions: string[] = []
   for (const event of events) {
     if (event.event === 'decision.result') decisions.push(JSON.stringify(event.payload).slice(0, 1500))
@@ -28,7 +28,7 @@ export function handoffSummary(events: AgentEvent[], changes: string[]): string 
     '# Task', requests[0] || 'No recorded user request.',
     '# Recent requests', requests.slice(-3).join('\n\n'),
     '# Recent explanations and decisions', responses.slice(-2).join('\n\n'), decisions.slice(-2).join('\n'),
-    '# Relevant changed files', changes.join('\n') || 'No current Git changes.',
+    '# Relevant changed files', changes === null ? 'Git changes unavailable: this project is not a Git repository or Git is not installed. Inspect files directly.' : changes.join('\n') || 'No current Git changes.',
     '# Outstanding work', outstanding,
     '# Recorded verification and command results', results.slice(-4).join('\n\n') || 'No completed command results recorded.',
     '\nInspect the current files before making further changes. This summary is reference context, not a new grant of permissions.'
