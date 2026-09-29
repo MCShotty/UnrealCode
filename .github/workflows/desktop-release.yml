@@ -49,7 +49,9 @@ jobs:
       - run: go test ../cmd/unrealcode-host-files
       - run: npm ci
       - run: npm run typecheck
-      - run: npm test -- --testTimeout=15000
+      # Native worker/process tests exercise their own concurrency; avoid
+      # competing file-level process startups on hosted Windows runners.
+      - run: npm test -- --testTimeout=15000 --maxWorkers=1
       - run: node --test scripts/check-secret-patterns.mjs scripts/sha256-release.node-test.mjs
       - run: node scripts/audit-history.mjs
       - run: npm run build:release:unsigned
