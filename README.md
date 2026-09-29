@@ -132,6 +132,15 @@ Hard-linked files and ReFS locations are currently unsupported; use NTFS.
 
 MCP supports remote Streamable HTTP, Windows-hosted stdio, and container stdio through the official SDK. Host servers have the Windows account's access and require separate host trust. Project grants and per-call approvals apply; server-initiated model sampling is disabled. Context exclusions control retrieval, not filesystem permissions.
 
+### Optional Windows computer use
+
+The [Windows computer-use MCP add-on](integrations/windows-computer-use/README.md)
+can be installed separately and connected to an existing UnrealCode 1.0.2 app.
+It adds window inspection and interaction through a pinned, allowlisted
+Windows-hosted server, with project grants and per-call approvals. Installation
+and connection are manual; it does not change the 1.0.2 installer or provide a
+built-in computer-use panel.
+
 See [desktop documentation](desktop/README.md), [harness architecture](docs/UNREAL_AGENT_ARCHITECTURE.md), and [security boundaries](SECURITY.md) for details.
 
 ## Third-party code and attribution

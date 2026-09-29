@@ -112,12 +112,21 @@ tagged installer.
 | `internal/openaiapi/` | Generated client. Follow `third_party/openai-openapi/README.md` to regenerate; do not hand-edit generated bindings. |
 | `desktop/worker/` | Optional local decision/entity worker and tests. |
 | `desktop/builtin-skills/` | App-wide read-only PDF, OCR, Markdown, and browser guidance copied into the packaged app and backend image. |
+| `integrations/windows-computer-use/` | Optional, separately installed Windows MCP sidecar setup. It is not bundled with the app or enabled by an installer update. |
 | `desktop/scripts/` | Packaging, notices, audits, fixture QA, and benchmarks. |
 | `.github/workflows/desktop-release.yml` | Authoritative Windows release build, attestation, and publication from a matching tag. The inherited `release.yml` is upstream-only and skips this repository. |
 | `desktop/assets/brand/` | Solid UC vector mark, theme variants, and PNG exports. |
 
 The Go module intentionally retains `github.com/unreallabsai/unreal-agent`.
 Keep the original MIT license and Unreal Labs attribution.
+
+The optional computer-use add-on uses the existing Windows stdio MCP transport.
+Its script downloads a SHA-256-pinned upstream executable but never runs it,
+edits app settings, or grants project tools. The user configures Connections and
+reviews the Windows host trust prompt. Every MCP call still needs an approval.
+UnrealCode 1.0.2 forwards MCP results as text; visual captures need a workspace
+file plus `ViewImage`. Do not describe the add-on as a native computer-use pane,
+automatic installation, or an app release.
 
 ## Behavior to preserve
 
