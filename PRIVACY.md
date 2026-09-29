@@ -35,6 +35,12 @@ volumes. A trusted project folder can be mounted into its local container.
   Specialist browser profiles remain isolated. Browser cookies are excluded from
   ordinary recovery exports and support bundles. Windows-hosted MCP servers run
   with the Windows account's access; review their permissions before connecting.
+  The optional Windows computer-use sidecar can inspect window text and capture
+  visible screen content after project grants and per-call approvals. Its tool
+  results can reach the selected model provider. Screenshots saved into a
+  project remain ordinary project files until removed and may enter Git,
+  snapshots, or backups. Installing the sidecar contacts its upstream GitHub
+  release; the installed app does not download or enable it automatically.
 - **Documents:** The PDF reader and English/Arabic OCR run locally in workers.
   PDF text is not automatically added to memory or sent to a model. An agent may
   read trusted-project PDFs or an external PDF explicitly attached to its chat.
