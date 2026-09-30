@@ -46,6 +46,14 @@ An intermittent accepted-answer/failure-settlement timeout passed in the same
 revision's full Go race run and branch Docker job. Its strict test gains bounded
 diagnostics; no timeout extension or test bypass is introduced.
 
+The fixture was then found to match `Alpha` in the original suggested menu and
+inject failure before accepted user input and the resolved question were both in
+model context. It now checks those typed items before injecting the failure and
+asserts exactly one additional model request at the explicit retry boundary.
+The focused fixture regression fails against the prior source and passes 30 runs
+against the corrected source, extracted verbatim for Windows execution. This is
+fixture evidence, not execution of the full Linux bridge; hosted checks cover it.
+
 The PR must pass Windows desktop/packaged checks, Docker backend compatibility,
 and Go race/vet/build CI. After merge, the build-only release workflow must pass
 on the exact merged `main` commit before annotated tag `v1.0.3` is created.
