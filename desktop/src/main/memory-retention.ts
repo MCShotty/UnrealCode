@@ -12,6 +12,7 @@ export function settledMemoryReply(idle:AgentEvent,events:AgentEvent[]):{seq:num
   const replies=relevant.flatMap(item=>{
     const payload=item.payload as {Kind?:string;Data?:{TurnID?:string;Response?:{Output?:Array<{Type?:string;Data?:{Text?:string}}>} }}
     if(item.event!=='session.item'||payload.Kind!=='model_response')return []
+    if(turnId&&payload.Data?.TurnID&&payload.Data.TurnID!==turnId)return []
     const matchesTurn=!!turnId&&payload.Data?.TurnID===turnId
     if(!matchesTurn&&(anchor===undefined||item.seq<=anchor))return []
     return (payload.Data?.Response?.Output||[]).filter(output=>output.Type==='message'&&typeof output.Data?.Text==='string'&&output.Data.Text.trim()).map(output=>({seq:item.seq,text:output.Data!.Text!}))

@@ -1,0 +1,19 @@
+{
+  "repository": "https://github.com/sbroenne/mcp-windows",
+  "tag": "v1.3.25",
+  "tagObject": "97c44b626a0364fc64494597872cdc9cb429f4ff",
+  "commit": "6f54a68d41cca0d98a94b80855d9404579ca65d7",
+  "license": "MIT",
+  "included": [
+    "src/Sbroenne.WindowsMcp",
+    "Directory.Packages.props",
+    "LICENSE"
+  ],
+  "modifications": [
+    "Managed dispatch guards before native input and foreground changes",
+    "Guards before UI Automation mutations",
+    "Password classification for selected-window redaction",
+    "Disable screen fallback for managed window captures",
+    "Compile service code as a library without the upstream MCP server entry point; UnrealCode hosts a bounded selected-window protocol"
+  ]
+}

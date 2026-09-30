@@ -71,6 +71,36 @@ Custom model and MCP endpoints have their own operators and policies.
 
 ## Local controls and exports
 
+### Fieldnotes and managed Computer in 1.0.3
+
+Fieldnote originals, project/session pointers, revisions, drafts, deletion
+tombstones and request receipts are stored in the app profile. Notes are available
+across projects with attribution. Drafts are not indexed or supplied to models.
+Saving enables bounded local matching; memory interpretation occurs only with the
+existing app-wide memory destination consent and the note's indexing switch on.
+Interpretation sends the saved note and its attribution to the configured memory
+model. Selected original guidance is sent to the coding provider as advisory
+context. Disable or delete a note to withdraw future guidance; historical messages,
+receipts and pre-existing private backups retain their original evidence.
+
+Managed Computer is disabled by default. The bundled self-contained Windows
+helper runs as the normal account, without provider credentials. A task receives
+only explicitly selected windows and a named model destination. Observation text
+and requested screenshots may reach that provider. Known password fields are
+concealed, but applications do not always label sensitive content correctly; keep
+other private content out of selected windows. Physical input detection records
+neither keystroke contents nor clipboard data. Native screen-derived turns are
+excluded from automatic memory retention; factual activity labels omit screen
+content. Plan mode cannot inject input or change focus.
+
+Unpinned captures are held in a bounded, expiring process cache, not repository
+files or durable session logs. Revocation and takeover invalidate them. Explicitly
+pinned evidence becomes a normal conversation attachment with its usual retention.
+Private recovery exports include canonical notes and preferences, but no active
+computer grants or temporary captures. Support bundles exclude note bodies,
+screen content, captures, clipboard data and typed input. Legacy Windows MCP
+servers retain their own behavior when used separately.
+
 Saved provider API keys stay in Electron's main process and are encrypted with
 Windows-backed Electron storage when available; otherwise keys remain in memory
 for that run. The backend receives credentials in memory, not in Docker command

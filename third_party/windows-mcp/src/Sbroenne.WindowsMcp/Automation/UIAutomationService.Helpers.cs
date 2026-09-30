@@ -1,0 +1,595 @@
+using System.Diagnostics;
+using Sbroenne.WindowsMcp.Native;
+using UIA = Interop.UIAutomationClient;
+
+namespace Sbroenne.WindowsMcp.Automation;
+
+/// <summary>
+/// Framework-aware search strategy for UI tree traversal.
+/// Different UI frameworks have varying tree depths and structures,
+/// requiring different search approaches for optimal performance.
+/// </summary>
+public readonly struct FrameworkStrategy
+{
+    /// <summary>
+    /// Gets the detected UI framework name.
+    /// </summary>
+    public string? FrameworkName { get; init; }
+
+    /// <summary>
+    /// Gets the recommended maximum search depth for this framework.
+    /// </summary>
+    public int RecommendedMaxDepth { get; init; }
+
+    /// <summary>
+    /// Gets whether to use post-hoc filtering instead of inline filtering.
+    /// True for Electron/Chromium apps where content is deeply nested under non-matching parents.
+    /// False for WinForms/WPF where inline filtering is more efficient.
+    /// </summary>
+    public bool UsePostHocFiltering { get; init; }
+
+    /// <summary>
+    /// Gets whether find operations should scan the UI Automation content view instead of the
+    /// full control view. True for Chromium/Electron (and unknown) frameworks, whose control view
+    /// exposes many non-interactive structural nodes that inflate candidate sets; the content view
+    /// is closer to the meaningful, user-facing elements an agent targets. False for native desktop
+    /// frameworks, where the control view is already compact and content view could hide relevant nodes.
+    /// </summary>
+    public bool UseContentView { get; init; }
+
+    /// <summary>
+    /// Creates a strategy for Electron/Chromium apps (deep trees, need post-hoc filtering).
+    /// </summary>
+    public static FrameworkStrategy Electron => new()
+    {
+        FrameworkName = "Chromium/Electron",
+        RecommendedMaxDepth = 15,
+        UsePostHocFiltering = true,
+        UseContentView = true
+    };
+
+    /// <summary>
+    /// Creates a strategy for WinForms apps (shallow trees, inline filtering OK).
+    /// </summary>
+    public static FrameworkStrategy WinForms => new()
+    {
+        FrameworkName = "WinForms",
+        RecommendedMaxDepth = 5,
+        UsePostHocFiltering = false,
+        UseContentView = false
+    };
+
+    /// <summary>
+    /// Creates a strategy for WPF apps (medium depth trees).
+    /// </summary>
+    public static FrameworkStrategy Wpf => new()
+    {
+        FrameworkName = "WPF",
+        RecommendedMaxDepth = 10,
+        UsePostHocFiltering = false,
+        UseContentView = false
+    };
+
+    /// <summary>
+    /// Creates a strategy for Win32 apps (shallow trees).
+    /// </summary>
+    public static FrameworkStrategy Win32 => new()
+    {
+        FrameworkName = "Win32",
+        RecommendedMaxDepth = 5,
+        UsePostHocFiltering = false,
+        UseContentView = false
+    };
+
+    /// <summary>
+    /// Creates a strategy for unknown frameworks (default to Electron behavior for safety).
+    /// </summary>
+    public static FrameworkStrategy Unknown => new()
+    {
+        FrameworkName = null,
+        RecommendedMaxDepth = 15,
+        UsePostHocFiltering = true,
+        UseContentView = true
+    };
+}
+
+/// <summary>
+/// Helper methods for UI Automation service.
+/// </summary>
+public sealed partial class UIAutomationService
+{
+    private static bool ReferenceMatchesWindow(string elementId, string? windowHandle) =>
+        string.IsNullOrWhiteSpace(windowHandle) ||
+        (WindowHandleParser.TryParse(windowHandle, out var requested) &&
+         ElementIdGenerator.TryResolveWindowHandle(elementId, out var recorded) &&
+         IsRequestedWindowHandleCompatible(recorded, requested));
+
+    private static UIA.IUIAutomationElement? GetRootElement(string? windowHandle)
+    {
+        if (windowHandle is not null)
+        {
+            return WindowHandleParser.TryParse(windowHandle, out var parsedHandle) && parsedHandle != IntPtr.Zero
+                ? Uia.Automation.ElementFromHandle(parsedHandle)
+                : null;
+        }
+
+        var foregroundWindow = GetForegroundWindowHandle();
+        if (foregroundWindow != IntPtr.Zero)
+        {
+            return Uia.Automation.ElementFromHandle(foregroundWindow);
+        }
+
+        return null;
+    }
+
+    private static UIA.IUIAutomationElement? GetRootElementFromElementId(string? elementId)
+    {
+        if (string.IsNullOrEmpty(elementId))
+        {
+            return null;
+        }
+
+        if (ElementIdGenerator.TryResolveWindowHandle(elementId, out var handle))
+        {
+            return Uia.Automation.ElementFromHandle(handle);
+        }
+
+        return null;
+    }
+
+    private static UIA.IUIAutomationCondition BuildCondition(ElementQuery query)
+    {
+        var conditions = new List<UIA.IUIAutomationCondition>();
+
+        if (!string.IsNullOrEmpty(query.Name))
+        {
+            conditions.Add(Uia.CreatePropertyConditionWithFlags(
+                UIA3PropertyIds.Name,
+                query.Name,
+                UIA.PropertyConditionFlags.PropertyConditionFlags_IgnoreCase));
+        }
+
+        if (!string.IsNullOrEmpty(query.AutomationId))
+        {
+            conditions.Add(Uia.CreatePropertyCondition(UIA3PropertyIds.AutomationId, query.AutomationId));
+        }
+
+        if (!string.IsNullOrEmpty(query.ClassName))
+        {
+            conditions.Add(Uia.CreatePropertyConditionWithFlags(
+                UIA3PropertyIds.ClassName,
+                query.ClassName,
+                UIA.PropertyConditionFlags.PropertyConditionFlags_IgnoreCase));
+        }
+
+        if (!string.IsNullOrEmpty(query.ControlType))
+        {
+            var controlTypeId = GetControlTypeId(query.ControlType);
+            if (controlTypeId > 0)
+            {
+                conditions.Add(Uia.CreatePropertyCondition(UIA3PropertyIds.ControlType, controlTypeId));
+            }
+        }
+
+        if (conditions.Count == 0)
+        {
+            return Uia.TrueCondition;
+        }
+
+        if (conditions.Count == 1)
+        {
+            return conditions[0];
+        }
+
+        // Combine with AND
+        var combined = conditions[0];
+        for (var i = 1; i < conditions.Count; i++)
+        {
+            combined = Uia.Automation.CreateAndCondition(combined, conditions[i]);
+        }
+
+        return combined;
+    }
+
+    private static int GetControlTypeId(string controlTypeName)
+    {
+        return controlTypeName.ToUpperInvariant() switch
+        {
+            "BUTTON" => UIA3ControlTypeIds.Button,
+            "CALENDAR" => UIA3ControlTypeIds.Calendar,
+            "CHECKBOX" => UIA3ControlTypeIds.CheckBox,
+            "COMBOBOX" => UIA3ControlTypeIds.ComboBox,
+            "CUSTOM" => UIA3ControlTypeIds.Custom,
+            "DATAGRID" => UIA3ControlTypeIds.DataGrid,
+            "DATAITEM" => UIA3ControlTypeIds.DataItem,
+            "DOCUMENT" => UIA3ControlTypeIds.Document,
+            "EDIT" => UIA3ControlTypeIds.Edit,
+            "GROUP" => UIA3ControlTypeIds.Group,
+            "HEADER" => UIA3ControlTypeIds.Header,
+            "HEADERITEM" => UIA3ControlTypeIds.HeaderItem,
+            "HYPERLINK" => UIA3ControlTypeIds.Hyperlink,
+            "IMAGE" => UIA3ControlTypeIds.Image,
+            "LIST" => UIA3ControlTypeIds.List,
+            "LISTITEM" => UIA3ControlTypeIds.ListItem,
+            "MENU" => UIA3ControlTypeIds.Menu,
+            "MENUBAR" => UIA3ControlTypeIds.MenuBar,
+            "MENUITEM" => UIA3ControlTypeIds.MenuItem,
+            "PANE" => UIA3ControlTypeIds.Pane,
+            "PROGRESSBAR" => UIA3ControlTypeIds.ProgressBar,
+            "RADIOBUTTON" => UIA3ControlTypeIds.RadioButton,
+            "SCROLLBAR" => UIA3ControlTypeIds.ScrollBar,
+            "SEPARATOR" => UIA3ControlTypeIds.Separator,
+            "SLIDER" => UIA3ControlTypeIds.Slider,
+            "SPINNER" => UIA3ControlTypeIds.Spinner,
+            "SPLITBUTTON" => UIA3ControlTypeIds.SplitButton,
+            "STATUSBAR" => UIA3ControlTypeIds.StatusBar,
+            "TAB" => UIA3ControlTypeIds.Tab,
+            "TABITEM" => UIA3ControlTypeIds.TabItem,
+            "TABLE" => UIA3ControlTypeIds.Table,
+            "TEXT" => UIA3ControlTypeIds.Text,
+            "THUMB" => UIA3ControlTypeIds.Thumb,
+            "TITLEBAR" => UIA3ControlTypeIds.TitleBar,
+            "TOOLBAR" => UIA3ControlTypeIds.ToolBar,
+            "TOOLTIP" => UIA3ControlTypeIds.ToolTip,
+            "TREE" => UIA3ControlTypeIds.Tree,
+            "TREEITEM" => UIA3ControlTypeIds.TreeItem,
+            "WINDOW" => UIA3ControlTypeIds.Window,
+            _ => 0
+        };
+    }
+
+    /// <summary>
+    /// Converts a UIA element to UIElementInfo.
+    /// When fromCachedElement=true (tree/find operations), uses cached properties for speed and element stability.
+    /// When fromCachedElement=false (default, action responses), uses current properties for latest data.
+    /// </summary>
+    /// <param name="element">The UI Automation element.</param>
+    /// <param name="rootElement">The root element for generating element IDs.</param>
+    /// <param name="coordinateConverter">Coordinate converter for monitor-relative positions.</param>
+    /// <param name="children">Optional child elements.</param>
+    /// <param name="fromCachedElement">If true, element was retrieved with a cache request (use cached properties). If false, use current properties.</param>
+    /// <param name="detectSemanticLayoutActions">Whether to retain Chromium layout containers that expose a direct action.</param>
+    /// <returns>The element info, or null if conversion fails.</returns>
+    internal static UIElementInfo? ConvertToElementInfo(
+        UIA.IUIAutomationElement element,
+        UIA.IUIAutomationElement rootElement,
+        CoordinateConverter coordinateConverter,
+        UIElementInfo[]? children = null,
+        bool fromCachedElement = false,
+        bool detectSemanticLayoutActions = false)
+    {
+        try
+        {
+            // Use cached rect for tree/find operations (elements may go stale), current for actions
+            var rect = fromCachedElement
+                ? element.CachedBoundingRectangle
+                : element.CurrentBoundingRectangle;
+
+            var boundingRect = new BoundingRect
+            {
+                X = rect.left,
+                Y = rect.top,
+                Width = rect.right - rect.left,
+                Height = rect.bottom - rect.top
+            };
+
+            // Get monitor-relative rect and clickable point
+            var (monitorRelativeRect, monitorIndex) = coordinateConverter.ToMonitorRelative(boundingRect);
+
+            // Use centralized element ID generation with short IDs
+            var elementId = fromCachedElement
+                ? ElementIdGenerator.GenerateFastId(element, rootElement)
+                : ElementIdGenerator.GenerateFastIdFromCurrent(element, rootElement);
+
+            // Get properties - cached when tree walking/finding, current for actions
+            string? name = fromCachedElement ? element.GetCachedName() : element.GetName();
+            string? automationId = fromCachedElement ? element.GetCachedAutomationId() : element.GetAutomationId();
+            string? controlType = fromCachedElement ? element.GetCachedControlTypeName() : element.GetControlTypeName();
+            bool isEnabled = fromCachedElement
+                ? element.GetCachedIsEnabled()
+                : element.CurrentIsEnabled != 0;
+            bool isOffscreen = fromCachedElement
+                ? element.GetCachedIsOffscreen()
+                : element.CurrentIsOffscreen != 0;
+            var isSemanticLayoutCandidate =
+                fromCachedElement &&
+                detectSemanticLayoutActions &&
+                controlType is "Pane" or "Group" &&
+                string.IsNullOrWhiteSpace(name) &&
+                string.IsNullOrWhiteSpace(automationId);
+            var isDirectlyActionable = fromCachedElement && HasCachedDirectAction(element);
+
+            var info = new UIElementInfo
+            {
+                ElementId = elementId,
+                IsPassword = element.CurrentIsPassword != 0,
+                Name = name,
+                AutomationId = automationId,
+                ControlType = controlType,
+                BoundingRect = boundingRect,
+                MonitorRelativeRect = monitorRelativeRect,
+                MonitorIndex = monitorIndex,
+                ClickablePoint = ClickablePoint.FromCenter(monitorRelativeRect, monitorIndex),
+                SupportedPatterns = fromCachedElement ? [] : element.GetSupportedPatternNames(),
+                IsSemanticLayoutOnly = isSemanticLayoutCandidate &&
+                    !isDirectlyActionable,
+                IsDirectlyActionable = isDirectlyActionable,
+                HasDeveloperIdentifier = !string.IsNullOrWhiteSpace(automationId),
+                Value = !fromCachedElement || string.Equals(controlType, "Edit", StringComparison.Ordinal)
+                    ? element.TryGetValue()
+                    : null,
+                ToggleState = string.Equals(controlType, "RadioButton", StringComparison.Ordinal)
+                    ? element.GetSelectionStateName()
+                    : !fromCachedElement || string.Equals(controlType, "CheckBox", StringComparison.Ordinal)
+                        ? element.GetToggleState()
+                        : null,
+                IsEnabled = isEnabled,
+                IsOffscreen = isOffscreen,
+                Children = children
+            };
+
+            return info;
+        }
+
+        catch (Exception ex) when (COMExceptionHelper.IsExpectedElementFailure(ex))
+        {
+            return null;
+        }
+    }
+
+    private static bool HasCachedDirectAction(UIA.IUIAutomationElement element)
+    {
+        // Chromium exposes ScrollItem on nearly every page wrapper. It only brings an element
+        // into view; it does not make an otherwise anonymous layout container a user-facing action.
+        return element.GetCachedPropertyValue(UIA3PropertyIds.IsInvokePatternAvailable) is true ||
+               element.GetCachedPropertyValue(UIA3PropertyIds.IsExpandCollapsePatternAvailable) is true ||
+               element.GetCachedPropertyValue(UIA3PropertyIds.IsRangeValuePatternAvailable) is true ||
+               element.GetCachedPropertyValue(UIA3PropertyIds.IsSelectionItemPatternAvailable) is true ||
+               element.GetCachedPropertyValue(UIA3PropertyIds.IsTogglePatternAvailable) is true ||
+               element.GetCachedPropertyValue(UIA3PropertyIds.IsValuePatternAvailable) is true;
+    }
+
+    private UIElementInfo[]? GetChildren(UIA.IUIAutomationElement element, UIA.IUIAutomationElement rootElement, int maxChildren = 100)
+    {
+        var children = new List<UIElementInfo>();
+        var walker = Uia.ControlViewWalker;
+        var child = walker.GetFirstChildElement(element);
+        var count = 0;
+
+        while (child != null && count < maxChildren)
+        {
+            try
+            {
+                var childInfo = ConvertToElementInfo(child, rootElement, _coordinateConverter);
+                if (childInfo != null)
+                {
+                    children.Add(childInfo);
+                }
+
+                count++;
+                child = walker.GetNextSiblingElement(child);
+            }
+            catch (Exception ex) when (COMExceptionHelper.IsExpectedElementFailure(ex))
+            {
+                break;
+            }
+        }
+
+        return children.Count > 0 ? [.. children] : null;
+    }
+
+    private static UIAutomationDiagnostics CreateDiagnostics(Stopwatch stopwatch)
+    {
+        return new UIAutomationDiagnostics
+        {
+            DurationMs = stopwatch.ElapsedMilliseconds
+        };
+    }
+
+    private static UIAutomationDiagnostics CreateDiagnostics(Stopwatch stopwatch, ElementQuery? query)
+    {
+        return new UIAutomationDiagnostics
+        {
+            DurationMs = stopwatch.ElapsedMilliseconds,
+            Query = query
+        };
+    }
+
+    private static UIAutomationDiagnostics CreateActionDiagnostics(
+        Stopwatch stopwatch,
+        UIA.IUIAutomationElement? element,
+        string actionPath)
+    {
+        UIAutomationTargetDiagnostics? target = null;
+        if (element != null)
+        {
+            try
+            {
+                target = new UIAutomationTargetDiagnostics
+                {
+                    Name = element.GetName(),
+                    AutomationId = element.GetAutomationId(),
+                    ControlType = element.GetControlTypeName(),
+                    IsEnabled = element.CurrentIsEnabled != 0,
+                    IsOffscreen = element.CurrentIsOffscreen != 0
+                };
+            }
+            catch (Exception ex) when (COMExceptionHelper.IsExpectedElementFailure(ex))
+            {
+                target = null;
+            }
+        }
+
+        return new UIAutomationDiagnostics
+        {
+            DurationMs = stopwatch.ElapsedMilliseconds,
+            ActionPath = actionPath,
+            TargetElement = target
+        };
+    }
+
+    private static UIAutomationDiagnostics CreateDiagnosticsWithContext(
+        Stopwatch stopwatch,
+        UIA.IUIAutomationElement rootElement,
+        ElementQuery? query,
+        int elementsScanned,
+        string? windowTitle,
+        string? windowHandle,
+        bool? usedContentView = null)
+    {
+        return new UIAutomationDiagnostics
+        {
+            DurationMs = stopwatch.ElapsedMilliseconds,
+            Query = query,
+            ElementsScanned = elementsScanned,
+            WindowTitle = windowTitle,
+            WindowHandle = windowHandle,
+            DetectedFramework = DetectFramework(rootElement),
+            UsedContentView = usedContentView
+        };
+    }
+
+    /// <summary>
+    /// Detects the UI framework of the given element.
+    /// </summary>
+    private static string? DetectFramework(UIA.IUIAutomationElement element)
+    {
+        try
+        {
+            var frameworkId = element.GetFrameworkId();
+            var className = element.GetClassName();
+
+            // Check for Chromium-based apps (Electron, Chrome, Edge, etc.)
+            if (className?.StartsWith("Chrome", StringComparison.OrdinalIgnoreCase) == true ||
+                frameworkId == "Chrome")
+            {
+                return "Chromium/Electron";
+            }
+
+            // Check for WinUI 3 / Windows App SDK apps
+            // WinUI 3 apps often have these class name patterns:
+            // - "Microsoft.UI.Content.DesktopChildSiteBridge"
+            // - "Microsoft.UI.Xaml.Controls.*"
+            // - "WinUIDesktopWin32WindowClass"
+            // - "DesktopWindowXamlSource"
+            if (className != null)
+            {
+                if (className.StartsWith("Microsoft.UI.", StringComparison.OrdinalIgnoreCase) ||
+                    className.Contains("WinUI", StringComparison.OrdinalIgnoreCase) ||
+                    className.Contains("DesktopWindowXamlSource", StringComparison.OrdinalIgnoreCase) ||
+                    className.Equals("Windows.UI.Composition.DesktopWindowContentBridge", StringComparison.OrdinalIgnoreCase))
+                {
+                    return "WinUI";
+                }
+            }
+
+            // If we have Win32 framework, check children for more specific framework
+            if (frameworkId == "Win32" && className != null)
+            {
+                var walker = UIA3Automation.Instance.ControlViewWalker;
+                var child = walker.GetFirstChildElement(element);
+                var maxChildren = 10; // Limit scan depth for performance
+                var childCount = 0;
+
+                while (child != null && childCount < maxChildren)
+                {
+                    try
+                    {
+                        var childClassName = child.GetClassName();
+                        var childFramework = child.GetFrameworkId();
+
+                        // Check for Chromium
+                        if (childClassName?.StartsWith("Chrome", StringComparison.OrdinalIgnoreCase) == true ||
+                            childFramework == "Chrome")
+                        {
+                            return "Chromium/Electron";
+                        }
+
+                        // Check for WinUI 3 patterns in children
+                        if (childClassName != null)
+                        {
+                            if (childClassName.StartsWith("Microsoft.UI.", StringComparison.OrdinalIgnoreCase) ||
+                                childClassName.Contains("WinUI", StringComparison.OrdinalIgnoreCase) ||
+                                childClassName.Contains("DesktopWindowXamlSource", StringComparison.OrdinalIgnoreCase) ||
+                                childClassName.Contains("ContentPresenter", StringComparison.OrdinalIgnoreCase) ||
+                                childClassName.Equals("Windows.UI.Composition.DesktopWindowContentBridge", StringComparison.OrdinalIgnoreCase))
+                            {
+                                return "WinUI";
+                            }
+                        }
+
+                        // Check if child reports XAML framework
+                        if (childFramework == "XAML" || childFramework == "WinUI")
+                        {
+                            return "WinUI";
+                        }
+
+                        child = walker.GetNextSiblingElement(child);
+                        childCount++;
+                    }
+                    catch (Exception ex) when (COMExceptionHelper.IsExpectedElementFailure(ex))
+                    {
+                        break;
+                    }
+                }
+            }
+
+            return frameworkId;
+        }
+        catch (Exception ex) when (COMExceptionHelper.IsExpectedElementFailure(ex))
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Gets the appropriate search strategy for the detected UI framework.
+    /// </summary>
+    /// <param name="element">The root element to detect framework from.</param>
+    /// <returns>A framework strategy with optimal search parameters.</returns>
+    internal static FrameworkStrategy GetFrameworkStrategy(UIA.IUIAutomationElement element)
+    {
+        var framework = DetectFramework(element);
+
+        return framework switch
+        {
+            "Chromium/Electron" => FrameworkStrategy.Electron,
+            "WinForm" or "WindowsForms" => FrameworkStrategy.WinForms,
+            "WPF" => FrameworkStrategy.Wpf,
+            "Win32" => FrameworkStrategy.Win32,
+            "XAML" or "UWP" or "WinUI" => FrameworkStrategy.Wpf, // Use WPF-like strategy for modern XAML/WinUI
+            "Qt" => FrameworkStrategy.Win32, // Qt uses Win32-like shallow trees
+            _ => FrameworkStrategy.Unknown // Default to Electron approach for safety
+        };
+    }
+
+    private UIAutomationResult CheckElevatedTarget(UIA.IUIAutomationElement element)
+    {
+        try
+        {
+            var rect = element.CurrentBoundingRectangle;
+            var centerX = rect.left + (rect.right - rect.left) / 2;
+            var centerY = rect.top + (rect.bottom - rect.top) / 2;
+
+            if (_elevationDetector.IsTargetAtHigherIntegrity(centerX, centerY))
+            {
+                LogElevatedTargetWarning(_logger, centerX, centerY);
+                return UIAutomationResult.CreateFailure(
+                    "",
+                    UIAutomationErrorType.ElevatedTarget,
+                    "Target window is running elevated. Restart VS Code as Administrator to interact with it.",
+                    null);
+            }
+        }
+        catch (Exception ex) when (COMExceptionHelper.IsExpectedElementFailure(ex))
+        {
+            // Best effort
+        }
+
+        return new UIAutomationResult
+        {
+            Success = true,
+            Action = ""
+        };
+    }
+}

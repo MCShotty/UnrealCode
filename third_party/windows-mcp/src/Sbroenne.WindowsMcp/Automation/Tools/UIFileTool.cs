@@ -1,0 +1,60 @@
+using System.ComponentModel;
+using System.Runtime.Versioning;
+using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
+using Sbroenne.WindowsMcp.Tools;
+
+namespace Sbroenne.WindowsMcp.Automation.Tools;
+
+/// <summary>
+/// MCP tool for saving files to disk. Handles Save As dialogs automatically.
+/// </summary>
+[SupportedOSPlatform("windows")]
+[McpServerToolType]
+public static partial class UIFileTool
+{
+    /// <summary>
+    /// 💾 SAVE FILE TO DISK - The ONLY tool for saving documents. Automatically handles: Ctrl+S, Save As dialogs, filename entry, and overwrite prompts.
+    /// ⚠️ DO NOT use keyboard_control(key='s', modifiers='ctrl') for saving - it CANNOT handle Save As dialogs and will get stuck!
+    /// NOTE: English Windows only (detects 'Save As' dialog titles).
+    /// Keywords: save, save file, save as, save document, write file, store, persist, export,
+    /// ctrl+s, save dialog, overwrite, filename.
+    /// </summary>
+    /// <remarks>
+    /// WHEN TO USE: Any time you need to save a file in ANY application (Notepad, Word, VS Code, etc.).
+    /// WHAT IT DOES: Sends Ctrl+S, waits for Save As dialog, enters filename, clicks Save, handles overwrite confirmation.
+    /// WHY NOT KEYBOARD: keyboard_control sends Ctrl+S but CANNOT detect or interact with the Save As dialog that appears.
+    /// </remarks>
+    /// <param name="windowHandle">Window handle (from app or window_management 'find'). REQUIRED. Pass the APPLICATION window handle, not a dialog.</param>
+    /// <param name="filePath">Full destination path. Fills a Save As dialog; it does not retarget Ctrl+S for an already named document. To save an existing document under a different path, also set triggerMode='save_as'. Forward/back slashes both work.</param>
+    /// <param name="includeDiagnostics">Include diagnostics (timing, query, elements scanned) in response. Default: false.</param>
+    /// <param name="triggerMode">shortcut (default): Ctrl+S for the current document. save_as: Ctrl+Shift+S to choose a different destination without first saving over the original. wait: handle an already open owned Save As dialog without sending another shortcut. Save As shortcuts are application-specific; wait also works after opening a dialog through the application's menu.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A call result containing a text content block with the JSON payload describing the save operation's success status. <c>IsError</c> reflects operation success.</returns>
+    [McpServerTool(Name = "file_save", Title = "💾 SAVE FILE (handles Save As dialogs)", Destructive = true, OpenWorld = false)]
+    public static async partial Task<CallToolResult> ExecuteAsync(
+        string windowHandle,
+        [DefaultValue(null)] string? filePath,
+        [DefaultValue(false)] bool includeDiagnostics,
+        [DefaultValue("shortcut")] string triggerMode,
+        CancellationToken cancellationToken)
+    {
+        const string actionName = "save";
+
+        if (string.IsNullOrWhiteSpace(windowHandle))
+        {
+            return WindowsToolsBase.FailResult(
+                "windowHandle is required. Get it from window_management(action='find'). Pass the APPLICATION window, not a dialog.");
+        }
+
+        try
+        {
+            var result = await WindowsToolsBase.UIAutomationService.SaveAsync(windowHandle, filePath, triggerMode, cancellationToken);
+            return WindowsToolsBase.ToCallToolResult(result, includeDiagnostics);
+        }
+        catch (Exception ex)
+        {
+            return WindowsToolsBase.ErrorCallToolResult(actionName, ex);
+        }
+    }
+}

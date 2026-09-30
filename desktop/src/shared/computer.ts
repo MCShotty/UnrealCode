@@ -1,0 +1,8 @@
+export interface ComputerWindow { id:string; handle:string; processId:number; started:string; title:string; process:string; bounds:{x:number;y:number;width:number;height:number}; dpi:number; desktop:string; blocked?:string }
+export interface ComputerElement { id:string; name:string; role:string; enabled:boolean; bounds:{x:number;y:number;width:number;height:number}; password:boolean }
+export interface ComputerObservation { id:string; window:ComputerWindow; elements:ComputerElement[]; created:string; width:number; height:number; imageRef?:string; preview?:string }
+export interface ComputerOwner { project:string; workspace:string; sessionId:string; workspaceId:string; destination:string }
+export interface ComputerGrant extends ComputerOwner { id:string; windows:ComputerWindow[]; control:boolean; generation:string; createdAt:string }
+export interface ComputerStatus { enabled:boolean; state:'disabled'|'starting'|'ready'|'active'|'paused'|'unavailable'; message:string; generation?:string; activity?:string; grant?:ComputerGrant; shortcut:boolean; waiting:Array<{sessionId:string;project:string}>; legacyConnections:Array<{id:string;name:string}> }
+export interface ComputerAction { kind:'click'|'type'|'select'|'key'|'scroll'|'click-point'; elementId?:string; text?:string; value?:string; clearFirst?:boolean; key?:string; modifiers?:string[]; x?:number;y?:number;direction?:'up'|'down'|'left'|'right';amount?:number }
+export interface ComputerCall { type:'status'|'windows'|'observe'|'act'|'focus'|'wait'; windowId?:string; observationId?:string; parentElement?:string; image?:boolean; action?:ComputerAction }

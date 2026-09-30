@@ -95,6 +95,7 @@ type app struct {
 	preferences     contextPreferences
 	fileLocks       fileLocks
 	mcp             *mcpCatalog
+	guidance        fieldnoteAuthority
 	host            hostExchange
 	maintenance     map[session.ID]bool
 }
@@ -489,7 +490,8 @@ func (c *observedClient) Respond(ctx context.Context, request llm.Request, optio
 			upstreamPreview(delta)
 		}
 	}
-	response, err := c.inner.Respond(ctx, request, options)
+	outgoing := c.app.resolveComputerImages(ctx, c.id, c.config.WorkspaceID, request)
+	response, err := c.inner.Respond(ctx, outgoing, options)
 	response, err = llm.NormalizeFailure(response, err)
 	llm.RedactFailure(&response, c.sensitive...)
 	if err == nil && response.Failure == nil {
@@ -541,12 +543,14 @@ func (a *app) submit(id session.ID, input inbox.Input, secret credential) error 
 	a.rememberPostflight(id, string(input.ID), reply)
 	prepared, err := externalInputWithAdvice(reply, string(input.ID), advice)
 	var attachments struct {
-		Images  []string `json:"images"`
-		RetryOf uint64   `json:"retryOf"`
+		NativeContext bool              `json:"nativeContext"`
+		Images        []string          `json:"images"`
+		RetryOf       uint64            `json:"retryOf"`
+		Fieldnotes    *fieldnoteReceipt `json:"fieldnotes"`
 	}
 	_ = json.Unmarshal(input.Payload, &attachments)
-	if len(attachments.Images) > 0 || attachments.RetryOf > 0 {
-		prepared.Payload, err = json.Marshal(map[string]any{"prompt": reply, "advice": advice, "images": attachments.Images, "retryOf": attachments.RetryOf})
+	if len(attachments.Images) > 0 || attachments.RetryOf > 0 || attachments.Fieldnotes != nil || attachments.NativeContext {
+		prepared.Payload, err = json.Marshal(map[string]any{"prompt": reply, "advice": advice, "images": attachments.Images, "retryOf": attachments.RetryOf, "fieldnotes": attachments.Fieldnotes, "nativeContext": attachments.NativeContext})
 	}
 	if err == nil {
 		err = run.inbox.Submit(a.ctx, prepared)
@@ -647,7 +651,7 @@ func (a *app) contextBuilder(id session.ID, config sessionConfig, model, operati
 			}
 		}
 	}
-	builder := &catalogBuilder{Builder: contextbuilder.NewBuilder(registry.Skills()...), catalog: a.mcp, id: id, mode: config.Mode}
+	builder := &catalogBuilder{Builder: contextbuilder.NewBuilder(registry.Skills()...), catalog: a.mcp, id: id, mode: config.Mode, guidance: &a.guidance}
 	if values, err := a.readSummaries(id); err == nil {
 		for _, value := range values {
 			if value.Active {

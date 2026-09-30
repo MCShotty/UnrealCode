@@ -42,6 +42,7 @@ function ActivityPanel({sessionId,initialId,eventSequence,onOpenSession}:{sessio
 }
 export function ToolActivityHost({sessionId,eventSequence,onOpenSession}:{sessionId?:string;eventSequence:number;onOpenSession(id:string):void}){
  const [open,setOpen]=useState(false),[id,setId]=useState<string>(),[narrow,setNarrow]=useState(true)
+ useEffect(()=>{const close=()=>setOpen(false);window.addEventListener('unrealcode:computer-companion',close);return()=>window.removeEventListener('unrealcode:computer-companion',close)},[])
  const focus=useRef<HTMLElement|null>(null),dialog=useRef<HTMLDialogElement>(null),modeSnapshot=useRef<{scroll:number;focus:HTMLElement|null}|undefined>(undefined),reduced=useReducedMotion()
  useLayoutEffect(()=>{
   const container=document.querySelector('.workspace-body')

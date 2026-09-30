@@ -1,6 +1,6 @@
 {
   "name": "unrealcode",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "UnrealCode Windows desktop application built on Unreal Agent",
   "author": "UnrealCode contributors",
@@ -9,17 +9,18 @@
   "scripts": {
     "host-files:build": "node scripts/build-host-files.mjs",
     "pretest": "npm run host-files:build",
-    "prebuild:code": "npm run host-files:build",
-    "predev": "npm run host-files:build",
+    "prebuild:code": "npm run host-files:build && npm run computer:build",
+    "predev": "npm run host-files:build && npm run computer:build",
     "dev": "electron-vite dev",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "build:code": "electron-vite build",
-    "licenses:generate": "node scripts/generate-notices.mjs",
+    "licenses:generate": "node scripts/generate-notices.mjs && node scripts/computer-notices.mjs",
     "brand:generate": "node scripts/generate-brand-assets.mjs",
     "build:win": "npm run typecheck && npm run build:code && npm run licenses:generate && node scripts/build-release.mjs",
     "build:release:unsigned": "npm run typecheck && npm run build:code && npm run licenses:generate && node scripts/build-release.mjs --unsigned-public",
     "test": "vitest run",
-    "build:stable": "npm run typecheck && npm run build:code && npm run licenses:generate && node scripts/build-release.mjs --stable"
+    "build:stable": "npm run typecheck && npm run build:code && npm run licenses:generate && node scripts/build-release.mjs --stable",
+    "computer:build": "node scripts/build-computer-host.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
@@ -71,6 +72,14 @@
       {
         "from": "generated/unrealcode-host-files.exe",
         "to": "host-files/unrealcode-host-files.exe"
+      },
+      {
+        "from": "generated/computer-host",
+        "to": "computer-host",
+        "filter": [
+          "UnrealCode.ComputerHost.exe",
+          "manifest.json"
+        ]
       },
       {
         "from": "assets/unrealcode-icon.png",

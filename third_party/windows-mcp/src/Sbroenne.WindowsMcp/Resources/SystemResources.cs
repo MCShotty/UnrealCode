@@ -1,0 +1,551 @@
+using System.Text.Json;
+using ModelContextProtocol.Server;
+using Sbroenne.WindowsMcp.Capture;
+using Sbroenne.WindowsMcp.Native;
+using Sbroenne.WindowsMcp.Serialization;
+
+namespace Sbroenne.WindowsMcp.Resources;
+
+/// <summary>
+/// MCP resources for system information discovery.
+/// </summary>
+[McpServerResourceType]
+public sealed class SystemResources
+{
+    private readonly MonitorService _monitorService;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="SystemResources"/> class.
+    /// </summary>
+    /// <param name="monitorService">The monitor service for enumerating displays.</param>
+    public SystemResources(MonitorService monitorService)
+    {
+        _monitorService = monitorService ?? throw new ArgumentNullException(nameof(monitorService));
+    }
+
+    /// <summary>List of all connected monitors with resolution, position, and primary status. Use this to understand the display configuration before capturing screenshots or positioning windows.</summary>
+    [McpServerResource(UriTemplate = "system://monitors", Name = "monitors", Title = "Connected Monitors", MimeType = "application/json")]
+    public string GetMonitors()
+    {
+        var monitors = _monitorService.GetMonitors();
+        return JsonSerializer.Serialize(monitors, McpJsonOptions.Default);
+    }
+
+    /// <summary>Current keyboard layout information including BCP-47 language tag (e.g., 'en-US'), display name, and layout identifier. Use this to understand input context for keyboard operations.</summary>
+    [McpServerResource(UriTemplate = "system://keyboard/layout", Name = "keyboard-layout", Title = "Keyboard Layout", MimeType = "application/json")]
+    public static string GetKeyboardLayout()
+    {
+        // Get the foreground window's thread
+        var foregroundWindow = NativeMethods.GetForegroundWindow();
+        var threadId = NativeMethods.GetWindowThreadProcessId(foregroundWindow, out _);
+
+        // Get the keyboard layout for the thread
+        var layoutHandle = NativeMethods.GetKeyboardLayout(threadId);
+
+        if (layoutHandle == IntPtr.Zero)
+        {
+            // Return a default/unknown layout if we can't detect it
+            var unknownLayout = KeyboardLayoutInfo.Create("unknown", "Unknown", "00000000", 0);
+            return JsonSerializer.Serialize(unknownLayout, McpJsonOptions.Default);
+        }
+
+        // The low word of the layout handle is the language identifier (LANGID)
+        var langId = (ushort)((long)layoutHandle & 0xFFFF);
+
+        // Get the layout name (usually the language code like "00000409" for US English)
+        var layoutNameBuffer = new char[9]; // KL_NAMELENGTH is 9
+        string layoutId;
+        if (NativeMethods.GetKeyboardLayoutName(layoutNameBuffer))
+        {
+            layoutId = new string(layoutNameBuffer).TrimEnd('\0');
+        }
+        else
+        {
+            layoutId = "00000000";
+        }
+
+        // Convert LANGID to BCP-47 language tag
+        var languageTag = GetLanguageTag(langId);
+
+        // Get display name
+        var displayName = GetLayoutDisplayName(langId);
+
+        var layoutInfo = KeyboardLayoutInfo.Create(languageTag, displayName, layoutId, langId & 0x3FF);
+        return JsonSerializer.Serialize(layoutInfo, McpJsonOptions.Default);
+    }
+
+    /// <summary>
+    /// Converts a Windows LANGID to a BCP-47 language tag.
+    /// </summary>
+    /// <param name="langId">The Windows language identifier.</param>
+    /// <returns>The BCP-47 language tag.</returns>
+    private static string GetLanguageTag(ushort langId)
+    {
+        try
+        {
+            // Try to get the culture info from the LCID
+            var culture = System.Globalization.CultureInfo.GetCultureInfo(langId);
+            return culture.Name;
+        }
+        catch
+        {
+            // If we can't resolve the culture, return a hex representation
+            return $"x-0x{langId:X4}";
+        }
+    }
+
+    /// <summary>
+    /// Gets the display name for a keyboard layout.
+    /// </summary>
+    /// <param name="langId">The Windows language identifier.</param>
+    /// <returns>The display name of the keyboard layout.</returns>
+    private static string GetLayoutDisplayName(ushort langId)
+    {
+        try
+        {
+            var culture = System.Globalization.CultureInfo.GetCultureInfo(langId);
+            return culture.DisplayName;
+        }
+        catch
+        {
+            return "Unknown Layout";
+        }
+    }
+
+    /// <summary>Best practices and workflow guidance for using Windows automation tools effectively. READ THIS FIRST when automating Windows applications.</summary>
+    [McpServerResource(UriTemplate = "system://best-practices", Name = "best-practices", Title = "Windows Automation Best Practices", MimeType = "text/markdown")]
+    public static string GetBestPractices()
+    {
+        return """
+            # Windows Automation Best Practices
+
+            ## Available Tools
+
+            | Tool | Purpose |
+            |------|---------|
+            | `app` | Observe application launch. Returns a window handle only when one eligible window is identified. |
+            | `window_management` | Find, activate, close, move existing windows. Get window handles. |
+            | `screenshot_control` | Capture screenshots with element discovery (annotate=true). |
+            | `ui_click` | Click buttons, checkboxes, menu items, links. |
+            | `ui_type` | Type text into input fields. |
+            | `ui_find` | Find elements, get details, inspect properties. |
+            | `ui_read` | Read element text; explicit window reads can use OCR fallback. |
+            | `file_save` | 💾 Save files to disk (handles Save As dialogs automatically!). |
+            | `keyboard_control` | Send hotkeys (Ctrl+S), navigate (Tab, arrows). |
+            | `mouse_control` | Low-level clicks (fallback when ui_click fails). |
+
+            ## The Standard Workflow: Launch App, Then Interact
+
+            1. **Launch the application** with `app` - inspect `launchStatus` and any returned `window` or `windows`
+            2. **Resolve the intended window**. Only after selecting the intended handle may handle-based discovery proceed.
+               If the handle is missing or ambiguous, use `window_management` to inspect candidates or rediscover the target.
+               If no handle is identified, do not call handle-based tools.
+            3. **Discover controls** with `ui_snapshot` or `ui_find`; verify the intended content before acting
+            4. **Use the handle and returned element ID** for targeted actions
+
+            `started` may have no window. `windowObserved` reports a visible process-owned window.
+            `possibleHandoff` reports a clean launcher exit with a matching pre-existing instance,
+            not confirmed request delivery or loaded content. Multiple windows are listed without a
+            selected `window`; inspect and choose the intended target. `exitedWithoutWindow` fails
+            when no matching window/instance can be established. None guarantees focus or readiness.
+
+            ```
+            app(programPath="notepad.exe")
+            → Example: { "success": true, "launchStatus": "windowObserved",
+                         "window": { "handle": "123456", "title": "Untitled - Notepad", ... } }
+
+            # Only after a window is identified; verify the intended content before acting
+            ui_find(windowHandle="123456", nameContains="Save")
+            → Choose the intended control's returned id
+            ui_click(windowHandle="123456", elementId="<save-id>")
+            screenshot_control(target="window", windowHandle="123456")
+            ```
+
+            **If the app is already running**, use `window_management(action='find')` to get the handle.
+
+            ## Recommended Workflow
+
+            ### 1. Find the Window First
+            ```
+            window_management(action="find", title="Notepad")
+            → Get the handle from the result
+            ```
+
+            ### 2. Discover, Then Interact with Elements
+            ```
+            ui_snapshot(windowHandle="<handle>")
+            → Choose IDs from the returned tree
+            ui_click(windowHandle="<handle>", elementId="<save-id>")
+            ui_type(windowHandle="<handle>", elementId="<input-id>", text="Hello")
+            ```
+
+            ### 3. If You Don't Know the Element Name → Discover First
+            ```
+            screenshot_control(target="window", windowHandle="<handle>")
+            → See screenshot with numbered labels + element list (default behavior)
+            ```
+
+            ### 4. For Toggles → Click handles state
+            ```
+            ui_find(windowHandle="<handle>", nameContains="Dark Mode", controlType="CheckBox")
+            ui_click(windowHandle="<handle>", elementId="<checkbox-id>")
+            ```
+            The result includes toggle state after clicking.
+
+            ### 5. Verify Results
+            ```
+            window_management(action="list", filter="Save") // confirm a closed dialog is absent
+            screenshot_control(target="window", windowHandle="<handle>") // visual check
+            ```
+
+            ### 6. Save Files
+            ```
+            file_save(windowHandle="<handle>", filePath="C:\\Users\\User\\document.docx")
+            ```
+            Handles Save As dialogs automatically - enters filename, clicks Save, handles overwrite prompts.
+
+            ## When to Use Each Tool
+
+            | Goal | Primary Tool | Fallback |
+            |------|-------------|----------|
+            | Click button/checkbox | ui_click(windowHandle=..., elementId=...) | Explicit coordinate action only if no semantic action was dispatched |
+            | Type in text field | ui_type(windowHandle=..., elementId=..., text=...) | Rediscover if the ID is stale |
+            | Save a file | file_save(windowHandle=..., filePath=...) | ⚠️ keyboard_control CANNOT handle Save As dialogs! |
+            | Press hotkey (Ctrl+S) | keyboard_control(action='press', key='s', modifiers='ctrl') | Requires a matching permission level |
+            | Navigate (Tab, arrows) | keyboard_control(action='press') | - |
+            | Read text from element | ui_read(windowHandle=..., elementId=...) | Rediscover; element reads never widen to window OCR |
+            | Wait for new window | window_management(action='wait_for', title='...') | - |
+            | Take screenshot | screenshot_control(target='window', windowHandle=...) | - |
+            | Find visible elements | screenshot_control with annotate=true | ui_find(windowHandle=...) |
+
+            ## ⚠️ Elevated Windows (GitHub Actions, Admin processes)
+
+            Match the target application's permission level. Windows can deny both UI Automation
+            and physical input when the target is more privileged.
+            - **Type text**: discover the input, then `ui_type(windowHandle=..., elementId="<input-id>", text="Hello")`.
+            - **Notepad**: discover its Edit or Document control, then use its returned ID.
+            - **Click buttons**: discover the button, then `ui_click(windowHandle=..., elementId="<button-id>")`.
+
+            ## Key Principles
+
+            1. **Find handle first** - use `window_management(action='find')` to get window handle
+            2. **Use explicit handles** - you control which window when multiple match
+            3. **Use screenshot_control(annotate=true) when you don't know element names**
+            4. **Use window_management(wait_for) for dialogs** - wait for new windows to appear
+            5. **Use file_save for saving** - handles Save As dialogs automatically (⚠️ NOT keyboard_control!)
+
+            ## When to Use `ui_find`
+
+            Targeted actions require IDs. Discover with `ui_snapshot` or `ui_find`; selectors
+            belong to discovery and appear/disappear waits, not click/type/select/read actions.
+            IDs belong to the CLI daemon or MCP process that returned them. Rediscover after
+            a restart or a stale-reference error; never silently substitute a same-name control.
+            Use `ui_find` when:
+
+            - **Getting clickable_point** for mouse fallback: `ui_find` returns coordinates
+            - **Multiple matches** - see all matching elements, pick the right one
+            - **Element inspection** - check patterns, children, properties
+
+            ## Fallback Strategy
+
+            For controls without a semantic action (custom controls, games, etc.), use explicit
+            coordinates only when no earlier action was dispatched. Never replay an action with
+            an unknown outcome:
+
+            ```
+            window_management(action="find", title="MyApp")
+            → Get handle: "123456"
+
+            ui_find(windowHandle="123456", nameContains="Button")
+            → Get clickable_point: [450, 300]
+
+            window_management(action="activate", handle="123456")
+            mouse_control(action="click", windowHandle="123456", x=450, y=300)
+            ```
+
+            ## Canvas Drawing
+
+            Do NOT send one mouse_control call per stroke. Batch the whole figure:
+
+            ```
+            ui_batch(windowHandle="123456", steps="[{\"action\":\"polyline\",\"points\":[[300,200],[500,200],[500,400],[300,200]]}]")
+            ```
+
+            `polyline` presses once, traces every vertex, and releases once - one continuous stroke with no pen
+            lift at the corners. A standalone `mouse_control(action="polyline", points="[[...]]")` does the same
+            for a single stroke.
+            """;
+    }
+
+    /// <summary>Error code → recovery action mapping. Fetch when you encounter an error to get specific recovery guidance.</summary>
+    [McpServerResource(UriTemplate = "system://error-recovery", Name = "error-recovery", Title = "Error Recovery Guide", MimeType = "text/markdown")]
+    public static string GetErrorRecovery()
+    {
+        return """
+            # Error Recovery Guide
+
+            Quick lookup: error_code → recovery action.
+
+            ## UI Automation Errors (ui_click, ui_type, ui_find, ui_read)
+
+            | Error Code | Recovery Action |
+            |------------|-----------------|
+            | `element_not_found` | Broaden search: use `nameContains` instead of exact `name`, or use `screenshot_control(annotate=true)` first to discover available elements. |
+            | `element_stale` | Element was removed from UI. Re-run `ui_find` to get fresh elementId. |
+            | `pattern_not_supported` | Element doesn't support this action. Check `supportedPatterns` in element info. Try `ui_click` for buttons. |
+            | `timeout` | Increase `timeoutMs` parameter, or verify the target element exists with `screenshot_control(annotate=true)`. |
+            | `window_not_found` | Window closed or handle is stale. Re-run `window_management(action='find')`. |
+
+            ## File Operation Errors (file_save)
+
+            | Error Code | Recovery Action |
+            |------------|-----------------|
+            | `save_failed` | File save operation failed. Check file path is valid, disk has space, and file is not locked by another process. |
+            | `dialog_not_found` | Save As dialog didn't appear. Try `keyboard_control(key='s', modifiers='ctrl')` first, then retry. |
+            | `com_interop_failed` | Office COM automation failed. Ensure Office app is responding. Try closing and reopening the document. |
+            | `invalid_file_path` | File path is malformed. Use backslashes (C:\\Users\\...) and ensure directory exists. |
+
+            ## Mouse/Keyboard Errors
+
+            | Error Code | Recovery Action |
+            |------------|-----------------|
+            | `wrong_target_window` | Focus changed. Re-run `window_management(action='activate')` then retry. |
+            | `elevated_process_target` | Target is admin window. Cannot interact without elevation. Ask user to close UAC prompt or run as admin. |
+            | `secure_desktop_active` | UAC prompt or lock screen active. Wait for user to dismiss it, or skip this operation. |
+            | `coordinates_out_of_bounds` | Verify coordinates with `screenshot_control(action='list_monitors')`. Use monitor-relative coordinates. |
+
+            ## Window Management Errors
+
+            | Error Code | Recovery Action |
+            |------------|-----------------|
+            | `window_not_found` | Window may have closed. Use `list` action to see available windows. |
+            | `activation_failed` | Window may be minimized or blocked. Try `ensure_visible` action first. |
+            | `timeout` | Window didn't appear in time. Increase `timeoutMs` or verify app is launching. |
+
+            ## Screenshot Errors
+
+            | Error Code | Recovery Action |
+            |------------|-----------------|
+            | `invalid_window_handle` | Handle is stale. Re-run `window_management(action='find')` to get fresh handle. |
+            | `monitor_not_found` | Use `list_monitors` action to see available monitor indices. |
+            | `region_out_of_bounds` | Verify region coordinates with `list_monitors` action. |
+
+            ## Common Patterns
+
+            ### Element Not Found → Discovery Workflow
+            ```
+            1. screenshot_control(annotate=true) → see all interactive elements
+            2. ui_find with broader criteria (nameContains, controlType only)
+            3. ui_find with includeChildren=true → see element hierarchy
+            ```
+
+            ### Wrong Window → Re-focus Workflow
+            ```
+            1. window_management(action='find') → get fresh handle
+            2. window_management(action='activate') → focus window
+            3. Retry original operation with expectedWindowTitle guard
+            ```
+
+            ### File Save Failed → Recovery Workflow
+            ```
+            1. Check if file is locked: close other apps using the file
+            2. Try alternate path: use a different directory
+            3. For Office apps: check if dialog appeared, dismiss it manually
+            ```
+            """;
+    }
+
+    /// <summary>JSON result schema examples for all tools. Fetch to understand what fields to expect in responses for planning multi-step workflows.</summary>
+    [McpServerResource(UriTemplate = "system://result-schemas", Name = "result-schemas", Title = "Result Schema Reference", MimeType = "application/json")]
+    public static string GetResultSchemas()
+    {
+        return """
+            # Result Schema Reference
+
+            JSON examples showing key fields in tool responses. Use for planning multi-step workflows.
+
+            ## window_management
+
+            ```json
+            // list returns windows array:
+            {
+              "success": true,
+              "windows": [
+                {
+                  "handle": "12345678",
+                  "title": "Visual Studio Code",
+                  "processName": "Code"
+                }
+              ],
+              "count": 1
+            }
+            // find/activate returns single window object:
+            {
+              "success": true,
+              "window": {
+                "handle": "12345678",
+                "title": "...",
+                "className": "...",
+                "processName": "Code",
+                "pid": 1234,
+                "state": "normal",
+                "isForeground": true,
+                "bounds": [0, 0, 1920, 1080]
+              }
+            }
+            ```
+
+            **Key fields:** `handle` - pass verbatim to other tools as `windowHandle`. `success` = operation succeeded.
+
+            ## ui_find / ui_click / ui_type / ui_read
+
+            ```json
+            // ui_find returns annotated elements:
+            {
+              "success": true,
+              "annotatedElements": [
+                {
+                  "id": "path:fast:12345678:1.2.3",
+                  "name": "Save",
+                  "type": "Button",
+                  "aid": "SaveButton",
+                  "cp": [450, 300],
+                  "br": [400, 280, 100, 40],
+                  "en": true,
+                  "pat": ["Invoke"],
+                  "fw": "WPF"
+                }
+              ],
+              "targetWindow": { "handle": "12345678", "title": "My App", "processName": "myapp" },
+              "elementCount": 1
+            }
+            // ui_click (including doubleClick) separates dispatch from application outcome:
+            {
+              "success": true,
+              "action": "click",
+              "actionDispatched": true,
+              "outcomeVerified": false,
+              "target": { "id": "<observed-id>", "name": "Open", "type": "Button", "enabled": true },
+              "postActionState": "available",
+              "postActionElement": { "id": "<observed-id>", "name": "Close", "type": "Button", "enabled": true }
+            }
+            // If the target cannot be read afterward, postActionState is "unavailable"
+            // and postActionElement is omitted. This does not turn dispatch into failure.
+            // ui_type returns single element:
+            {
+              "success": true,
+              "el": { "id": "...", "name": "Save", "type": "Button", "ts": "on" },
+              "targetWindow": { "handle": "12345678", "title": "My App", "processName": "myapp" }
+            }
+            // ui_read returns text:
+            {
+              "success": true,
+              "text": "Hello World",
+              "el": { "id": "...", "name": "Content", "type": "Text" },
+              "targetWindow": { "handle": "12345678", "title": "My App", "processName": "myapp" }
+            }
+            ```
+
+            **Key fields:**
+            - Click `target` is pre-action; `postActionElement` is an immediate later observation, not proof of saving/publishing/navigation.
+            - `outcomeVerified:false` remains false with an optional snapshot. Inspect it or use bounded `ui_wait`; never replay merely because the target renamed, disabled itself, or disappeared.
+            - `id` (element_id) - pass to other ui_* tools
+            - `cp` (clickable_point) - fallback coords for mouse_control
+            - `fw` (framework_type) - "Electron", "WPF", "WinForms" (affects search strategy)
+            - `ts` (toggle_state) - "on"/"off" for checkboxes after clicking
+
+            ## file_save
+
+            ```json
+            // Save successful:
+            {
+              "success": true,
+              "filePath": "C:\\Users\\User\\document.docx",
+              "method": "com_interop",
+              "targetWindow": { "handle": "12345678", "title": "Document1 - Word", "processName": "WINWORD" }
+            }
+            // Save via dialog:
+            {
+              "success": true,
+              "filePath": "C:\\Users\\User\\file.txt",
+              "method": "save_dialog",
+              "targetWindow": { "handle": "12345678", "title": "Untitled - Notepad", "processName": "notepad" }
+            }
+            ```
+
+            **Key fields:** `filePath` - where file was saved. `method` - how it was saved (com_interop for Office, save_dialog for others).
+
+            ## mouse_control
+
+            ```json
+            {
+              "success": true,
+              "position": [450, 300],
+              "monitorIndex": 0,
+              "monitorWidth": 1920,
+              "monitorHeight": 1080,
+              "targetWindow": { "handle": "12345678", "title": "My App", "processName": "myapp" }
+            }
+            ```
+
+            **Key field:** `targetWindow` - verify clicks went to correct window.
+
+            ## keyboard_control
+
+            ```json
+            {
+              "success": true,
+              "charactersTyped": 15,
+              "targetWindow": { "handle": "12345678", "title": "My App", "processName": "myapp" }
+            }
+            ```
+
+            **Key field:** `targetWindow` - verify input went to correct window.
+
+            ## screenshot_control
+
+            ```json
+            // capture with annotate=true (default):
+            {
+              "success": true,
+              "annotatedElements": [
+                { "index": 1, "id": "...", "name": "File", "type": "MenuItem" },
+                { "index": 2, "id": "...", "name": "Edit", "type": "MenuItem" }
+              ],
+              "elementCount": 25,
+              "imageData": "base64...",
+              "format": "jpeg"
+            }
+            // capture with annotate=false:
+            {
+              "success": true,
+              "imageData": "base64...",
+              "width": 1920,
+              "height": 1080,
+              "format": "jpeg"
+            }
+            // list_monitors:
+            {
+              "success": true,
+              "monitors": [
+                { "index": 0, "isPrimary": true, "width": 1920, "height": 1080, "x": 0, "y": 0 }
+              ]
+            }
+            ```
+
+            ## Error Response (all tools)
+
+            ```json
+            {
+              "success": false,
+              "errorCode": "element_not_found",
+              "error": "Element matching criteria not found. Try screenshot_control(annotate=true) to discover elements.",
+              "recoverySuggestion": "Use screenshot_control(annotate=true) to discover available elements.",
+              "targetWindow": { "handle": "12345678", "title": "...", "processName": "..." }
+            }
+            ```
+
+            **Key fields:** `errorCode` - look up in system://error-recovery for recovery actions. `recoverySuggestion` = recovery hint.
+            """;
+    }
+}

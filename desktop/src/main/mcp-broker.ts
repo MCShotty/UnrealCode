@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'no
 import { dirname } from 'node:path'
 import { ContainerMcpTransport } from './mcp-container-transport'
 import type { ConnectionSecrets } from './connection-vault'
-import type { CatalogTool, ConnectionConfig, ConnectionGrant, ConnectionView, HostResult } from '../shared/connections'
+import type { CatalogTool, ConnectionConfig, ConnectionGrant, ConnectionView, HostResult, ConnectionPage, ConnectionResource, ConnectionPrompt } from '../shared/connections'
 import { stableJSON } from './host-operations'
 import { mcpFetch } from './mcp-auth'
 import { McpSchemaValidator } from './mcp-schema-validator'
@@ -60,6 +60,12 @@ export class McpBroker {
   private stored: Stored = { version: 1, connections: [], grants: [], catalog: [] }
   private live = new Map<string, Live>()
   private connecting = new Set<string>()
+  private referenceReads = new Map<AbortController, { project: string; id: string }>()
+  private referencePages = new Map<string, { scope: string; kind: 'resources' | 'prompts'; revision: number; live: Live; cursor: string; seen: string[]; count: number; expires: number }>()
+  private advertised = new WeakMap<Live, { revision: number; resources: Set<string>; prompts: Set<string> }>()
+  cancelReferences(id: string, project?: string): void {
+    for (const [controller, owner] of this.referenceReads) if (owner.id === id && (project === undefined || owner.project === project)) controller.abort()
+  }
   onChanged: () => void = () => {}
   private notify(): void { try { this.onChanged() } catch { /* Window teardown cannot change connection or grant state. */ } }
   oauth?: (config: ConnectionConfig, interactive: boolean) => Promise<OAuthClientProvider>
@@ -100,8 +106,11 @@ export class McpBroker {
     else this.save(next)
   }
   async remove(id: string): Promise<void> { this.config(id); await this.disconnect(id); this.saveAfterCredentialRemoval(id,{...this.stored,connections:this.stored.connections.filter(item=>item.id!==id),grants:this.stored.grants.filter(item=>item.connectionId!==id),catalog:this.stored.catalog.filter(item=>item.connectionId!==id)}) }
+  windowsAddons(){return this.stored.connections.filter(c=>c.kind==='host'&&/windows.?mcp|mcp.?windows/i.test(`${c.name} ${c.command}`)).map(c=>({id:c.id,name:c.name}))}
+  async withdrawWindowsAddons(ids:string[]){if(!Array.isArray(ids)||ids.some(id=>!this.windowsAddons().some(c=>c.id===id)))throw Error('Review the Windows add-on list first');for(const id of ids){await this.disconnect(id);this.cancelReferences(id)}this.save({...this.stored,grants:this.stored.grants.filter(grant=>!ids.includes(grant.connectionId))})}
   async revoke(context: Context,id:string): Promise<void> {
     this.config(id)
+    this.cancelReferences(id, context.project)
     await this.disconnectProject(context.project,id)
     this.save({...this.stored,grants:this.stored.grants.filter(item=>!(item.project===context.project&&item.connectionId===id))})
   }
@@ -114,6 +123,7 @@ export class McpBroker {
       return !current||revisions[name]!==current.revision
     }))throw Error('Select an advertised MCP tool definition before granting it; reconnect and review changed tools')
     const before = this.grantFor(context.project, input.connectionId)
+    this.cancelReferences(input.connectionId, context.project)
     const grant = { ...input, tools, toolRevisions:Object.fromEntries(tools.map(name=>[name,revisions[name]])), project: context.project, revision: (before?.revision || 0) + 1 }
     // Revocation aborts in-flight calls. It cannot undo actions already performed.
     for (const [key, live] of this.live) {
@@ -130,6 +140,7 @@ export class McpBroker {
     this.secrets.set(id, { bearer, env: { ...env } }); this.notify()
   }
   async disconnect(id: string, context?: Context): Promise<void> {
+    this.cancelReferences(id, context?.project)
     for (const [key, value] of [...this.live]) if (context ? key === this.key(context,id) : (JSON.parse(key) as string[])[2] === id) { this.live.delete(key); for (const call of value.calls.keys()) call.abort(); await value.client.close().catch(() => {}); value.status = 'disconnected' }
     this.notify()
   }
@@ -249,24 +260,64 @@ export class McpBroker {
     }
     return text.replace(/\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b/g,'[REDACTED]')
   }
-  async resources(context: Context,id: string) {
-    if (!this.allowed(context,id).resources) throw new Error('Resource attachment is not granted for this project')
-    return (await this.connection(context,id).client.listResources({}, { timeout: 15000 })).resources.slice(0,500)
+  private async reference<T>(context: Context, id: string, kind: 'resources' | 'prompts', work: (live: Live, signal: AbortSignal, revision: number) => Promise<T>): Promise<T> {
+    const grant = this.allowed(context, id), live = this.connection(context, id)
+    if (!grant[kind]) throw new Error(`${kind === 'resources' ? 'Resource' : 'Prompt'} attachment is not granted for this project`)
+    const controller = new AbortController()
+    this.referenceReads.set(controller, { project: context.project, id })
+    try {
+      const result = await work(live, controller.signal, grant.revision)
+      const current = this.grantFor(context.project, id)
+      if (controller.signal.aborted || !current?.[kind] || current.revision !== grant.revision || this.live.get(this.key(context, id)) !== live || live.status !== 'connected') throw new Error('Connection access changed; the reference was discarded. Refresh before attaching it.')
+      return result
+    } finally { this.referenceReads.delete(controller) }
+  }
+  private async referencePage(context: Context, id: string, kind: 'resources' | 'prompts', token?: string): Promise<ConnectionPage<ConnectionResource | ConnectionPrompt>> {
+    return this.reference(context, id, kind, async (live, signal, revision) => {
+      const scope = stableJSON([this.key(context,id), context.workspace || context.project])
+      for (const [key, page] of this.referencePages) if (page.expires < Date.now()) this.referencePages.delete(key)
+      const previous = token === undefined ? undefined : this.referencePages.get(token)
+      if (token !== undefined && (!previous || previous.scope !== scope || previous.kind !== kind || previous.revision !== revision || previous.live !== live)) throw new Error('This catalog page expired. Refresh the resource or prompt list.')
+      const params = previous ? {cursor: previous.cursor} : {}
+      const page = kind === 'resources' ? await live.client.listResources(params,{signal,timeout:15000}) : await live.client.listPrompts(params,{signal,timeout:15000})
+      const items = ('resources' in page ? page.resources : page.prompts) as Array<ConnectionResource | ConnectionPrompt>
+      if (Buffer.byteLength(JSON.stringify(page)) > 512 * 1024 || items.length > 500 || (previous?.count || 0) + items.length > 5000) throw new Error('MCP catalog exceeds its bounded attachment limit')
+      const seen = previous?.seen || [], cursor = page.nextCursor
+      if (cursor && (seen.includes(cursor) || seen.length >= 100)) throw new Error('MCP server repeated a catalog cursor or exceeded the page limit')
+      let nextCursor: string | undefined
+      if (cursor) {
+        while (this.referencePages.size >= 256) this.referencePages.delete(this.referencePages.keys().next().value!)
+        nextCursor = randomUUID()
+        this.referencePages.set(nextCursor,{scope,kind,revision,live,cursor,seen:[...seen,cursor],count:(previous?.count||0)+items.length,expires:Date.now()+300000})
+      }
+      let known = this.advertised.get(live)
+      if (!known || known.revision !== revision) { known = {revision,resources:new Set(),prompts:new Set()}; this.advertised.set(live,known) }
+      for (const item of items) known[kind].add(kind === 'resources' ? (item as ConnectionResource).uri : item.name)
+      return {items,nextCursor,revision}
+    })
+  }
+  async resources(context: Context,id: string,cursor?:string): Promise<ConnectionPage<ConnectionResource>> { return this.referencePage(context,id,'resources',cursor) as Promise<ConnectionPage<ConnectionResource>> }
+  private async advertisedReference(context: Context,id: string,kind:'resources'|'prompts',value:string):Promise<void> {
+    const live=this.connection(context,id),revision=this.allowed(context,id).revision
+    if(this.advertised.get(live)?.revision!==revision||!this.advertised.get(live)?.[kind].has(value))await this.referencePage(context,id,kind)
+    if(this.advertised.get(live)?.revision!==revision||!this.advertised.get(live)?.[kind].has(value))throw Error('Select a reference advertised by this connection; load its page first')
   }
   async resource(context: Context,id: string,uri: string): Promise<string> {
-    if (!(await this.resources(context,id)).some(item => item.uri === uri)) throw new Error('Select a resource advertised by this connection')
-    const result = await this.connection(context,id).client.readResource({ uri },{ timeout: 15000 })
-    const text = JSON.stringify(result); if (Buffer.byteLength(text) > 192 * 1024) throw new Error('Resource exceeds attachment limit')
-    return this.redact(id,text)
+    await this.advertisedReference(context,id,'resources',uri)
+    return this.reference(context,id,'resources',async(live,signal)=>{
+      const text=JSON.stringify(await live.client.readResource({uri},{signal,timeout:15000}))
+      if(Buffer.byteLength(text)>192*1024)throw Error('Resource exceeds attachment limit')
+      return this.redact(id,text)
+    })
   }
-  async prompts(context: Context,id: string) {
-    if (!this.allowed(context,id).prompts) throw new Error('Prompt templates are not granted for this project')
-    return (await this.connection(context,id).client.listPrompts({}, { timeout: 15000 })).prompts.slice(0,500)
-  }
+  async prompts(context: Context,id: string,cursor?:string): Promise<ConnectionPage<ConnectionPrompt>> { return this.referencePage(context,id,'prompts',cursor) as Promise<ConnectionPage<ConnectionPrompt>> }
   async prompt(context: Context,id: string,name: string,args: Record<string,string>): Promise<string> {
-    if (!(await this.prompts(context,id)).some(item => item.name === name)) throw new Error('Select a prompt advertised by this connection')
+    await this.advertisedReference(context,id,'prompts',name)
     if (Buffer.byteLength(JSON.stringify(args)) > 64 * 1024) throw new Error('Prompt arguments too large')
-    const text = JSON.stringify(await this.connection(context,id).client.getPrompt({ name, arguments: args },{ timeout: 15000 })); if (Buffer.byteLength(text) > 192 * 1024) throw new Error('Prompt exceeds attachment limit')
-    return this.redact(id,text)
+    return this.reference(context,id,'prompts',async(live,signal)=>{
+      const text=JSON.stringify(await live.client.getPrompt({name,arguments:args},{signal,timeout:15000}))
+      if(Buffer.byteLength(text)>192*1024)throw Error('Prompt exceeds attachment limit')
+      return this.redact(id,text)
+    })
   }
 }

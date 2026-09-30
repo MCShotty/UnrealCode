@@ -4,6 +4,7 @@ import type {MemoryProfile} from '../shared/memory'
 import {credentialFor} from './settings'
 import type {DockerBridge} from './docker'
 import {providerFailure,ActionableError} from './failures'
+import {memoryInferencePool} from './memory-inference-pool'
 
 export class MemoryInference {
  private server?:Server
@@ -36,11 +37,11 @@ export class MemoryInference {
     const tools=(input.tools||[]).map((item:any)=>({Type:'function',Name:item.function?.name,Description:item.function?.description,Parameters:item.function?.parameters}))
     const key=createHash('sha256').update(body).digest('hex');for(const [id,cached] of this.results)if(Date.now()-cached.at>300000)this.results.delete(id)
     let cached=this.results.get(key)
-    if(!cached){const generated=(async()=>{
+    if(!cached){const generated=memoryInferencePool.run(async()=>{
     if(this.reserve)await this.reserve();else if(this.requests>=profile.requestLimit||this.inputTokens+this.outputTokens>=profile.tokenLimit)throw Error('Memory inference limit reached')
     if(epoch!==this.epoch)throw Error('Memory inference was cancelled')
     this.requests++;this.onUsage();const bridge=await this.bridge();if(epoch!==this.epoch)throw Error('Memory inference was cancelled');const result=await bridge.request<any>('inference.generate',{config:{provider:profile.provider,model:profile.model,baseUrl:profile.baseUrl,thinkingLevel:profile.thinkingLevel,systemPrompt:'',disallowedTools:[]},credential:credentialFor(profile.provider,profile.baseUrl),request:{Model:{ID:profile.model},Input:messages,Tools:tools}},125000)
-    this.inputTokens+=Number(result.Usage?.InputTokens||0);this.outputTokens+=Number(result.Usage?.OutputTokens||0);this.onUsage();if(result.Failure||result.Stop==='refused'||result.Stop==='max_output_tokens')throw new ActionableError(providerFailure(result.Failure||{Code:result.Stop==='refused'?'model_refusal':'incomplete_response'}));return result})();cached={at:Date.now(),result:generated};this.results.set(key,cached)}
+    this.inputTokens+=Number(result.Usage?.InputTokens||0);this.outputTokens+=Number(result.Usage?.OutputTokens||0);this.onUsage();if(result.Failure||result.Stop==='refused'||result.Stop==='max_output_tokens')throw new ActionableError(providerFailure(result.Failure||{Code:result.Stop==='refused'?'model_refusal':'incomplete_response'}));return result});cached={at:Date.now(),result:generated};this.results.set(key,cached)}
     let result:any
     try{result=await cached.result}
     catch(error){if(this.results.get(key)===cached)this.results.delete(key);throw error}

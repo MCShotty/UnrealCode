@@ -173,19 +173,25 @@ func (r *mcpRegistry) Resolve(name string) (tool.Translator, bool) {
 
 type catalogBuilder struct {
 	contextbuilder.Builder
-	catalog *mcpCatalog
-	id      session.ID
-	mode    string
-	summary *contextSummary
+	catalog          *mcpCatalog
+	id               session.ID
+	mode             string
+	summary          *contextSummary
+	guidance         *fieldnoteAuthority
+	fieldnotes       *fieldnoteReceipt
+	noteDependencies map[string]fieldnoteRef
 }
 
 func (b *catalogBuilder) Build() (contextbuilder.Result, error) {
 	result, err := b.Builder.Build()
-	if err == nil && b.summary != nil {
+	if err == nil && b.summary != nil && b.guidance.valid(b.summary.FieldnoteDependencies) {
 		result.Request.Input, err = projectSummary(result.Request.Input, *b.summary)
 	}
 	if err == nil && b.mode != "plan" {
 		result.Request.Tools = append(result.Request.Tools, b.catalog.definitions(b.id)...)
+	}
+	if err == nil {
+		b.addFieldnotes(&result.Request)
 	}
 	return result, err
 }

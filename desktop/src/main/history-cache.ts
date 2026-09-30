@@ -50,6 +50,8 @@ export class HistoryCache {
   private failure?:unknown
   private rebuilding?:Promise<void>
   private queryGroups=new Map<string,Int32Array>()
+  private rebuildGeneration=0
+  get generation():number{return this.rebuildGeneration}
   constructor(readonly profile:string){this.path=storageLocation(profile,'history-cache','history',undefined,'.sqlite')}
   private start():Promise<void>{
     if(this.closed)return Promise.reject(new Error('History cache is closed'))
@@ -87,9 +89,15 @@ export class HistoryCache {
   }
   async flush():Promise<void>{while(this.pending.length||this.scheduled){await new Promise(resolve=>setImmediate(resolve));await this.writing}await this.writing}
   async timelineEvidence(project:string,session:string,before?:number):Promise<import('../shared/timeline').TimelineEvidence[]>{return this.read('timeline.evidence',{project,session,before})}
+  async nativeContext(project:string,session:string,through=0):Promise<boolean|undefined>{return this.read('memory.native-context',{project,session,through})}
   async putTimeline(project:string,session:string,rows:import('../shared/timeline').TimelineSummary[]):Promise<void>{return this.write('timeline.put',{project,session,rows})}
   async timelineSummaries(project:string,session:string,before?:number):Promise<import('../shared/timeline').TimelineSummary[]>{return this.read('timeline.summaries',{project,session,before})}
   async sessions(project:string):Promise<SessionInfo[]>{return this.read('sessions.list',{project})}
+  async putFieldnotes(notes:import('../shared/fieldnotes').Fieldnote[]):Promise<void>{return this.write('fieldnotes.put',{notes})}
+  async resetFieldnotes():Promise<void>{return this.write('fieldnotes.reset',{})}
+  async searchFieldnotes(query:import('../shared/fieldnotes').FieldnoteQuery,supersede?:string):Promise<import('../shared/fieldnotes').FieldnotePage>{return this.read('fieldnotes.search',query,supersede)}
+  async putFieldnoteReceipt(receipt:import('../shared/fieldnotes').FieldnoteReceipt):Promise<void>{return this.write('fieldnotes.receipt.put',{receipt})}
+  async fieldnoteReceipts(project:string,session:string):Promise<import('../shared/fieldnotes').FieldnoteReceipt[]>{return this.read('fieldnotes.receipts',{project,session})}
   async workView(project:string,session:string,connected:boolean,range:{from?:number;to?:number}={},query?:string,active=connected):Promise<WorkView>{return this.read('work.view',{project,session,connected,active,...range},query)}
   async activityPage(project:string,session:string,connected:boolean,query:ActivityQuery={},supersede?:string,active=connected):Promise<ActivityPage>{return this.read('activity.page',{project,session,connected,active,query},supersede)}
   async activityDetail(project:string,session:string,connected:boolean,id:string,offset=0,active=connected):Promise<ActivityDetail>{return this.read('activity.detail',{project,session,connected,active,id,offset})}
@@ -106,7 +114,7 @@ export class HistoryCache {
   async reindex():Promise<void>{await this.flush();await this.write('reindex',{});this.failure=undefined}
   async close():Promise<void>{await this.flush();await Promise.all(this.readers.map(worker=>worker.close()));await this.writer?.close();this.closed=true}
   rebuild():Promise<void>{if(!this.rebuilding)this.rebuilding=this.rebuildFresh().finally(()=>{this.rebuilding=undefined});return this.rebuilding}
-  private async rebuildFresh():Promise<void>{await this.close();const name=timestampName();for(const extension of ['','-wal','-shm'])await fs.rename(this.path+extension,this.path+`.quarantine-${name}`+extension).catch(error=>{if(error.code!=='ENOENT')throw error});this.closed=false;this.ready=undefined;this.failure=undefined;this.writer=undefined;this.readers=[];await this.start()}
+  private async rebuildFresh():Promise<void>{await this.close();const name=timestampName();for(const extension of ['','-wal','-shm'])await fs.rename(this.path+extension,this.path+`.quarantine-${name}`+extension).catch(error=>{if(error.code!=='ENOENT')throw error});this.closed=false;this.ready=undefined;this.failure=undefined;this.writer=undefined;this.readers=[];await this.start();this.rebuildGeneration++}
 }
 const caches=new Map<string,HistoryCache>()
 export function historyCache(profile:string):HistoryCache{let cache=caches.get(profile);if(!cache){cache=new HistoryCache(profile);caches.set(profile,cache)}return cache}

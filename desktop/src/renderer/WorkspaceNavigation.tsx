@@ -1,11 +1,11 @@
-import { Activity, BarChart3, BookOpen, Brain, Clock3, Code2, File, Folder, GitBranch, GitPullRequest, Globe2, ListTodo, MessageCircle, Plus, Search, Settings2, SlidersHorizontal, TerminalSquare, Zap } from 'lucide-react'
+import { Monitor, Activity, BarChart3, BookOpen, Brain, Clock3, Code2, File, Folder, GitBranch, GitPullRequest, Globe2, ListTodo, MessageCircle, Plus, Search, Settings2, SlidersHorizontal, TerminalSquare, Zap } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useReducedMotion } from './useReducedMotion'
 import { BrandMark } from './BrandMark'
 import { spatial } from './motion'
 import { ExpressiveButton } from './ExpressiveButton'
 
-export type View = 'control' | 'memory' | 'browser' | 'documents' | 'hooks' | 'context' | 'connections' | 'diagnostics' | 'workflow' | 'review' | 'projects' | 'chat' | 'sessions' | 'files' | 'skills' | 'usage' | 'github' | 'settings' | 'terminal'
+export type View = 'computer' | 'fieldnotes' | 'control' | 'memory' | 'browser' | 'documents' | 'hooks' | 'context' | 'connections' | 'diagnostics' | 'workflow' | 'review' | 'projects' | 'chat' | 'sessions' | 'files' | 'skills' | 'usage' | 'github' | 'settings' | 'terminal'
 export const navigation: { id: View; label: string; icon: typeof Folder; group: string }[] = [
   { id: 'chat', label: 'Chat', icon: MessageCircle, group: 'Workspace' },
   { id: 'sessions', label: 'Sessions', icon: Clock3, group: 'Workspace' },
@@ -13,12 +13,14 @@ export const navigation: { id: View; label: string; icon: typeof Folder; group: 
   { id: 'review', label: 'Review', icon: GitBranch, group: 'Workspace' },
   { id: 'workflow', label: 'Workflow', icon: ListTodo, group: 'Workspace' },
   { id: 'control', label: 'Task controls', icon: SlidersHorizontal, group: 'Workspace' },
+  { id: 'computer', label: 'Computer', icon: Monitor, group: 'Tools & knowledge' },
   { id: 'browser', label: 'Browser', icon: Globe2, group: 'Tools & knowledge' },
   { id: 'documents', label: 'Documents', icon: BookOpen, group: 'Tools & knowledge' },
   { id: 'terminal', label: 'Terminal', icon: TerminalSquare, group: 'Tools & knowledge' },
   { id: 'github', label: 'GitHub', icon: GitPullRequest, group: 'Tools & knowledge' },
   { id: 'context', label: 'Context', icon: BookOpen, group: 'Tools & knowledge' },
   { id: 'skills', label: 'Abilities', icon: Code2, group: 'Tools & knowledge' },
+  { id: 'fieldnotes', label: 'Fieldnotes', icon: File, group: 'Tools & knowledge' },
   { id: 'memory', label: 'Memory', icon: Brain, group: 'Tools & knowledge' },
   { id: 'hooks', label: 'Hooks', icon: Zap, group: 'Tools & knowledge' },
   { id: 'projects', label: 'Projects', icon: Folder, group: 'Manage' },

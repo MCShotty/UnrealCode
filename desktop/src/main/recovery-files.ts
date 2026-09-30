@@ -3,7 +3,7 @@ import { basename,dirname,join,relative,resolve,isAbsolute } from 'node:path'
 import {storageEntries,storageHash,storageCopy,storageMkdir} from './project-fs'
 
 export type FileRecord={path:string;bytes:number;sha256:string}
-export const metadataRoots=['storage-locations.json','storage-layout.json','settings.json','connections.json','state-volumes.json','data-version.json','host-operations.json','workspaces','checkpoints','specialists','evaluations','editor-recovery','memory','memory-banks','timeline-records','shared-browser-grants']
+export const metadataRoots=['storage-locations.json','storage-layout.json','settings.json','connections.json','state-volumes.json','data-version.json','host-operations.json','workspaces','checkpoints','specialists','evaluations','editor-recovery','memory','memory-banks','timeline-records','shared-browser-grants','fieldnotes','computer-settings']
 export const durableRoots=['sessions','desktop-config','desktop-events','desktop-questions','context-summaries','operations','file-recovery','verification-journal','evaluation-git','.unrealcode-migrated']
 export function safeRelative(name:string):void {
  if(typeof name!=='string'||!name||name.length>1000||name.includes('\\')||isAbsolute(name)||name.split('/').some(part=>!part||part==='.'||part==='..'||/[<>:"|?*\x00-\x1f]/.test(part)||/[. ]$/.test(part)||/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i.test(part)))throw new Error('Unsafe backup path')

@@ -14,8 +14,10 @@ git(['init']); git(['add', '.']); git(['-c', 'user.name=Fixture', '-c', 'user.em
 writeFileSync(join(project, 'sample.txt'), 'local dirty\n')
 const requests = []
 const server = createServer(async (req, res) => {
+ if(req.method==='GET'&&req.url?.endsWith('/models')){res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({data:[{id:'fixture'}]}));return}
+ if(req.method!=='POST'){res.writeHead(404).end();return}
  let text = ''; for await (const chunk of req) text += chunk
- const body = JSON.parse(text); requests.push(body)
+ let body;try{body=JSON.parse(text)}catch{res.writeHead(400).end();return}if(!Array.isArray(body.messages)){res.writeHead(400).end();return}requests.push(body)
  const done = body.messages.some(item => item.role === 'tool')
  const plan = body.messages.some(item => typeof item.content === 'string' && item.content.includes('PLAN_FIXTURE'))
  const message = done || plan ? { role: 'assistant', content: 'Fixture complete.' } : { role: 'assistant', tool_calls: [
@@ -27,7 +29,7 @@ const server = createServer(async (req, res) => {
 })
 await new Promise(resolve => server.listen(0, '0.0.0.0', resolve))
 const packaged = process.argv.includes('--packaged')
-const app = await electron.launch({ executablePath: resolve(process.env.UNREALCODE_QA_EXECUTABLE||(packaged ? 'dist/win-unpacked/UnrealCode.exe' : 'node_modules/electron/dist/electron.exe')), args: packaged ? [] : ['.'], cwd: process.cwd(), env: { ...process.env, UNREAL_DESKTOP_USER_DATA: join(root, 'data') } })
+const app = await electron.launch({ executablePath: resolve(process.env.UNREALCODE_QA_EXECUTABLE||(packaged ? 'dist/win-unpacked/UnrealCode.exe' : 'node_modules/electron/dist/electron.exe')), args: packaged ? [] : ['.'], cwd: process.cwd(), env: { ...process.env, UNREAL_DESKTOP_USER_DATA: join(root, 'data'),UNREAL_DESKTOP_BACKGROUND_CHECK:'1' } })
 const report = { root, errors: [], warnings: [] }
 try {
  const page = await app.firstWindow(); page.on('pageerror', error => report.errors.push(error.message)); page.on('console', message => { if (['error', 'warning'].includes(message.type())) report.warnings.push(message.text()) })
@@ -36,6 +38,7 @@ try {
  await page.getByRole('button', { name: 'Set up later' }).click()
  await page.evaluate(baseUrl => window.unreal.updateSettings({ provider: 'openai-compatible', baseUrl, model: 'fixture', executionMode: 'ask', taskIsolation: true, theme: 'dark' }), `http://localhost:${server.address().port}/v1`)
  await page.evaluate(path => window.unreal.openProject(path, true), project)
+ const note=await page.evaluate(async()=>{const target=(await window.unreal.fieldnoteTargets())[0];return window.unreal.fieldnoteSave({title:'Fixture guidance',body:'Treat sample.txt as text. Keep the source project unchanged until reviewed integration.',pointer:{projectId:target.id,projectPath:target.path,projectName:target.name},enabled:true,indexing:false})})
  await page.reload(); await page.getByLabel('Message UnrealCode').fill('EDIT_NATIVE fixture')
  await page.getByRole('button', { name: 'Send', exact: true }).click()
  await page.getByText('ApplyPatch needs approval', { exact: true }).waitFor({ timeout: 120000 })
@@ -51,6 +54,9 @@ try {
  assert.equal(readFileSync(join(task.path, 'sample.txt'), 'utf8'), 'agent edit\n')
  await assert.rejects(async () => readFileSync(join(task.path, 'forbidden.txt')))
  report.approvals = true; report.isolatedSnapshot = true
+ assert(requests.some(request=>request.messages.some(message=>typeof message.content==='string'&&message.content.includes('<unrealcode_fieldnotes>')&&message.content.includes(note.body))),'Saved Fieldnote did not reach the provider as structured advisory context')
+ const receipts=await page.evaluate(id=>window.unreal.fieldnoteReceipts(id),task.sessionId)
+ assert(receipts.some(receipt=>receipt.state==='accepted'&&receipt.notes.some(value=>value.id===note.id&&value.revision===1)),'Accepted guidance receipt missing');report.fieldnoteReceipt=true
  await page.getByRole('button', { name: 'Review', exact: true }).click()
  await page.getByRole('button', { name: /EDIT_NATIVE fixture · review/ }).click()
  await page.locator('.workspace-change input[type="checkbox"]').check()
@@ -106,12 +112,14 @@ try {
  report.selectionToChat = true
  await page.getByRole('button', { name: 'Chat', exact: true }).click()
  await page.getByLabel('Execution mode').selectOption('plan')
+ await page.evaluate(note=>window.unreal.fieldnoteSave({...note,expectedRevision:note.revision,enabled:false}),note)
  await page.getByLabel('Message UnrealCode').fill('PLAN_FIXTURE inspect only')
  await page.getByRole('button', { name: 'Send', exact: true }).click()
  await wait(async id => (await window.unreal.getEvents(id, 0)).some(event => event.event === 'session.item' && event.payload.Kind === 'input' && JSON.stringify(event.payload).includes('PLAN_FIXTURE')), task.sessionId)
  await wait(async () => (await window.unreal.listSessions()).every(item => item.state !== 'running'))
  const plan = requests.find(request => request.messages.some(item => typeof item.content === 'string' && item.content.includes('PLAN_FIXTURE')))
  assert(plan); assert(!plan.tools.some(tool => ['Bash', 'ApplyPatch'].includes(tool.function.name))); report.plan = true
+ assert(!plan.messages.some(message=>typeof message.content==='string'&&message.content.includes('<unrealcode_fieldnotes>')&&message.content.includes(note.body)),'Withdrawn Fieldnote remained active');report.fieldnoteWithdrawal=true
  await page.evaluate(() => window.unreal.updateSettings({ theme: 'light' })); await page.reload(); await page.emulateMedia({ reducedMotion: 'reduce' })
  await page.getByRole('button', { name: 'Files', exact: true }).click(); await page.locator('.file-row').filter({ hasText: 'sample.txt' }).click(); await page.locator('.monaco-editor').first().waitFor()
  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'light')

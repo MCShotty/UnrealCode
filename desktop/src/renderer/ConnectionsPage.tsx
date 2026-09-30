@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ConnectionConfig, ConnectionView, ConnectionResource, ConnectionPrompt } from '../shared/connections'
 
 const fresh = (): ConnectionConfig => ({ id:crypto.randomUUID(), name:'',kind:'remote',url:'',args:[],auth:'none',timeoutMs:60000 })
@@ -6,9 +6,34 @@ export function ConnectionsPage({ onAttach }: { onAttach(text:string):void }) {
   const [items,setItems]=useState<ConnectionView[]>([]),[config,setConfig]=useState(fresh),[args,setArgs]=useState('[]')
   const [error,setError]=useState(''),[busy,setBusy]=useState(false),[query,setQuery]=useState(''),[credentials,setCredentials]=useState<Record<string,{token:string;env:string}>>({})
   const [resources,setResources]=useState<ConnectionResource[]>([]),[prompts,setPrompts]=useState<ConnectionPrompt[]>([]),[browse,setBrowse]=useState(''),[promptArgs,setPromptArgs]=useState('{}'),[preview,setPreview]=useState('')
-  const refresh=useCallback(()=>window.unreal.connections().then(setItems),[])
-  useEffect(()=>{let live=true; const update=()=>{if(live)void refresh().catch(reason=>setError(String(reason)))}; update();const dispose=window.unreal.onWorkflowChanged(update);return()=>{live=false;dispose()}},[refresh])
-  const run=async(work:()=>Promise<unknown>)=>{setBusy(true);setError('');try{await work();await refresh()}catch(reason){setError(String(reason))}finally{setBusy(false)}}
+  const [reference,setReference]=useState<{id:string;kind:'resources'|'prompts';revision:number;cursor?:string}>()
+  const referenceRef=useRef(reference); referenceRef.current=reference
+  const requests=useRef(0), refreshing=useRef(0), running=useRef(false), activeRequest=useRef('')
+  const refresh=useCallback(async()=>{
+    const request=++refreshing.current, rows=await window.unreal.connections()
+    if(request!==refreshing.current)return
+    setItems(rows)
+    const owner=referenceRef.current, item=rows.find(row=>row.id===owner?.id)
+    if(owner&&(!item||item.status!=='connected'||item.grant?.revision!==owner.revision||!item.grant?.[owner.kind])){requests.current++;setReference(undefined);setPreview('');setResources([]);setPrompts([])}
+  },[])
+  useEffect(()=>{let live=true; const update=()=>{if(live)void refresh().catch(reason=>setError(String(reason)))}; update();const dispose=window.unreal.onWorkflowChanged(update);return()=>{live=false;refreshing.current++;requests.current++;if(activeRequest.current)void window.unreal.connectionCancelReferences(activeRequest.current);dispose()}},[refresh])
+  const run=async(work:()=>Promise<unknown>)=>{if(running.current)return;running.current=true;setBusy(true);setError('');try{await work();await refresh()}catch(reason){setError(String(reason))}finally{running.current=false;setBusy(false)}}
+  const browsePage=async(id:string,kind:'resources'|'prompts',cursor?:string)=>{
+    const request=++requests.current;activeRequest.current=id
+    if(!cursor){setPreview('');setResources([]);setPrompts([]);setReference(undefined)}
+    const page=kind==='resources'?await window.unreal.connectionResources(id,cursor):await window.unreal.connectionPrompts(id,cursor)
+    if(request!==requests.current)return
+    if(kind==='resources')setResources(current=>cursor?[...current,...page.items as ConnectionResource[]]:page.items as ConnectionResource[])
+    else setPrompts(current=>cursor?[...current,...page.items as ConnectionPrompt[]]:page.items as ConnectionPrompt[])
+    setBrowse(id);setReference({id,kind,revision:page.revision,cursor:page.nextCursor})
+  }
+  const readPreview=async(work:()=>Promise<string>)=>{const request=++requests.current;const text=await work();if(request===requests.current)setPreview(text)}
+  const attach=async()=>{
+    const owner=reference,request=requests.current
+    const current=(await window.unreal.connections()).find(item=>item.id===owner?.id)
+    if(!owner||request!==requests.current||!current||current.status!=='connected'||current.grant?.revision!==owner.revision||!current.grant?.[owner.kind]){setPreview('');throw Error('Reference access changed. Browse the connection again before attaching.')}
+    onAttach(`<external_reference>\n${preview}\n</external_reference>`)
+  }
   const selectedTools=(item:ConnectionView)=>item.tools.filter(tool=>tool.current&&item.grant?.tools.includes(tool.remoteName)&&item.grant?.toolRevisions?.[tool.remoteName]===tool.revision)
   const grant=(item:ConnectionView,patch:Partial<NonNullable<ConnectionView['grant']>>={})=>{
     const selected=selectedTools(item)
@@ -36,7 +61,7 @@ export function ConnectionsPage({ onAttach }: { onAttach(text:string):void }) {
           {item.grant?.tools.some(name=>!selectedTools(item).some(tool=>tool.remoteName===name))&&<p className="notice">A tool definition changed. Review and select its current version before use.</p>}
           <label className="connection-tool"><input type="checkbox" disabled={busy||!item.grant} checked={item.grant?.resources||false} onChange={e=>void run(()=>grant(item,{resources:e.target.checked}))}/> Allow selecting resources to attach</label>
           <label className="connection-tool"><input type="checkbox" disabled={busy||!item.grant} checked={item.grant?.prompts||false} onChange={e=>void run(()=>grant(item,{prompts:e.target.checked}))}/> Allow selecting prompt templates</label>
-          <div className="button-row"><button disabled={busy||!item.grant?.resources||item.status!=='connected'} className="secondary-button" onClick={()=>void run(async()=>{setResources(await window.unreal.connectionResources(item.id));setPrompts([]);setBrowse(item.id);setPreview('')})}>Browse resources</button><button disabled={busy||!item.grant?.prompts||item.status!=='connected'} className="secondary-button" onClick={()=>void run(async()=>{setPrompts(await window.unreal.connectionPrompts(item.id));setResources([]);setBrowse(item.id);setPreview('')})}>Browse prompts</button></div>
+          <div className="button-row"><button disabled={busy||!item.grant?.resources||item.status!=='connected'} className="secondary-button" onClick={()=>void run(()=>browsePage(item.id,'resources'))}>Browse resources</button><button disabled={busy||!item.grant?.prompts||item.status!=='connected'} className="secondary-button" onClick={()=>void run(()=>browsePage(item.id,'prompts'))}>Browse prompts</button></div>
         </details>
         <details><summary>Credentials and configuration · {item.credentialState==='unavailable'?'unavailable':item.hasCredential?'saved':'none'}</summary>
           {item.credentialState==='unavailable'&&<p role="alert" className="error-inline">Saved credentials cannot be read. Check Windows credential encryption and the private vault before reconnecting.</p>}
@@ -45,11 +70,12 @@ export function ConnectionsPage({ onAttach }: { onAttach(text:string):void }) {
         </details>
       </article>)}
     </section></div>
-    {(resources.length>0||prompts.length>0||preview)&&<section className="settings-section"><h2>Preview attachment</h2><p>Server content is reference material. Inspect it before adding it to your message.</p>
-      {resources.map(resource=><button className="secondary-button" key={resource.uri} disabled={busy} onClick={()=>void run(async()=>setPreview(`MCP resource ${resource.uri}\n${await window.unreal.connectionResource(browse,resource.uri)}`))}>{resource.name}</button>)}
+    {(resources.length>0||prompts.length>0||preview||reference)&&<section className="settings-section"><h2>Preview attachment</h2><p>Server content is reference material. Inspect it before adding it to your message.</p>
+      {resources.map(resource=><button className="secondary-button" key={resource.uri} disabled={busy} onClick={()=>void run(()=>readPreview(async()=>`MCP resource ${resource.uri}\n${await window.unreal.connectionResource(browse,resource.uri)}`))}>{resource.name}</button>)}
       {prompts.length>0&&<label>Prompt arguments (JSON object)<textarea rows={3} value={promptArgs} onChange={e=>setPromptArgs(e.target.value)}/></label>}
-      {prompts.map(prompt=><div key={prompt.name}><button className="secondary-button" disabled={busy} onClick={()=>void run(async()=>setPreview(`MCP prompt ${prompt.name}\n${await window.unreal.connectionPrompt(browse,prompt.name,JSON.parse(promptArgs))}`))}>{prompt.name}</button><small>{prompt.arguments?.map(arg=>`${arg.name}${arg.required?' (required)':''}`).join(', ')}</small></div>)}
-      {preview&&<><pre className="connection-preview">{preview}</pre><button className="primary-button" onClick={()=>onAttach(`<external_reference>\n${preview}\n</external_reference>`)}>Attach to message</button></>}
+      {prompts.map(prompt=><div key={prompt.name}><button className="secondary-button" disabled={busy} onClick={()=>void run(()=>readPreview(async()=>`MCP prompt ${prompt.name}\n${await window.unreal.connectionPrompt(browse,prompt.name,JSON.parse(promptArgs))}`))}>{prompt.name}</button><small>{prompt.arguments?.map(arg=>`${arg.name}${arg.required?' (required)':''}`).join(', ')}</small></div>)}
+      {reference?.cursor&&<button className="secondary-button" disabled={busy} onClick={()=>void run(()=>browsePage(reference.id,reference.kind,reference.cursor))}>Load more</button>}
+      {preview&&<><pre className="connection-preview">{preview}</pre><button className="primary-button" disabled={busy} onClick={()=>void run(attach)}>Attach to message</button></>}
     </section>}
   </div>
 }

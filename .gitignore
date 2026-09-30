@@ -2,6 +2,7 @@
 /dist/
 /tmp/
 /.harness/
+/.cache/
 /logs/
 /jobs/
 /benchmarks/harbor/jobs/
@@ -18,9 +19,18 @@ __pycache__/
 .ruff_cache/
 .DS_Store
 /desktop/node_modules/
+/node_modules/.vite/
 /desktop/out/
 /desktop/generated/
 /desktop/dist/
 /desktop/dist-*/
 /desktop/design/desktop-*-current.png
 /desktop/design/desktop-current.png
+
+/desktop/computer-host/bin/
+/desktop/computer-host/obj/
+/third_party/windows-mcp/**/bin/
+/third_party/windows-mcp/**/obj/
+
+/desktop/tests/computer-fixture/bin/
+/desktop/tests/computer-fixture/obj/

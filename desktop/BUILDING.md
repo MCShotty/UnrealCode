@@ -2,7 +2,7 @@
 
 ## Windows development
 
-Install Node.js 24+, Git, and Docker Desktop with its Linux engine. The backend
+Install Node.js 24+, Git, .NET SDK **10.0.401**, and Docker Desktop with its Linux engine. The backend
 build uses the Go toolchain pinned in Dockerfile.desktop; host Go is optional.
 From `desktop/` run:
 
@@ -30,6 +30,33 @@ it from Node does not protect against junction swaps. Its binary is bundled unde
 requests concurrently. Missing helpers fail closed with rebuild/reinstall guidance.
 Hard-linked files are rejected. ReFS is currently unsupported because Node's
 64-bit inode cannot authenticate the full ReFS file identity; use NTFS.
+
+`predev` and `prebuild:code` also run `computer:build`. This restores locked NuGet
+dependencies and publishes a self-contained Windows x64 helper from
+`desktop/computer-host` and the pinned source in `third_party/windows-mcp`.
+Users do not need .NET installed. The public build records source and executable
+SHA-256 hashes in `generated/computer-host/manifest.json`; Electron verifies the
+executable before starting it. `--self-test` exercises authority without native
+input. `computer-notices.mjs` audits the installed dependency/runtime licenses;
+regenerate notices before packaging. No MCP endpoint or provider key is passed
+through the helper environment.
+
+Fieldnotes/Computer checks (from `desktop/`):
+
+```powershell
+npm run computer:build
+node scripts/qa-reliability.mjs
+node scripts/qa-fieldnotes.mjs
+node scripts/qa-computer.mjs
+$env:UNREAL_FIELDNOTES_BENCHMARK='1'; npm exec vitest run src/main/fieldnotes.benchmark.test.ts
+```
+
+The native acceptance test is separately gated by `UNREAL_COMPUTER_NATIVE=1` and
+requires virtual desktop 2 active and idle, with the disposable
+`tests/computer-fixture` window running. It verifies typing, a reviewed fixture
+file save, selected-window capture, and stop/revocation. It does not target user
+applications. Offscreen UI checks do not establish mixed-DPI, lock/unlock, physical
+takeover, or real-application acceptance. Keep those gates explicit.
 
 ## Windows candidate
 

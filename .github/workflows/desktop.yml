@@ -27,6 +27,9 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go test ../cmd/unrealcode-host-files
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.401'
       - run: npm ci
       - run: npm run typecheck
       # Native worker/process tests exercise their own concurrency; avoid
@@ -40,6 +43,10 @@ jobs:
       - run: node scripts/qa-git-browser.mjs --packaged
       - run: node scripts/qa-102.mjs --packaged
       - run: node scripts/qa-shared-documents.mjs --packaged
+      - run: node scripts/qa-reliability.mjs --packaged
+      - run: node scripts/qa-fieldnotes.mjs --packaged
+      - run: node scripts/qa-computer.mjs --packaged
+      - run: node scripts/qa-bughunt.mjs --packaged
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: windows-candidate

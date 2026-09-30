@@ -9,12 +9,29 @@ vi.mock('./docker',()=>({DockerBridge:class{}}))
 vi.mock('./settings',()=>({credentialFor:()=>({}),getKey:vi.fn(()=> 'old-key'),saveKey:vi.fn(),clearKey:vi.fn()}))
 import {HindsightMemory} from './hindsight-memory'
 import {getKey,saveKey} from './settings'
+import type {Fieldnote} from '../shared/fieldnotes'
 const roots:string[]=[]
 const memories:HindsightMemory[]=[]
 afterEach(async()=>{for(const memory of memories.splice(0))await memory.stop();for(const root of roots.splice(0))await rm(root,{recursive:true,force:true})})
 async function setup(){const root=await mkdtemp(join(tmpdir(),'unrealcode-memory-unit-'));roots.push(root);const memory=new HindsightMemory(root);memories.push(memory);await memory.status('project');(memory as any).value.settings={version:1,enabled:true,projects:['project']};return memory}
 const record={sessionId:'session',turnId:'turn',workspace:'project',content:'Verified test report',sourceRefs:['event:4'],createdAt:new Date().toISOString()}
 const profile={provider:'ollama' as const,model:'fixture',baseUrl:'',thinkingLevel:'low',requestLimit:20,tokenLimit:10000}
+const fieldnote=(project='new-project',revision=1):Fieldnote=>({id:'11111111-1111-4111-8111-111111111111',revision,title:'Authored guidance',body:'Keep verified outcomes.',pointer:{projectId:'22222222-2222-4222-8222-222222222222',projectPath:project,projectName:project},enabled:true,indexing:true,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),sync:{state:'retaining',attempts:1}})
+it('persists the first Fieldnote in a project without prior memory records',async()=>{
+ const memory=await setup();(memory as any).value.settings={version:2,enabled:true,globalConsent:true,projects:[]};memory.fieldnoteValidity=()=>true
+ const note=fieldnote();await memory.retainFieldnote(note)
+ expect((await memory.status('')).records).toHaveLength(1)
+ await vi.waitFor(async()=>expect(await memory.fieldnoteState(note.id,1)).toBe('retained'))
+})
+it('moves Fieldnote attribution without leaving two conflicting outbox records',async()=>{
+ const memory=await setup();(memory as any).value.settings={version:2,enabled:true,globalConsent:true,projects:[]};memory.fieldnoteValidity=()=>true
+ const original=fieldnote('project');await memory.retainFieldnote(original)
+ await vi.waitFor(async()=>expect(await memory.fieldnoteState(original.id,1)).toBe('retained'))
+ await memory.retainFieldnote(fieldnote('other-project',2))
+ const records=(await memory.status('')).records
+ expect(records).toHaveLength(1);expect(records[0]).toMatchObject({sourceProject:'other-project',fieldnote:{id:original.id,revision:2}})
+ await vi.waitFor(async()=>expect(await memory.fieldnoteState(original.id,2)).toBe('retained'))
+})
 it('keeps the usable memory profile when a proposed destination fails verification or startup',async()=>{
  const memory=await setup(),value=(memory as any).value
  value.settings={version:2,enabled:true,globalConsent:true,projects:[],profile,verifiedProfile:(memory as any).fingerprint(profile)}
@@ -113,6 +130,24 @@ it('does not reject committed memory when its renderer notification fails',async
  await memory.record('project',record)
  await vi.waitFor(async()=>expect((await memory.status('project')).records[0].state).toBe('retained'))
  expect((await memory.status('project')).records).toHaveLength(1)
+})
+it('discards a recall that crosses a correction and verifies returned source revisions',async()=>{
+ const memory=await setup()
+ await memory.record('project',record)
+ await vi.waitFor(async()=>expect((await memory.status('project')).records[0].state).toBe('retained'))
+ const id=(await memory.status('project')).records[0].id
+ let release!:(value:unknown)=>void
+ vi.mocked(memory.runtime.request).mockImplementation(async(_method,_bank,path)=>path==='/memories/recall'?await new Promise(resolve=>{release=resolve}):{})
+ const pending=memory.recall('project','test','project')
+ await vi.waitFor(()=>expect(release).toBeTypeOf('function'))
+ await memory.correct('project',id,'Corrected evidence')
+ await vi.waitFor(async()=>expect((await memory.status('project')).records[0]).toMatchObject({state:'retained',revision:1}))
+ release({results:[{document_id:id,text:'Old advice',metadata:{revision:'0'}}]})
+ expect((await pending as any).results).toEqual([])
+ vi.mocked(memory.runtime.request).mockResolvedValue({results:[{document_id:id,text:'Old advice',metadata:{revision:'0'}}]})
+ expect((await memory.recall('project','test','project') as any).results).toEqual([])
+ vi.mocked(memory.runtime.request).mockResolvedValue({results:[{document_id:id,text:'Unverifiable generated advice'}]})
+ expect((await memory.recall('project','test','project') as any).results[0].text).toBe('Corrected evidence')
 })
 it('reconciles a deletion made while retention is in flight',async()=>{
  const memory=await setup();let release!:()=>void

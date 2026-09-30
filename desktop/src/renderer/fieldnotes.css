@@ -1,0 +1,84 @@
+.fieldnotes-page { max-width: 1500px; margin-inline: auto; width: 100%; }
+.fieldnotes-page .page-heading { align-items: center; }
+.fieldnotes-page .page-heading p { max-width: 62ch; line-height: 1.6; }
+.fieldnotes-page .button-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.fieldnotes-layout { display: grid; grid-template-columns: minmax(240px,330px) minmax(0,1fr); gap: 20px; align-items: start; min-width: 0; }
+.fieldnotes-list { min-width: 0; display: grid; gap: 14px; }
+.fieldnote-search { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); background: var(--panel-2); color: var(--sub); padding: 0 13px; border-radius: 22px; min-width: 0; }
+.fieldnote-search input { background: transparent; border: 0; padding: 12px 0; min-width: 0; width: 100%; color: var(--text); }
+.fieldnote-filters { display: flex; background: var(--panel); border-radius: 24px; padding: 4px; gap: 4px; }
+.fieldnote-filters button { position: relative; flex: 1; background: none; border: 0; color: var(--text); padding: 9px 12px; min-height: 38px; }
+.fieldnote-filters button > span:last-child { position: relative; }
+.fieldnote-filter-selection { position: absolute; inset: 0; border-radius: 20px; background: var(--md-sys-color-secondary-container,var(--panel-3)); }
+.fieldnote-results { display: grid; gap: 6px; }
+.fieldnote-row { display: flex; align-items: start; text-align: start; gap: 11px; padding: 14px; border: 1px solid transparent; border-radius: 18px; background: transparent; color: var(--text); min-width: 0; }
+.fieldnote-row:hover { background: var(--panel-2); }
+.fieldnote-row.selected { background: var(--md-sys-color-secondary-container,var(--panel-3)); border-color: var(--line); }
+.fieldnote-row > svg { flex-shrink: 0; margin-top: 3px; color: var(--accent); }
+.fieldnote-row > span:nth-child(2) { flex: 1; min-width: 0; display: grid; gap: 5px; }
+.fieldnote-row strong,.fieldnote-row small,.fieldnote-excerpt { overflow-wrap: anywhere; }
+.fieldnote-row strong { font-size: 13px; line-height: 1.5; }
+.fieldnote-row small { color: var(--sub); font-size: 11px; }
+.fieldnote-excerpt { font-size: 12px; line-height: 1.5; color: var(--sub); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.fieldnote-state { font-size: 10px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 8px; flex-shrink: 0; }
+.fieldnote-drafts { border-bottom: 1px solid var(--line); padding: 10px; font-size: 12px; }
+.fieldnote-drafts button { display: block; }
+.fieldnote-detail { min-width: 0; border: 1px solid var(--line); background: var(--panel); border-radius: 24px; overflow: hidden; }
+.fieldnote-detail-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 18px 22px; border-bottom: 1px solid var(--line); }
+.fieldnote-detail-heading > span > small { display: block; font-size: 11px; color: var(--sub); margin-top: 4px; }
+.fieldnote-sync { display: flex; align-items: center; gap: 7px; margin-inline-start: auto; color: var(--sub); font-size: 11px; }
+.fieldnote-editor-body { padding: 22px; display: grid; gap: 17px; }
+.fieldnote-editor-body label { display: grid; gap: 7px; font-size: 12px; font-weight: 600; color: var(--text); }
+.fieldnote-editor-body input:not([type=checkbox]),.fieldnote-editor-body select,.fieldnote-editor-body textarea { width: 100%; min-width: 0; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px; }
+.fieldnote-editor-body textarea { min-height: 230px; line-height: 1.75; resize: vertical; font-size: 14px; }
+.fieldnote-pointer { min-width: 0; margin: 0; padding: 14px; border: 1px solid var(--line); border-radius: 16px; display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; }
+.fieldnote-pointer legend { font-size: 11px; color: var(--sub); padding: 0 7px; }
+.fieldnote-pointer legend svg { vertical-align: middle; }
+.fieldnote-pointer > small,.fieldnote-pointer > button { grid-column: 1/-1; justify-self: start; }
+.fieldnote-pointer small { line-height: 1.6; font-size: 11px; color: var(--sub); font-weight: 400; }
+.fieldnote-body-heading { display: flex; justify-content: space-between; align-items: center; }
+.fieldnote-body-heading small { font-weight: 400; color: var(--sub); }
+.fieldnote-switches { display: grid; gap: 12px; }
+.fieldnote-switches label { display: flex; align-items: center; gap: 8px; font-weight: 400; }
+.fieldnote-switches input,.fieldnote-context-choice input { accent-color: var(--accent); width: 18px; height: 18px; flex-shrink: 0; }
+.fieldnote-footer { position: sticky; bottom: 0; padding: 16px 22px; border-top: 1px solid var(--line); background: var(--panel); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; }
+.fieldnote-footer > div { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.fieldnote-empty { min-height: 480px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px; text-align: center; }
+.fieldnote-empty h2 { font-size: 23px; letter-spacing: -.025em; margin: 24px 0 10px; }
+.fieldnote-empty p { max-width: 42ch; color: var(--sub); line-height: 1.8; font-size: 13px; margin: 0 0 22px; }
+.fieldnote-paper { display: inline-grid; place-items: center; position: relative; width: 78px; height: 90px; border-radius: 17px 8px 17px 17px; color: var(--accent); background: var(--md-sys-color-secondary-container,var(--panel-3)); }
+.fieldnote-paper:after { content: ''; position: absolute; top: 0; right: 0; border-bottom: 17px solid var(--line); border-right: 17px solid var(--panel); border-radius: 0 6px 0 5px; }
+.fieldnote-paper.small { width: 40px; height: 46px; border-radius: 11px 5px 11px 11px; }
+.fieldnote-paper.small:after { border-bottom-width: 10px; border-right-width: 10px; }
+.fieldnote-paper.fresh-note svg { animation: fieldnote-pencil .45s cubic-bezier(.2,.8,.2,1) 1; }
+@keyframes fieldnote-pencil { 0% { transform: rotate(-18deg) scale(.85); opacity: .5; } 65% { transform: rotate(7deg) scale(1.08); } 100% { transform: none; opacity: 1; } }
+.fieldnote-empty-small { color: var(--sub); text-align: center; padding: 28px 14px; font-size: 13px; }
+.fieldnote-notice { display: flex; gap: 8px; align-items: center; color: var(--accent); font-size: 12px; margin-bottom: 16px; }
+.fieldnote-preview { min-height: 230px; overflow-wrap: anywhere; }
+.fieldnote-interpretation { padding: 15px; border-radius: 14px; border: 1px solid var(--line); font-size: 12px; line-height: 1.7; }
+.fieldnote-interpretation summary { font-weight: 600; cursor: pointer; }
+.fieldnote-interpretation small { color: var(--sub); }
+.fieldnote-interpretation blockquote { border-inline-start: 2px solid var(--accent); margin-inline: 0; padding-inline: 12px; }
+.fieldnotes-page .fieldnote-back { display: none; }
+.fieldnote-context-choice { display: flex; align-items: start; gap: 12px; border-bottom: 1px solid var(--line); padding: 16px 0; }
+.fieldnote-context-choice > span { flex: 1; min-width: 0; display: grid; gap: 7px; line-height: 1.6; }
+.fieldnote-context-choice small { color: var(--sub); }
+.fieldnote-context-choice > span > span { max-height: 150px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.fieldnote-receipts { font-size: 11px; color: var(--sub); padding: 6px 20px; max-height: 240px; overflow: auto; }
+.fieldnote-receipts summary { cursor: pointer; padding: 6px 0; }
+.fieldnote-receipts summary svg { vertical-align: middle; margin-inline-end: 5px; }
+.fieldnote-receipts article { padding: 8px 0; border-top: 1px solid var(--line); }
+.fieldnote-receipts article header { display: flex; align-items: center; justify-content: space-between; }
+.fieldnote-receipts pre { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.skill-name-field { display: grid; gap: 8px; padding: 16px; color: var(--sub); font-size: 12px; }
+.skill-name-field input { padding: 10px; border: 1px solid var(--line); border-radius: 12px; color: var(--text); background: var(--panel); }
+.standalone-knowledge { height: 100vh; min-height: 0; overflow: auto; background: var(--bg); color: var(--text); }
+.standalone-knowledge > header { display: flex; align-items: center; justify-content: space-between; padding: 18px 24px; border-bottom: 1px solid var(--line); }
+@media(max-width:959px) { .fieldnotes-layout { grid-template-columns: minmax(0,1fr); } .fieldnotes-page:not(.show-note) .fieldnote-detail { display: none; } .fieldnotes-page.show-note .fieldnotes-list { display: none; } .fieldnotes-page .fieldnote-back { display: inline-flex; } .fieldnotes-page .page-heading { align-items: start; flex-direction: column; } }
+@media(max-width:699px) { .fieldnote-editor-body { padding: 16px; } .fieldnote-pointer { grid-template-columns: minmax(0,1fr); } .fieldnote-detail-heading,.fieldnote-footer { padding: 14px 16px; } .fieldnote-context-choice { flex-wrap: wrap; } }
+@media(prefers-reduced-motion:reduce) { .fieldnote-paper.fresh-note svg { animation: none; } }
+@media(forced-colors:active) { .fieldnote-row.selected,.fieldnote-filters button[aria-pressed=true] { outline: 2px solid Highlight; } .fieldnote-paper { border: 1px solid CanvasText; } }
+
+.fieldnote-pointer-open{display:none!important}@media(max-width:699px){.fieldnote-pointer-inline{display:none}.fieldnote-pointer-open{display:flex!important;justify-content:flex-start;overflow-wrap:anywhere;white-space:normal}.pane-dialog:has(.fieldnote-pointer){inset:auto 0 0;margin:0;width:100%;max-width:100%;max-height:85dvh;border-radius:28px 28px 0 0}.pane-dialog:has(.fieldnote-pointer) .fieldnote-pointer{display:flex;flex-direction:column}}
+
+.fieldnote-filters{position:relative}.fieldnote-filters>.fieldnote-filter-selection{inset:4px auto 4px 4px;width:calc(50% - 4px)}.fieldnote-filters button{z-index:1}.standalone-knowledge{height:100dvh;display:flex;flex-direction:column;overflow:hidden}.standalone-knowledge>header{flex-shrink:0}.standalone-knowledge>.page-content,.standalone-knowledge>.computer-page{flex:1;min-height:0;height:auto;overflow:auto}.fieldnote-pointer>label{align-content:start}.fieldnote-pointer>label>small{display:inline}.fieldnote-pointer select{height:44px}
