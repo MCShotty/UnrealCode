@@ -346,6 +346,24 @@ func TestAcceptedAnswerSurvivesProviderFailureAndExplicitRetry(t *testing.T) {
 		return false
 	})
 	p := answerQuestionParams{SessionID: string(id), WorkspaceID: "workspace", ID: q.ID, Revision: 1, SubmissionID: uuid.New().String(), Answers: []questionAnswer{{QuestionID: "choice", ChoiceID: "a"}}}
+	defer func() {
+		if !t.Failed() {
+			return
+		}
+		out, readErr := a.events.outcome(id, false)
+		a.mu.Lock()
+		run := a.running[id]
+		a.mu.Unlock()
+		busy, stopping := false, false
+		if run != nil {
+			busy, stopping = run.busy.Load(), run.stopping.Load()
+		}
+		t.Logf("provider failure diagnostics: outcome=%+v readError=%v running=%t busy=%t stopping=%t calls=%d answerSeen=%t", out, readErr, run != nil, busy, stopping, client.calls.Load(), client.answerSeen.Load())
+		entries, _ := a.events.entries(id, 0, 1000)
+		for _, entry := range entries[max(0, len(entries)-12):] {
+			t.Logf("event %d %s source=%d: %.2048s", entry.Sequence, entry.Event, entry.SourceSequence, entry.Payload)
+		}
+	}()
 	for range 2 {
 		if _, err = a.dispatch(request{Version: 1, Method: "question.answer", Params: mustJSON(t, p)}); err != nil {
 			t.Fatal(err)

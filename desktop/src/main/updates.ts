@@ -11,9 +11,11 @@ import { backendEnvironment } from './child-environment'
 const exec=promisify(execFile)
 export async function verifyPublisher(path:string,publishers:string[]):Promise<void>{
  if(!publishers.length||publishers.some(value=>typeof value!=='string'||!value.trim()))throw new Error('No trusted Windows publisher configured')
- const command="$s=Get-AuthenticodeSignature -LiteralPath $env:UNREAL_VERIFY_FILE; @{status=[int]$s.Status; publisher=if($s.SignerCertificate){$s.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName,$false)}else{''}} | ConvertTo-Json -Compress"
- const {stdout}=await exec('powershell.exe',['-NoProfile','-NonInteractive','-Command',command],{windowsHide:true,timeout:20000,env:{...backendEnvironment(),UNREAL_VERIFY_FILE:path}})
- const result=JSON.parse(stdout);if(result.status!==0||!publishers.includes(result.publisher))throw new Error('Windows signature is invalid or belongs to an unexpected publisher')
+ const shellRoot=join(process.env.SystemRoot||process.env.WINDIR||'C:\\Windows','System32','WindowsPowerShell','v1.0')
+ const command="$ErrorActionPreference='Stop'; Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop; $s=Microsoft.PowerShell.Security\\Get-AuthenticodeSignature -LiteralPath $env:UNREAL_VERIFY_FILE; @{status=[int]$s.Status; publisher=if($s.SignerCertificate){$s.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName,$false)}else{''}} | ConvertTo-Json -Compress"
+ let result:{status:number;publisher:string}
+ try{const {stdout}=await exec(join(shellRoot,'powershell.exe'),['-NoProfile','-NonInteractive','-Command',command],{windowsHide:true,timeout:20000,env:{...backendEnvironment(),PSModulePath:join(shellRoot,'Modules'),UNREAL_VERIFY_FILE:path}});result=JSON.parse(stdout)}catch{throw new Error('Windows signature could not be verified. No installer was accepted.')}
+ if(result?.status!==0||typeof result.publisher!=='string'||!publishers.includes(result.publisher))throw new Error('Windows signature is invalid or belongs to an unexpected publisher')
 }
 export function requireUpdateHashes(files:readonly {sha512?:string}[]):void {if(!files.length||files.some(file=>typeof file.sha512!=='string'||!/^[A-Za-z0-9+/]{86}==$/.test(file.sha512)))throw new Error('Update metadata is missing a valid SHA-512 checksum')}
 export async function verifyUpdateHash(path:string,expected:string):Promise<void>{requireUpdateHashes([{sha512:expected}]);const hash=createHash('sha512');for await(const chunk of createReadStream(path))hash.update(chunk);if(hash.digest('base64')!==expected)throw new Error('Installer checksum changed; download the update again')}

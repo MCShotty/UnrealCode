@@ -38,6 +38,9 @@
 - Browser uploads continuing after cancellation, takeover or origin revocation.
 - Failed metadata writes skipping shutdown barriers, and failed goal saves leaving
   live scheduling inconsistent with durable state.
+- Windows publisher verification uses the system shell and built-in security
+  module, with unavailable verification distinguished from an invalid signature.
+  Both remain fail-closed; unsigned installation stays manual.
 - Model-facing titles and source labels escaping credential redaction; native
   observation-derived content entering automatic memory through incomplete scans.
 

@@ -35,6 +35,17 @@ tests now require the actual versioned handshake: a verified unsafe desktop
 prerequisite must remain blocked, while a crash or incompatible helper fails.
 This does not establish native input, and no safety check is bypassed for CI.
 
+The subsequent branch run confirmed the hosted helper reports protocol 1,
+working input monitoring, an elevated process and unavailable desktop readiness;
+the application correctly refused control. Its expected error notice must be
+dismissed through the UI before later fixture controls are exercised. The PR run
+also exposed a Windows security-module load failure: publisher verification now
+pins the system shell/module and rejects unavailable verification explicitly.
+Five verifier regressions and existing update tests pass (8 focused tests).
+An intermittent accepted-answer/failure-settlement timeout passed in the same
+revision's full Go race run and branch Docker job. Its strict test gains bounded
+diagnostics; no timeout extension or test bypass is introduced.
+
 The PR must pass Windows desktop/packaged checks, Docker backend compatibility,
 and Go race/vet/build CI. After merge, the build-only release workflow must pass
 on the exact merged `main` commit before annotated tag `v1.0.3` is created.
