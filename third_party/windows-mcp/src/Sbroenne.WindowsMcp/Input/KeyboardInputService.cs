@@ -1,0 +1,973 @@
+using System.Runtime.InteropServices;
+using Sbroenne.WindowsMcp.Native;
+using Sbroenne.WindowsMcp.Utilities;
+
+namespace Sbroenne.WindowsMcp.Input;
+
+/// <summary>
+/// Implementation of keyboard input operations using Windows SendInput API.
+/// Uses paced Unicode input, acknowledging characters in supported live-text editors.
+/// </summary>
+public sealed class KeyboardInputService : IDisposable
+{
+    /// <summary>Default inter-key delay in milliseconds for sequence operations.</summary>
+    private const int DefaultInterKeyDelayMs = 10;
+
+    /// <summary>Delay after each text character so asynchronous editors can consume Unicode input.</summary>
+    private const int TextCharacterDelayMs = 50;
+
+    /// <summary>Default delay between text chunks in milliseconds.</summary>
+    private const int DefaultChunkDelayMs = 50;
+
+    /// <summary>Maximum number of characters to type in a single chunk.</summary>
+    private const int TextChunkSize = 1000;
+
+    private readonly int _interKeyDelayMs;
+    private readonly int _chunkDelayMs;
+    private readonly HeldKeyTracker _heldKeyTracker;
+    private readonly ModifierKeyManager _modifierKeyManager;
+    private readonly Lazy<KeyboardTextObserver> _textObserver = new(() => new KeyboardTextObserver());
+    private bool _disposed;
+
+    internal static int GetTextTimeoutMs(int textLength, int operationTimeoutMs) =>
+        // Allow for pacing and timer scheduling without consuming the normal operation budget.
+        (int)Math.Min(int.MaxValue, operationTimeoutMs + ((long)textLength * TextCharacterDelayMs * 2));
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="KeyboardInputService"/> class.
+    /// </summary>
+    public KeyboardInputService()
+        : this(DefaultInterKeyDelayMs, DefaultChunkDelayMs)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="KeyboardInputService"/> class
+    /// with the specified configuration.
+    /// </summary>
+    /// <param name="interKeyDelayMs">Inter-key delay in milliseconds.</param>
+    /// <param name="chunkDelayMs">Delay between text chunks in milliseconds.</param>
+    public KeyboardInputService(int interKeyDelayMs, int chunkDelayMs)
+    {
+        _interKeyDelayMs = interKeyDelayMs;
+        _chunkDelayMs = chunkDelayMs;
+        _heldKeyTracker = new HeldKeyTracker();
+        _modifierKeyManager = new ModifierKeyManager();
+    }
+
+    /// <inheritdoc />
+    public Task<KeyboardControlResult> TypeTextAsync(
+        string text,
+        CancellationToken cancellationToken = default) =>
+        TypeTextCoreAsync(text, expectedForegroundWindow: null, cancellationToken);
+
+    /// <summary>
+    /// Types text only while the specified top-level window remains foreground.
+    /// The guard is checked immediately before every character's SendInput call.
+    /// </summary>
+    internal Task<KeyboardControlResult> TypeTextAsync(
+        string text,
+        nint expectedForegroundWindow,
+        CancellationToken cancellationToken = default) =>
+        TypeTextCoreAsync(text, expectedForegroundWindow, cancellationToken);
+
+    private async Task<KeyboardControlResult> TypeTextCoreAsync(
+        string text,
+        nint? expectedForegroundWindow,
+        CancellationToken cancellationToken)
+    {
+        // Handle null or empty text
+        if (string.IsNullOrEmpty(text))
+        {
+            return KeyboardControlResult.CreateTypeSuccess(0);
+        }
+
+        var totalCharacters = 0;
+        var observationWarnings = new HashSet<string>(StringComparer.Ordinal);
+
+        // Process text in chunks to prevent overwhelming the input queue
+        for (var offset = 0; offset < text.Length;)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Get the current chunk
+            var remainingLength = text.Length - offset;
+            var currentChunkSize = Math.Min(TextChunkSize, remainingLength);
+            if (currentChunkSize < remainingLength
+                && char.IsSurrogatePair(text[offset + currentChunkSize - 1], text[offset + currentChunkSize]))
+            {
+                currentChunkSize--;
+            }
+            var chunk = text.Substring(offset, currentChunkSize);
+
+            // Type the chunk
+            var chunkResult = await TypeChunkAsync(chunk, expectedForegroundWindow, cancellationToken).ConfigureAwait(false);
+            if (!chunkResult.Success)
+            {
+                return chunkResult;
+            }
+
+            totalCharacters += chunkResult.CharactersTyped ?? 0;
+            if (chunkResult.Message is not null)
+            {
+                observationWarnings.Add(chunkResult.Message);
+            }
+            offset += currentChunkSize;
+
+            // Add delay between chunks if there are more chunks to process
+            if (offset < text.Length)
+            {
+                await Task.Delay(_chunkDelayMs, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        // Wait for the target process to consume the input queue before returning.
+        _ = await WaitForIdleAsync(cancellationToken).ConfigureAwait(false);
+
+        return KeyboardControlResult.CreateTypeSuccess(totalCharacters) with
+        {
+            Message = observationWarnings.Count > 0 ? string.Join(" ", observationWarnings) : null
+        };
+    }
+
+    /// <summary>
+    /// Types a single chunk of text using KEYEVENTF_UNICODE.
+    /// </summary>
+    /// <param name="chunk">The text chunk to type.</param>
+    /// <param name="expectedForegroundWindow">
+    /// Optional top-level window that must remain foreground.
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The result of the operation.</returns>
+    private async Task<KeyboardControlResult> TypeChunkAsync(
+        string chunk,
+        nint? expectedForegroundWindow,
+        CancellationToken cancellationToken)
+    {
+        var inputs = new List<INPUT>(4);
+        var sentInput = false;
+        var observationWarnings = new HashSet<string>(StringComparer.Ordinal);
+        var observeText = true;
+
+        for (var index = 0; index < chunk.Length; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            inputs.Clear();
+            var c = chunk[index];
+            var characterStart = index;
+
+            // Handle special characters
+            if (c == '\n' || c == '\r')
+            {
+                // Skip CR if followed by LF (Windows CRLF handling)
+                // For \n and standalone \r, send Enter key
+                if (c == '\r')
+                {
+                    continue; // Skip CR, we'll handle LF
+                }
+
+                // Send Enter key (VK_RETURN)
+                inputs.Add(CreateKeyboardInput(NativeConstants.VK_RETURN, 0, 0));
+                inputs.Add(CreateKeyboardInput(NativeConstants.VK_RETURN, 0, NativeConstants.KEYEVENTF_KEYUP));
+            }
+            else if (c == '\t')
+            {
+                // Send Tab key (VK_TAB)
+                inputs.Add(CreateKeyboardInput(NativeConstants.VK_TAB, 0, 0));
+                inputs.Add(CreateKeyboardInput(NativeConstants.VK_TAB, 0, NativeConstants.KEYEVENTF_KEYUP));
+            }
+            else
+            {
+                // Use Unicode input for all other characters
+                // This is layout-independent and handles all characters including emoji
+                var scanCode = (ushort)c;
+
+                inputs.Add(CreateKeyboardInput(0, scanCode, NativeConstants.KEYEVENTF_UNICODE));
+                inputs.Add(CreateKeyboardInput(0, scanCode, NativeConstants.KEYEVENTF_UNICODE | NativeConstants.KEYEVENTF_KEYUP));
+
+                if (index + 1 < chunk.Length && char.IsSurrogatePair(c, chunk[index + 1]))
+                {
+                    scanCode = chunk[++index];
+                    inputs.Add(CreateKeyboardInput(0, scanCode, NativeConstants.KEYEVENTF_UNICODE));
+                    inputs.Add(CreateKeyboardInput(0, scanCode, NativeConstants.KEYEVENTF_UNICODE | NativeConstants.KEYEVENTF_KEYUP));
+                }
+            }
+
+            if (!IsExpectedForegroundWindow(expectedForegroundWindow))
+            {
+                return KeyboardControlResult.CreateFailure(
+                    KeyboardControlErrorCode.WrongTargetWindow,
+                    "The foreground window changed before text input was sent.");
+            }
+
+            KeyboardTextObserver.Observation? observation = null;
+            if (observeText)
+            {
+                var capture = await _textObserver.Value.CaptureAsync(cancellationToken).ConfigureAwait(false);
+                observation = capture.Observation;
+                observeText = observation is not null;
+                if (capture.Warning is not null)
+                {
+                    observationWarnings.Add(capture.Warning);
+                }
+            }
+            if (!IsExpectedForegroundWindow(expectedForegroundWindow))
+            {
+                return KeyboardControlResult.CreateFailure(
+                    KeyboardControlErrorCode.WrongTargetWindow,
+                    "The foreground window changed while preparing text input.");
+            }
+
+            // Pace UTF-16 units separately, but acknowledge a complete surrogate pair.
+            // Editors may buffer its first unit without exposing any text yet.
+            for (var inputOffset = 0; inputOffset < inputs.Count; inputOffset += 2)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!IsExpectedForegroundWindow(expectedForegroundWindow))
+                {
+                    return KeyboardControlResult.CreateFailure(
+                        KeyboardControlErrorCode.WrongTargetWindow,
+                        "The foreground window changed before text input was sent.");
+                }
+                INPUT[] inputArray = [inputs[inputOffset], inputs[inputOffset + 1]];
+                var result = NativeMethods.SendInput((uint)inputArray.Length, inputArray, INPUT.Size);
+                if (result != inputArray.Length)
+                {
+                    var error = Marshal.GetLastWin32Error();
+                    var (errorCode, errorMessage) = MapSendInputError(error);
+                    return KeyboardControlResult.CreateFailure(
+                        errorCode,
+                        $"{errorMessage}. Expected {inputArray.Length} events, sent {result}.");
+                }
+                sentInput = true;
+                await Task.Delay(TextCharacterDelayMs, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (observation is not null)
+            {
+                var acknowledgement = await _textObserver.Value.WaitForChangeAsync(
+                    observation, chunk.Substring(characterStart, index - characterStart + 1),
+                    cancellationToken).ConfigureAwait(false);
+                if (!acknowledgement.Consumed)
+                {
+                    return KeyboardControlResult.CreateFailure(
+                        KeyboardControlErrorCode.OperationTimeout,
+                        $"The focused control did not show consumption of character {characterStart + 1} in the current text chunk. " +
+                        $"Text length before/after: {observation.Before.Text.Length}/{acknowledgement.LastObserved?.Text.Length}; " +
+                        $"selection length before/after: {observation.Before.Selection?.Length}/{acknowledgement.LastObserved?.Selection?.Length}; " +
+                        $"focused before/after: {observation.Before.Focused}/{acknowledgement.LastObserved?.Focused}. " +
+                        "Typing stopped to avoid corrupting queued text; read the current content before retrying.");
+                }
+            }
+        }
+
+        // Count actual characters typed (excluding control characters converted to keys)
+        var charactersTyped = sentInput ? chunk.Length : 0;
+        return KeyboardControlResult.CreateTypeSuccess(charactersTyped) with
+        {
+            Message = observationWarnings.Count > 0 ? string.Join(" ", observationWarnings) : null
+        };
+    }
+
+    /// <summary>
+    /// Creates a KEYBDINPUT structure wrapped in an INPUT structure.
+    /// </summary>
+    /// <param name="virtualKey">The virtual key code.</param>
+    /// <param name="scanCode">The scan code (for Unicode input, this is the character code).</param>
+    /// <param name="flags">The keyboard event flags.</param>
+    /// <returns>An INPUT structure for keyboard input.</returns>
+    private static INPUT CreateKeyboardInput(ushort virtualKey, ushort scanCode, uint flags)
+    {
+        return new INPUT
+        {
+            Type = NativeConstants.INPUT_KEYBOARD,
+            Data = new INPUTUNION
+            {
+                Keyboard = new KEYBDINPUT
+                {
+                    WVk = virtualKey,
+                    WScan = scanCode,
+                    DwFlags = flags,
+                    Time = 0,
+                    DwExtraInfo = 0
+                }
+            }
+        };
+    }
+
+    /// <summary>
+    /// Maps Win32 error codes from SendInput to appropriate keyboard error codes and messages.
+    /// </summary>
+    /// <param name="win32ErrorCode">The Win32 error code from Marshal.GetLastWin32Error().</param>
+    /// <returns>A tuple containing the mapped error code and a descriptive message.</returns>
+    private static (KeyboardControlErrorCode ErrorCode, string Message) MapSendInputError(int win32ErrorCode)
+    {
+        return win32ErrorCode switch
+        {
+            NativeConstants.ERROR_ACCESS_DENIED => (
+                KeyboardControlErrorCode.ElevatedProcessTarget,
+                "SendInput was blocked. The target window may belong to an elevated (admin) process. " +
+                "Run the MCP server as administrator, or focus a non-elevated application."),
+            _ => (KeyboardControlErrorCode.SendInputFailed, $"SendInput failed with error code {win32ErrorCode}")
+        };
+    }
+
+    /// <inheritdoc />
+    public Task<KeyboardControlResult> PressKeyAsync(
+        string keyName,
+        ModifierKey modifiers = ModifierKey.None,
+        int repeat = 1,
+        CancellationToken cancellationToken = default) =>
+        PressKeyCoreAsync(
+            keyName,
+            modifiers,
+            repeat,
+            expectedForegroundWindow: null,
+            cancellationToken);
+
+    /// <summary>
+    /// Presses a key only if the specified top-level window is still foreground immediately
+    /// before the atomic SendInput call.
+    /// </summary>
+    internal Task<KeyboardControlResult> PressKeyAsync(
+        string keyName,
+        ModifierKey modifiers,
+        int repeat,
+        nint expectedForegroundWindow,
+        CancellationToken cancellationToken = default) =>
+        PressKeyCoreAsync(
+            keyName,
+            modifiers,
+            repeat,
+            expectedForegroundWindow,
+            cancellationToken);
+
+    private Task<KeyboardControlResult> PressKeyCoreAsync(
+        string keyName,
+        ModifierKey modifiers,
+        int repeat,
+        nint? expectedForegroundWindow,
+        CancellationToken cancellationToken)
+    {
+        // Validate key name
+        if (string.IsNullOrWhiteSpace(keyName))
+        {
+            return Task.FromResult(KeyboardControlResult.CreateFailure(
+                KeyboardControlErrorCode.InvalidKey,
+                "Key name cannot be null or empty."));
+        }
+
+        // Try to get the virtual key code
+        if (!VirtualKeyMapper.TryGetVirtualKeyCode(keyName, out var virtualKeyCode))
+        {
+            // Provide helpful error message, especially for shortcut attempts like "Ctrl+S"
+            var errorMsg = keyName.Contains('+', StringComparison.Ordinal)
+                ? $"Unknown key: '{keyName}'. For shortcuts like Ctrl+S, use key='S' with modifiers='Ctrl'. ⚠️ For saving files, use file_save tool instead!"
+                : $"Unknown key: '{keyName}'. See documentation for valid key names.";
+
+            return Task.FromResult(KeyboardControlResult.CreateFailure(
+                KeyboardControlErrorCode.InvalidKey,
+                errorMsg));
+        }
+
+        // Validate repeat count
+        if (repeat < 1)
+        {
+            repeat = 1;
+        }
+
+        if (expectedForegroundWindow.HasValue)
+        {
+            return Task.FromResult(PressKeyGuarded(
+                keyName,
+                virtualKeyCode,
+                modifiers,
+                repeat,
+                expectedForegroundWindow.Value,
+                cancellationToken));
+        }
+
+        // Determine if this is an extended key
+        var isExtended = VirtualKeyMapper.IsExtendedKey(virtualKeyCode);
+        var extendedFlag = isExtended ? NativeConstants.KEYEVENTF_EXTENDEDKEY : 0u;
+
+        // Press modifier keys if specified
+        var pressedModifiers = _modifierKeyManager.PressModifiers(modifiers);
+
+        try
+        {
+            for (var i = 0; i < repeat; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var inputs = new INPUT[]
+                {
+                    CreateKeyboardInput((ushort)virtualKeyCode, 0, extendedFlag),
+                    CreateKeyboardInput((ushort)virtualKeyCode, 0, extendedFlag | NativeConstants.KEYEVENTF_KEYUP)
+                };
+
+                var result = NativeMethods.SendInput(2, inputs, INPUT.Size);
+
+                if (result != 2)
+                {
+                    var error = Marshal.GetLastWin32Error();
+                    var (errorCode, errorMessage) = MapSendInputError(error);
+                    return Task.FromResult(KeyboardControlResult.CreateFailure(
+                        errorCode,
+                        errorMessage));
+                }
+            }
+
+            return Task.FromResult(KeyboardControlResult.CreatePressSuccess(keyName.ToLowerInvariant()));
+        }
+        finally
+        {
+            // Always release modifiers that we pressed
+            _modifierKeyManager.ReleaseModifiers(pressedModifiers);
+        }
+    }
+
+    private KeyboardControlResult PressKeyGuarded(
+        string keyName,
+        int virtualKeyCode,
+        ModifierKey modifiers,
+        int repeat,
+        nint expectedForegroundWindow,
+        CancellationToken cancellationToken)
+    {
+        var inputs = new List<INPUT>();
+        var pressedModifiers = new List<int>();
+
+        AddGuardedModifierInput(
+            inputs,
+            pressedModifiers,
+            modifiers,
+            ModifierKey.Ctrl,
+            NativeConstants.VK_CONTROL);
+        AddGuardedModifierInput(
+            inputs,
+            pressedModifiers,
+            modifiers,
+            ModifierKey.Shift,
+            NativeConstants.VK_SHIFT);
+        AddGuardedModifierInput(
+            inputs,
+            pressedModifiers,
+            modifiers,
+            ModifierKey.Alt,
+            NativeConstants.VK_MENU);
+        AddGuardedModifierInput(
+            inputs,
+            pressedModifiers,
+            modifiers,
+            ModifierKey.Win,
+            NativeConstants.VK_LWIN);
+
+        var isExtended = VirtualKeyMapper.IsExtendedKey(virtualKeyCode);
+        var extendedFlag = isExtended ? NativeConstants.KEYEVENTF_EXTENDEDKEY : 0u;
+        for (var index = 0; index < repeat; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            inputs.Add(CreateKeyboardInput((ushort)virtualKeyCode, 0, extendedFlag));
+            inputs.Add(CreateKeyboardInput(
+                (ushort)virtualKeyCode,
+                0,
+                extendedFlag | NativeConstants.KEYEVENTF_KEYUP));
+        }
+
+        for (var index = pressedModifiers.Count - 1; index >= 0; index--)
+        {
+            inputs.Add(CreateKeyboardInput(
+                (ushort)pressedModifiers[index],
+                0,
+                NativeConstants.KEYEVENTF_KEYUP));
+        }
+
+        if (!IsExpectedForegroundWindow(expectedForegroundWindow))
+        {
+            return KeyboardControlResult.CreateFailure(
+                KeyboardControlErrorCode.WrongTargetWindow,
+                "The foreground window changed before the key press was sent.");
+        }
+
+        var inputArray = inputs.ToArray();
+        var result = NativeMethods.SendInput(
+            (uint)inputArray.Length,
+            inputArray,
+            INPUT.Size);
+        if (result != inputArray.Length)
+        {
+            var insertedModifierCount = Math.Min((int)result, pressedModifiers.Count);
+            if (insertedModifierCount > 0)
+            {
+                _modifierKeyManager.ReleaseModifiers(
+                    pressedModifiers.Take(insertedModifierCount).ToArray());
+            }
+
+            var error = Marshal.GetLastWin32Error();
+            var (errorCode, errorMessage) = MapSendInputError(error);
+            return KeyboardControlResult.CreateFailure(errorCode, errorMessage);
+        }
+
+        return KeyboardControlResult.CreatePressSuccess(
+            keyName.ToLowerInvariant());
+    }
+
+    private void AddGuardedModifierInput(
+        List<INPUT> inputs,
+        List<int> pressedModifiers,
+        ModifierKey requestedModifiers,
+        ModifierKey modifier,
+        int virtualKeyCode)
+    {
+        if (!requestedModifiers.HasFlag(modifier) ||
+            _modifierKeyManager.IsKeyPressed(virtualKeyCode))
+        {
+            return;
+        }
+
+        inputs.Add(CreateKeyboardInput((ushort)virtualKeyCode, 0, 0));
+        pressedModifiers.Add(virtualKeyCode);
+    }
+
+    private static bool IsExpectedForegroundWindow(
+        nint? expectedForegroundWindow)
+    {
+        if (!expectedForegroundWindow.HasValue)
+        {
+            return true;
+        }
+
+        var expectedRoot = NativeMethods.GetAncestor(
+            expectedForegroundWindow.Value,
+            NativeConstants.GA_ROOT);
+        var foreground = NativeMethods.GetForegroundWindow();
+        var foregroundRoot = NativeMethods.GetAncestor(
+            foreground,
+            NativeConstants.GA_ROOT);
+        return foreground != IntPtr.Zero &&
+            (expectedRoot != IntPtr.Zero
+                ? expectedRoot
+                : expectedForegroundWindow.Value) ==
+            (foregroundRoot != IntPtr.Zero ? foregroundRoot : foreground);
+    }
+
+    /// <inheritdoc />
+    public Task<KeyboardControlResult> KeyDownAsync(
+        string keyName,
+        CancellationToken cancellationToken = default) =>
+        KeyDownCoreAsync(keyName, expectedForegroundWindow: null, cancellationToken);
+
+    internal Task<KeyboardControlResult> KeyDownAsync(
+        string keyName,
+        nint expectedForegroundWindow,
+        CancellationToken cancellationToken = default) =>
+        KeyDownCoreAsync(keyName, expectedForegroundWindow, cancellationToken);
+
+    private Task<KeyboardControlResult> KeyDownCoreAsync(
+        string keyName,
+        nint? expectedForegroundWindow,
+        CancellationToken cancellationToken)
+    {
+        // Validate key name
+        if (string.IsNullOrWhiteSpace(keyName))
+        {
+            return Task.FromResult(KeyboardControlResult.CreateFailure(
+                KeyboardControlErrorCode.InvalidKey,
+                "Key name cannot be null or empty."));
+        }
+
+        // Try to get the virtual key code
+        if (!VirtualKeyMapper.TryGetVirtualKeyCode(keyName, out var virtualKeyCode))
+        {
+            return Task.FromResult(KeyboardControlResult.CreateFailure(
+                KeyboardControlErrorCode.InvalidKey,
+                $"Unknown key: '{keyName}'. See documentation for valid key names."));
+        }
+
+        // Check if key is already held
+        var normalizedKeyName = keyName.ToLowerInvariant();
+        if (_heldKeyTracker.IsKeyHeld(normalizedKeyName))
+        {
+            return Task.FromResult(KeyboardControlResult.CreateFailure(
+                KeyboardControlErrorCode.KeyAlreadyHeld,
+                $"Key '{normalizedKeyName}' is already being held."));
+        }
+
+        // Determine if this is an extended key
+        var isExtended = VirtualKeyMapper.IsExtendedKey(virtualKeyCode);
+        var extendedFlag = isExtended ? NativeConstants.KEYEVENTF_EXTENDEDKEY : 0u;
+
+        // Send key down only
+        var inputs = new INPUT[]
+        {
+            CreateKeyboardInput((ushort)virtualKeyCode, 0, extendedFlag)
+        };
+
+        if (!IsExpectedForegroundWindow(expectedForegroundWindow))
+        {
+            return Task.FromResult(KeyboardControlResult.CreateFailure(
+                KeyboardControlErrorCode.WrongTargetWindow,
+                "The foreground window changed before the key-down event was sent."));
+        }
+
+        var result = NativeMethods.SendInput(1, inputs, INPUT.Size);
+
+        if (result != 1)
+        {
+            var error = Marshal.GetLastWin32Error();
+            var (errorCode, errorMessage) = MapSendInputError(error);
+            return Task.FromResult(KeyboardControlResult.CreateFailure(
+                errorCode,
+                errorMessage));
+        }
+
+        // Track the held key
+        _heldKeyTracker.TrackKeyDown(normalizedKeyName, virtualKeyCode, isExtended);
+        var heldKeys = _heldKeyTracker.GetHeldKeyNames();
+
+        return Task.FromResult(KeyboardControlResult.CreateKeyDownSuccess(normalizedKeyName, heldKeys));
+    }
+
+    /// <inheritdoc />
+    public Task<KeyboardControlResult> KeyUpAsync(
+        string keyName,
+        CancellationToken cancellationToken = default) =>
+        KeyUpCoreAsync(keyName, expectedForegroundWindow: null, cancellationToken);
+
+    internal Task<KeyboardControlResult> KeyUpAsync(
+        string keyName,
+        nint expectedForegroundWindow,
+        CancellationToken cancellationToken = default) =>
+        KeyUpCoreAsync(keyName, expectedForegroundWindow, cancellationToken);
+
+    private Task<KeyboardControlResult> KeyUpCoreAsync(
+        string keyName,
+        nint? expectedForegroundWindow,
+        CancellationToken cancellationToken)
+    {
+        // Validate key name
+        if (string.IsNullOrWhiteSpace(keyName))
+        {
+            return Task.FromResult(KeyboardControlResult.CreateFailure(
+                KeyboardControlErrorCode.InvalidKey,
+                "Key name cannot be null or empty."));
+        }
+
+        var normalizedKeyName = keyName.ToLowerInvariant();
+
+        // Check if key is being held
+        var heldKeyState = _heldKeyTracker.GetHeldKeyState(normalizedKeyName);
+        if (heldKeyState == null)
+        {
+            return Task.FromResult(KeyboardControlResult.CreateFailure(
+                KeyboardControlErrorCode.KeyNotHeld,
+                $"Key '{normalizedKeyName}' is not currently being held."));
+        }
+
+        // Determine if this is an extended key
+        var isExtended = VirtualKeyMapper.IsExtendedKey(heldKeyState.VirtualKeyCode);
+        var extendedFlag = isExtended ? NativeConstants.KEYEVENTF_EXTENDEDKEY : 0u;
+
+        // Send key up
+        var inputs = new INPUT[]
+        {
+            CreateKeyboardInput((ushort)heldKeyState.VirtualKeyCode, 0, extendedFlag | NativeConstants.KEYEVENTF_KEYUP)
+        };
+
+        if (!IsExpectedForegroundWindow(expectedForegroundWindow))
+        {
+            return Task.FromResult(KeyboardControlResult.CreateFailure(
+                KeyboardControlErrorCode.WrongTargetWindow,
+                "The foreground window changed before the key-up event was sent."));
+        }
+
+        var result = NativeMethods.SendInput(1, inputs, INPUT.Size);
+
+        if (result != 1)
+        {
+            var error = Marshal.GetLastWin32Error();
+            var (errorCode, errorMessage) = MapSendInputError(error);
+            return Task.FromResult(KeyboardControlResult.CreateFailure(
+                errorCode,
+                errorMessage));
+        }
+
+        // Remove from held keys
+        _heldKeyTracker.TrackKeyUp(normalizedKeyName, out _);
+        var heldKeys = _heldKeyTracker.GetHeldKeyNames();
+
+        return Task.FromResult(KeyboardControlResult.CreateKeyUpSuccess(normalizedKeyName, heldKeys));
+    }
+
+    /// <inheritdoc />
+    public Task<KeyboardControlResult> ReleaseAllKeysAsync(CancellationToken cancellationToken = default)
+    {
+        var heldKeys = _heldKeyTracker.GetAllHeldKeys();
+
+        if (heldKeys.Count == 0)
+        {
+            return Task.FromResult(KeyboardControlResult.CreateReleaseAllSuccess());
+        }
+
+        var inputs = new List<INPUT>();
+
+        foreach (var heldKey in heldKeys)
+        {
+            var isExtended = VirtualKeyMapper.IsExtendedKey(heldKey.VirtualKeyCode);
+            var extendedFlag = isExtended ? NativeConstants.KEYEVENTF_EXTENDEDKEY : 0u;
+
+            inputs.Add(CreateKeyboardInput((ushort)heldKey.VirtualKeyCode, 0, extendedFlag | NativeConstants.KEYEVENTF_KEYUP));
+        }
+
+        var inputArray = inputs.ToArray();
+        var result = NativeMethods.SendInput((uint)inputArray.Length, inputArray, INPUT.Size);
+
+        // Clear all held keys regardless of SendInput result
+        _heldKeyTracker.ReleaseAll();
+
+        if (result != inputArray.Length)
+        {
+            var error = Marshal.GetLastWin32Error();
+            var (errorCode, errorMessage) = MapSendInputError(error);
+            return Task.FromResult(KeyboardControlResult.CreateFailure(
+                errorCode,
+                $"{errorMessage}. Expected {inputArray.Length} events, sent {result}."));
+        }
+
+        return Task.FromResult(KeyboardControlResult.CreateReleaseAllSuccess());
+    }
+
+    /// <inheritdoc />
+    public Task<KeyboardControlResult> ExecuteSequenceAsync(
+        IReadOnlyList<KeySequenceItem> sequence,
+        int? interKeyDelayMs = null,
+        CancellationToken cancellationToken = default) =>
+        ExecuteSequenceCoreAsync(
+            sequence,
+            interKeyDelayMs,
+            expectedForegroundWindow: null,
+            cancellationToken);
+
+    internal Task<KeyboardControlResult> ExecuteSequenceAsync(
+        IReadOnlyList<KeySequenceItem> sequence,
+        int? interKeyDelayMs,
+        nint expectedForegroundWindow,
+        CancellationToken cancellationToken = default) =>
+        ExecuteSequenceCoreAsync(
+            sequence,
+            interKeyDelayMs,
+            expectedForegroundWindow,
+            cancellationToken);
+
+    private async Task<KeyboardControlResult> ExecuteSequenceCoreAsync(
+        IReadOnlyList<KeySequenceItem> sequence,
+        int? interKeyDelayMs,
+        nint? expectedForegroundWindow,
+        CancellationToken cancellationToken)
+    {
+        if (sequence == null || sequence.Count == 0)
+        {
+            return KeyboardControlResult.CreateSequenceSuccess(0);
+        }
+
+        var delay = interKeyDelayMs ?? _interKeyDelayMs;
+        var executedCount = 0;
+
+        foreach (var item in sequence)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Use item-specific delay if specified, otherwise use default
+            var itemDelay = item.DelayMs ?? delay;
+
+            // Press the key with modifiers
+            var result = expectedForegroundWindow.HasValue
+                ? await PressKeyAsync(
+                    item.Key,
+                    item.Modifiers,
+                    1,
+                    expectedForegroundWindow.Value,
+                    cancellationToken).ConfigureAwait(false)
+                : await PressKeyAsync(
+                    item.Key,
+                    item.Modifiers,
+                    1,
+                    cancellationToken).ConfigureAwait(false);
+
+            if (!result.Success)
+            {
+                return result;
+            }
+
+            executedCount++;
+
+            // Add delay between keys if there are more keys to process
+            if (executedCount < sequence.Count && itemDelay > 0)
+            {
+                await Task.Delay(itemDelay, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return KeyboardControlResult.CreateSequenceSuccess(executedCount);
+    }
+
+    /// <inheritdoc />
+    public Task<KeyboardControlResult> GetKeyboardLayoutAsync(CancellationToken cancellationToken = default)
+    {
+        // Get the foreground window's thread
+        var foregroundWindow = NativeMethods.GetForegroundWindow();
+        var threadId = NativeMethods.GetWindowThreadProcessId(foregroundWindow, out _);
+
+        // Get the keyboard layout for the thread
+        var layoutHandle = NativeMethods.GetKeyboardLayout(threadId);
+
+        if (layoutHandle == IntPtr.Zero)
+        {
+            return Task.FromResult(KeyboardControlResult.CreateFailure(
+                KeyboardControlErrorCode.LayoutDetectionFailed,
+                "Failed to get keyboard layout for the foreground window."));
+        }
+
+        // The low word of the layout handle is the language identifier (LANGID)
+        var langId = (ushort)((long)layoutHandle & 0xFFFF);
+
+        // Get the layout name (usually the language code like "00000409" for US English)
+        var layoutNameBuffer = new char[9]; // KL_NAMELENGTH is 9
+        if (!NativeMethods.GetKeyboardLayoutName(layoutNameBuffer))
+        {
+            return Task.FromResult(KeyboardControlResult.CreateFailure(
+                KeyboardControlErrorCode.LayoutDetectionFailed,
+                "Failed to get keyboard layout name."));
+        }
+
+        var layoutId = new string(layoutNameBuffer).TrimEnd('\0');
+
+        // Convert LANGID to BCP-47 language tag
+        var languageTag = GetLanguageTag(langId);
+
+        // Get display name
+        var displayName = GetLayoutDisplayName(langId);
+
+        var layoutInfo = new KeyboardLayoutInfo
+        {
+            LanguageTag = languageTag,
+            DisplayName = displayName,
+            LayoutId = layoutId
+        };
+
+        return Task.FromResult(KeyboardControlResult.CreateLayoutSuccess(layoutInfo));
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> GetHeldKeyNames()
+    {
+        return _heldKeyTracker.GetHeldKeyNames();
+    }
+
+    /// <inheritdoc />
+    public async Task<KeyboardControlResult> WaitForIdleAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var foregroundWindow = NativeMethods.GetForegroundWindow();
+        if (foregroundWindow == IntPtr.Zero)
+        {
+            return KeyboardControlResult.CreateFailure(
+                KeyboardControlErrorCode.InvalidKey,
+                "No foreground window available to wait for idle.");
+        }
+
+        _ = NativeMethods.GetWindowThreadProcessId(foregroundWindow, out var processId);
+        if (processId == 0)
+        {
+            return KeyboardControlResult.CreateFailure(
+                KeyboardControlErrorCode.InvalidKey,
+                "Could not get process ID for foreground window.");
+        }
+
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById((int)processId);
+
+            var result = await DeterministicWait.UntilAsync(
+                () => process.WaitForInputIdle(0),
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromMilliseconds(25),
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            if (result)
+            {
+                return KeyboardControlResult.CreateWaitForIdleSuccess(
+                    $"Foreground window process '{process.ProcessName}' is idle and ready for input.");
+            }
+
+            return KeyboardControlResult.CreateFailure(
+                KeyboardControlErrorCode.OperationTimeout,
+                $"Timeout waiting for process '{process.ProcessName}' to become idle.");
+        }
+        catch (ArgumentException)
+        {
+            return KeyboardControlResult.CreateFailure(
+                KeyboardControlErrorCode.InvalidKey,
+                $"Process with ID {processId} not found or has exited.");
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Process doesn't have a graphical interface or has exited
+            return KeyboardControlResult.CreateWaitForIdleSuccess(
+                $"Process idle check completed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Converts a Windows LANGID to a BCP-47 language tag.
+    /// </summary>
+    /// <param name="langId">The Windows language identifier.</param>
+    /// <returns>The BCP-47 language tag.</returns>
+    private static string GetLanguageTag(ushort langId)
+    {
+        try
+        {
+            var culture = System.Globalization.CultureInfo.GetCultureInfo(langId);
+            return culture.Name;
+        }
+        catch (System.Globalization.CultureNotFoundException)
+        {
+            // Return hex format if culture not found
+            return $"0x{langId:X4}";
+        }
+    }
+
+    /// <summary>
+    /// Gets the display name for a keyboard layout.
+    /// </summary>
+    /// <param name="langId">The Windows language identifier.</param>
+    /// <returns>The display name of the keyboard layout.</returns>
+    private static string GetLayoutDisplayName(ushort langId)
+    {
+        try
+        {
+            var culture = System.Globalization.CultureInfo.GetCultureInfo(langId);
+            return culture.DisplayName;
+        }
+        catch (System.Globalization.CultureNotFoundException)
+        {
+            return $"Unknown Layout (0x{langId:X4})";
+        }
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        if (!_disposed)
+        {
+            _heldKeyTracker.Dispose();
+            if (_textObserver.IsValueCreated)
+            {
+                _textObserver.Value.Dispose();
+            }
+            _disposed = true;
+        }
+    }
+}

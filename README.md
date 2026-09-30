@@ -13,9 +13,24 @@ Bring your own provider, open a project, and work with an agent that can inspect
 
 UnrealCode is a general-purpose coding application. It does not require Unreal Engine. Its execution engine is the [Unreal Agent Go harness](https://github.com/unreallabsai/unreal-agent) from Unreal Labs; the desktop application adds the interface, project controls, provider setup, integrations, and recovery workflows.
 
-> **Windows distribution:** Releases use an unsigned installer, a SHA-256 manifest, and a Git tag. The corrected private 1.0.1 replacement was built locally because GitHub Actions would not start runners; unlike the original release, it has no GitHub Artifact Attestation. [Verify the release](desktop/VERIFY_RELEASE.md) before installing. Windows will still report an unknown publisher. Repository access is required. Release checks can use the existing host `gh` login for that private listing. Downloads and installation remain manual. See the [changelog](CHANGELOG.md) and [Releases page](https://github.com/MCShotty/UnrealCode/releases).
+> **Windows distribution:** Releases use an unsigned installer, a SHA-256 manifest, and a Git tag. The hosted release workflow produces GitHub build attestations; the historical, locally built 1.0.1 replacement has none. [Verify the release](desktop/VERIFY_RELEASE.md) before installing. Windows will still report an unknown publisher. The repository and release listing are public. Downloads and installation remain manual. See the [changelog](CHANGELOG.md) and [Releases page](https://github.com/MCShotty/UnrealCode/releases).
 
-## New in 1.0.1
+## New in 1.0.3
+
+- **Fieldnotes:** an app-wide guidance library with project/session pointers,
+  revision receipts, explicit selections, offline originals, and optional memory
+  interpretation. [How it works](#fieldnotes-and-computer).
+- **Managed Computer:** experimental, default-off access to selected Windows
+  windows, with task/model-bound reviews, takeover, explicit handback, and an
+  emergency stop. Native acceptance limits are disclosed below.
+- **Abilities and appearance:** Skills and MCPs share one section. Choose Cinder
+  Dark, Ice Dark, Flashbang, or Follow Windows, with consistent expressive motion.
+- **Reliability:** guidance replay/cache recovery, stale UI responses, memory and
+  timeline ownership, browser revocation, native startup/stop, and shutdown fixes.
+
+See the [1.0.3 changelog](CHANGELOG.md#103--2026-09-30) for details.
+
+### Included from earlier releases
 
 - **App-wide memory:** enable it once, select its separate model, and recall relevant knowledge across chats and trusted projects with source attribution. Existing project memories migrate only after expanded-scope consent.
 - **Useful activity timelines:** recorded events remain available offline; optional memory-model summaries cite evidence and describe inferred stages without changing approved plans.
@@ -70,7 +85,7 @@ The shared model selector reads the installed Codex CLI's paginated catalog for 
 
 Download the installer and `SHA256SUMS` from the same [GitHub release](https://github.com/MCShotty/UnrealCode/releases), follow the [verification guide](desktop/VERIFY_RELEASE.md), settle active tasks, and close UnrealCode before installing. Settings and session data are preserved; normal migration/recovery checks still apply.
 
-**Upgrading from 1.0.0 requires a manual installation.** Its disabled updater cannot acquire the notification feature. The corrected 1.0.1 replacement has the **same version number** as the previous private installer, so an existing 1.0.1 installation also requires a manual reinstall: a version comparison cannot announce it as newer. **Settings → Recovery → Application updates** offers Stable/Preview channels, manual checks, and an automatic-check switch. Automatic checks are enabled by default and run when due after startup and at most once daily. For the private repository, the checker may use the existing host GitHub CLI login; it sends no project content. No installer is downloaded or run automatically.
+**All unsigned upgrades require manual installation**, including 1.0.3. Version 1.0.0 cannot acquire release notifications through its disabled updater. **Settings → Recovery → Application updates** offers Stable/Preview channels, manual checks, and an automatic-check switch. Automatic checks are enabled by default and run when due after startup and at most once daily. Public release checks send no project content. No installer is downloaded or run automatically. The historical same-version 1.0.1 replacement required a manual reinstall; later versions can be announced as newer.
 
 Memory remains optional. Before existing project memories become app-wide, review the broader recall scope and the configured model destination. Disabled memory stays disabled; enabling it does not ingest every historical conversation. Repository-specific knowledge keeps its original source labels and cannot grant access to another project's files.
 
@@ -132,14 +147,56 @@ Hard-linked files and ReFS locations are currently unsupported; use NTFS.
 
 MCP supports remote Streamable HTTP, Windows-hosted stdio, and container stdio through the official SDK. Host servers have the Windows account's access and require separate host trust. Project grants and per-call approvals apply; server-initiated model sampling is disabled. Context exclusions control retrieval, not filesystem permissions.
 
-### Optional Windows computer use
+**Abilities** contains separate **Skills** and **MCPs** sections. Use Skills to inspect built-in guidance or create a project skill; use MCPs to add a server and review its project grants. `/skills` and `/mcp` open the corresponding section directly. Appearance offers **Cinder Dark** (graphite and coral), **Ice Dark** (the original blue and steel palette), **Flashbang** (light), and **Follow Windows**.
+
+### Fieldnotes and Computer
+
+Version 1.0.3 adds these sections. Computer is experimental and disabled by default;
+its native desktop and live-memory acceptance limits remain documented.
+
+**Fieldnotes** is your app-wide notebook for user-authored guidance. Open it from
+the welcome screen, navigation, or `/fieldnotes`. Each note keeps a project or
+project/session pointer for attribution. Relevant guidance can help another
+project without granting access to the source project's files. Saving makes the
+original immediately usable, including with memory off. Unsaved drafts stay local.
+The separately consented memory model interprets saved notes in the background.
+
+The composer shows suggested notes and lets you pin or exclude them. Each accepted
+request keeps an inclusion receipt with exact revisions and source labels. Current
+requests take precedence; among applicable conflicting notes, session guidance
+precedes project guidance, then other sources. The agent must identify meaningful
+conflicts and distinguish desired changes from claims about existing code. Context
+is limited to eight complete notes and 16 KiB; explicit selections over the budget
+must be adjusted. Disabling or deleting guidance prevents future use, including
+through dependent summaries, without rewriting historical chats or backups.
+
+**Computer** bundles an adapted Windows helper and a built-in computer-use skill.
+Enable it, choose windows, and review observation or routine interaction access for
+one conversation and its model destination. `/computer` opens management; the chat
+toolbar opens its companion pane. Physical input pauses the agent. **Hand back**
+is explicit; **Stop** and **Ctrl+Alt+Shift+.** revoke control. Unknown or consequential
+actions still need exact-operation approval. Plan mode observes only. Workers,
+elevated windows, personal browsers, and UnrealCode's own permission controls do
+not receive native input access. Website tasks continue to use the shared Browser.
+
+Captures expire in memory and reach vision-capable providers only when needed for
+an authorized request. Canonical conversation logs retain references rather than
+raw screenshot bytes. **Attach evidence to chat** deliberately converts a capture
+to a normal attachment. Grants are never restored after restart. See the
+[implementation and verification record](docs/FIELDNOTES_COMPUTER_IMPLEMENTATION.md)
+for current evidence and remaining native acceptance gates.
+
+### Legacy Windows computer-use add-on
 
 The [Windows computer-use MCP add-on](integrations/windows-computer-use/README.md)
 can be installed separately and connected to an existing UnrealCode 1.0.2 app.
 It adds window inspection and interaction through a pinned, allowlisted
 Windows-hosted server, with project grants and per-call approvals. Installation
 and connection are manual; it does not change the 1.0.2 installer or provide a
-built-in computer-use panel.
+built-in computer-use panel. The 1.0.3 Computer page offers a reviewed
+migration that preserves the add-on configuration and withdraws its overlapping
+grants across projects. Known Windows add-on calls cannot compete while managed
+Computer is enabled. Other MCP approval behavior is unchanged.
 
 See [desktop documentation](desktop/README.md), [harness architecture](docs/UNREAL_AGENT_ARCHITECTURE.md), and [security boundaries](SECURITY.md) for details.
 

@@ -9,6 +9,7 @@ const root=mkdtempSync(join(tmpdir(),'unrealcode-connections-')),project=join(ro
 const remote=createServer(async(req,res)=>{if(req.method==='GET'){res.writeHead(405).end();return}if(req.headers.authorization!=='Bearer fixture-secret-not-real'){res.writeHead(401).end();return}let text='';for await(const bytes of req)text+=bytes;const request=JSON.parse(text);if(!('id'in request)){res.writeHead(202).end();return}let result={};if(request.method==='initialize')result={protocolVersion:'2025-11-25',capabilities:{tools:{}},serverInfo:{name:'fixture',version:'1'}};if(request.method==='tools/list')result={tools:[{name:'echo',description:'Echo focused fixture text',inputSchema:{type:'object',properties:{text:{type:'string'}},required:['text']}}]};if(request.method==='tools/call')result={content:[{type:'text',text:JSON.stringify({text:request.params.arguments.text,scoped:'fixture-secret-not-real'})}]};res.writeHead(200,{'content-type':'application/json'});res.write(JSON.stringify({jsonrpc:'2.0',id:request.id,result}));res.end()});await new Promise(resolve=>remote.listen(0,'127.0.0.1',resolve));
 let requested=0,lastSession='';const modelRequests=[]
 const model=createServer(async(req,res)=>{
+ if(req.method==='GET'||req.method==='HEAD'){res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({data:[{id:'fixture'}]}));return}
  let text='';for await(const bytes of req)text+=bytes;const body=JSON.parse(text);modelRequests.push(body)
  const calls=body.messages.flatMap(item=>item.tool_calls||[]),tools=body.tools||[]
  let message={role:'assistant',content:'MCP fixture complete.'}
@@ -37,7 +38,7 @@ try{
    if(!tool)throw Error(`${config.kind} echo definition was not advertised`)
    await step('select echo',()=>window.unreal.connectionGrant({connectionId:config.id,hostTrusted:config.kind==='host',tools:['echo'],toolRevisions:{echo:tool.revision},resources:false,prompts:false}))
   },config)
-  await page.getByRole('button',{name:'Connections',exact:true}).click();await page.getByRole('heading',{name:'Connections',exact:true}).waitFor()
+  await page.getByRole('button',{name:'Abilities',exact:true}).click();await page.getByRole('tab',{name:/MCPs/}).click();await page.getByRole('heading',{name:'MCP servers',exact:true}).waitFor()
   assert((await page.locator('.connection-card').allTextContents()).some(text=>text.includes('connected')))
   const card=page.locator('.connection-card').filter({hasText:`${kind} fixture`})
   await card.getByText('Tools, resources and prompts',{exact:true}).click()
@@ -69,7 +70,7 @@ try{
  await app.evaluate(({BrowserWindow},target)=>BrowserWindow.getAllWindows()[0].webContents.send('app:navigate',target),{project,sessionId:lastSession})
  await page.locator('.session-row.selected').waitFor()
  await page.getByRole('button',{name:'Context',exact:true}).click();await page.getByRole('heading',{name:'Context inspector'}).waitFor();await page.getByText('Latest provider-reported input: 22',{exact:false}).waitFor();await page.screenshot({path:join(root,'context-dark.png')})
- await page.evaluate(()=>window.unreal.updateSettings({theme:'light'}));await page.emulateMedia({reducedMotion:'reduce'});await page.reload();await page.getByRole('button',{name:'Connections',exact:true}).click();await page.getByRole('heading',{name:'Connections',exact:true}).waitFor();await page.screenshot({path:join(root,'connections-light.png'),animations:'disabled'})
+ await page.evaluate(()=>window.unreal.updateSettings({theme:'light'}));await page.emulateMedia({reducedMotion:'reduce'});await page.reload();await page.getByRole('button',{name:'Abilities',exact:true}).click();await page.getByRole('tab',{name:/MCPs/}).click();await page.getByRole('heading',{name:'MCP servers',exact:true}).waitFor();await page.screenshot({path:join(root,'connections-light.png'),animations:'disabled'})
  assert.deepEqual(report.errors,[]);report.requests=requested;console.log(JSON.stringify(report))
 }catch(error){report.failure=String(error);const page=await app.firstWindow();report.visibleErrors=await page.locator('.error-inline,.banner-error').allTextContents();if(lastSession)writeFileSync(join(root,'events.json'),JSON.stringify(await page.evaluate(id=>window.unreal.getEvents(id,0),lastSession),null,2));writeFileSync(join(root,'requests.json'),JSON.stringify(modelRequests,null,2));await page.screenshot({path:join(root,'failure.png')});writeFileSync(join(root,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));throw error}
 finally{await app.close().catch(()=>{});model.closeAllConnections();model.close();remote.closeAllConnections();remote.close()}

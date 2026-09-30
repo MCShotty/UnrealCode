@@ -73,10 +73,17 @@ describe('trusted project file access', () => {
     for (let i = 0; i < 128; i++) await fs.writeFile(join(skills, `extra-${i}`), '')
     await expect(listSkills(root)).rejects.toThrow('more than 128')
   })
-  it('uses independent temporary files during concurrent skill saves', async () => {
+  it('creates a skill once and requires a current revision for subsequent writes', async () => {
     const root = await workspace(), frontmatter = '---\nname: sample\ndescription: Test\n---\n'
     const results = await Promise.allSettled(Array.from({ length: 12 }, (_, i) => saveSkill(root, 'sample', `${frontmatter}\n# Version ${i}\n`)))
-    expect(results.filter(result => result.status === 'rejected').map(result => String(result.reason))).toEqual([])
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter(result => result.status === 'rejected')).toHaveLength(11)
+    const original=(await listSkills(root))[0]
+    await expect(saveSkill(root,'sample',frontmatter+'Replacement')).rejects.toThrow('unused folder')
+    const updated=await saveSkill(root,'sample',frontmatter+'Updated',original.revision)
+    await expect(saveSkill(root,'sample',frontmatter+'Stale',original.revision)).rejects.toThrow('latest revision')
+    expect((await listSkills(root))[0]).toMatchObject({content:frontmatter+'Updated',revision:updated.revision})
+    await expect(saveSkill(root,'different',frontmatter)).rejects.toThrow('match')
     expect((await fs.readdir(join(root, '.harness', 'skills', 'sample')))).toEqual(['SKILL.md'])
   })
   it('reports an aggregate skill set that exceeds the index budget', async () => {

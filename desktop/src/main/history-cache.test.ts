@@ -95,3 +95,18 @@ it('only supersedes explicitly grouped queries, including delayed requests befor
   const newer=await cache.page('p','session-a',{},'window-history')
   expect(newer.events).toHaveLength(1);release();await checked
 })
+
+it('keeps native-context provenance beyond a short history page and through inherited history',async()=>{
+ const cache=await fixture()
+ const native:AgentEvent={v:1,event:'session.item',sessionId:'native',seq:1,payload:{Kind:'model_response',Data:{TurnID:'turn',Response:{Output:[{Type:'tool_call',Data:{CallID:'call',Name:'Computer',Arguments:'{}'}}]}}}}
+ for(const sessionId of ['native','fork']){
+  await cache.ingest('p',{...native,sessionId})
+  await Promise.all(Array.from({length:400},(_,i)=>cache.ingest('p',event(i+2,'Later activity',sessionId))))
+  expect((await cache.page('p',sessionId,{limit:250})).events.some(row=>JSON.stringify(row.payload).includes('Computer'))).toBe(false)
+  expect(await cache.nativeContext('p',sessionId,401)).toBe(true)
+ }
+ await cache.ingest('p',{...event(1,'Pinned screenshot','pinned'),payload:{Kind:'input',Data:{Kind:'external',Payload:{prompt:'Attached evidence',nativeContext:true}}}})
+ expect(await cache.nativeContext('p','pinned',1)).toBe(true)
+ await cache.ingest('p',event(1,'Ordinary result','ordinary'));expect(await cache.nativeContext('p','ordinary',1)).toBe(false)
+ await cache.ingest('p',event(3,'History gap','ordinary'));expect(await cache.nativeContext('p','ordinary',3)).toBeUndefined()
+})

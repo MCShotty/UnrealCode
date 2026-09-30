@@ -8,6 +8,7 @@ export type CatalogTool = { name: string; remoteName: string; connectionId: stri
 export type ConnectionView = ConnectionConfig & { status: 'disconnected' | 'connecting' | 'connected' | 'error'; message: string; hasCredential: boolean; credentialState:'saved'|'none'|'unavailable'; tools: CatalogTool[]; grant?: ConnectionGrant }
 export type ConnectionResource = { uri: string; name: string; description?: string }
 export type ConnectionPrompt = { name: string; description?: string; arguments?: Array<{ name: string; description?: string; required?: boolean }> }
+export type ConnectionPage<T> = { items: T[]; nextCursor?: string; revision: number }
 export type HostOperation = { requestId: string; sessionId: string; operationId: string; workspaceId: string; tool: string; arguments: Record<string, unknown> }
 export type HostApproval = HostOperation & { id: string; project: string; digest: string; expiresAt: string; target: string }
 export type HostResult = { text: string; error?: boolean }

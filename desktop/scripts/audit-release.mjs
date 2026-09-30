@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto'
 // Release gate: report locations and rule names only, never credential values.
 import { execFileSync } from 'node:child_process'
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
@@ -14,9 +15,10 @@ const resources = process.env.UNREALCODE_QA_EXECUTABLE ? join(dirname(resolve(pr
 if (!existsSync(join(resources, 'app.asar'))) throw new Error('Build the Windows package before auditing')
 const entries=createRequire(import.meta.url)('@electron/asar').listPackage(join(resources,'app.asar')).map(path=>path.replaceAll('\\','/'))
 for(const name of ['@axe-core','axe-core','playwright','electron-builder','vitest'])if(entries.some(path=>path.includes(`/node_modules/${name}/`)))throw new Error(`Development-only dependency was packaged: ${name}`)
-for (const path of ['backend/LICENSE', 'licenses/NPM_NOTICES.txt', 'licenses/openai-openapi-LICENSE.txt', 'licenses/microsoft-terminal-LICENSE.txt', 'licenses/jev-browser-LICENSE.txt', 'licenses/tessdata-fast-LICENSE.txt', 'licenses/skia-LICENSE.txt', '../LICENSE.electron.txt', '../LICENSES.chromium.html']) {
+for (const path of ['computer-host/UnrealCode.ComputerHost.exe', 'computer-host/manifest.json', 'licenses/windows-mcp-LICENSE.txt', 'licenses/computer-DOTNET_NOTICES.txt', 'licenses/computer-mcp-sdk-LICENSE.txt', 'backend/LICENSE', 'licenses/NPM_NOTICES.txt', 'licenses/openai-openapi-LICENSE.txt', 'licenses/microsoft-terminal-LICENSE.txt', 'licenses/jev-browser-LICENSE.txt', 'licenses/tessdata-fast-LICENSE.txt', 'licenses/skia-LICENSE.txt', '../LICENSE.electron.txt', '../LICENSES.chromium.html']) {
   if (!existsSync(join(resources, path))) throw new Error(`Missing packaged license notice: ${path}`)
 }
+const helper=JSON.parse(readFileSync(join(resources,'computer-host/manifest.json'),'utf8'));if(helper.protocol!==1||helper.sha256!==createHash('sha256').update(readFileSync(join(resources,'computer-host/UnrealCode.ComputerHost.exe'))).digest('hex'))throw Error('Packaged computer helper digest mismatch')
 const lock = JSON.parse(readFileSync(join(root, 'desktop/package-lock.json'), 'utf8'))
 const notices = readFileSync(join(resources, 'licenses/NPM_NOTICES.txt'), 'utf8')
 let reviewedPackages = 0

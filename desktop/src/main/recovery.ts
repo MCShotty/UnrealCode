@@ -256,7 +256,7 @@ export class Recovery {
    await fs.writeFile(file,JSON.stringify(report))
   }
   await fs.writeFile(join(stage,'state-volumes.json'),JSON.stringify(records))
-  await fs.writeFile(join(stage,'data-version.json'),JSON.stringify({schema:1,version:this.version,backup:join(area,'before-restore')}))
+  await fs.writeFile(join(stage,'data-version.json'),JSON.stringify({schema:2,version:this.version,backup:join(area,'before-restore')}))
   const journal={id,area,roots:metadataRoots.map(root=>({root,hadOld:false}))}
   for(const item of journal.roots)item.hadOld=await exists(join(this.data,item.root))
   await atomicMetadata(join(this.data,'recovery-transaction.json'),JSON.stringify(journal))
@@ -270,7 +270,7 @@ export class Recovery {
   const area=journal.area||join(this.data,'recovery',journal.id);if(!within(join(this.data,'recovery'),area))throw new Error('Invalid recovery location');for(const path of [area,join(area,'prior'),join(area,'failed'),...journal.roots.flatMap(({root})=>[join(area,'prior',root),join(area,'failed',root),join(this.data,root)])])await this.noStorageLinks(path)
   for(const {root,hadOld} of journal.roots){const old=join(area,'prior',root),current=join(this.data,root);if(await exists(old)){if(await exists(current)){await fs.mkdir(join(area,'failed'),{recursive:true});await fs.rename(current,join(area,'failed',root))}await fs.rename(old,current)}else if(!hadOld&&await exists(current)){await fs.mkdir(join(area,'failed'),{recursive:true});await fs.rename(current,join(area,'failed',root))}}await fs.unlink(file)
  }
- async migrate():Promise<string|undefined>{await recoverStorageMigration(this.data);await this.rollback();const path=join(this.data,'data-version.json');if(await exists(path)){const state=await readBoundedJSON<{schema:number}>(path,1024*1024);if(state.schema===1)return this.migrateLocations();if(state.schema>1)throw new Error('This app is older than the saved data. Install the newer version or restore a backup.')}
+ async migrate():Promise<string|undefined>{await recoverStorageMigration(this.data);await this.rollback();const path=join(this.data,'data-version.json');if(await exists(path)){const state=await readBoundedJSON<{schema:number}>(path,1024*1024);if(state.schema===1||state.schema===2)return this.migrateLocations();if(state.schema>2)throw new Error('This app is older than the saved data. Install the newer version or restore a backup.')}
   let backup:string|undefined;if((await Promise.all(metadataRoots.map(root=>exists(join(this.data,root))))).some(Boolean)){backup=timestampPath(join(this.data,'recovery'));await this.export(backup,undefined,true)}
   await atomicMetadata(path,JSON.stringify({schema:1,version:this.version,backup}));return await this.migrateLocations()||backup
  }

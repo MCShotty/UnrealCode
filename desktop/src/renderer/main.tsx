@@ -13,6 +13,7 @@ import './work-activity.css'
 import './expressive-controls.css'
 import './release-101.css'
 import './shared-browser.css'
+import './abilities.css'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode><MotionPreferences><App /><FailureCenter/><ReleaseNotice/></MotionPreferences></StrictMode>

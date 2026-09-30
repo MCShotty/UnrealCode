@@ -1,5 +1,64 @@
 # Working on UnrealCode
 
+## Authorized 1.0.3 release: Fieldnotes and managed Computer
+
+The user approved `PLAN (5).md`: seven reliability fixes, an app-wide user-authored
+Fieldnotes library, and bundled selected-window Windows computer use. Work is on
+`codex/fieldnotes-computer` in `I:\UnrealCode`; `I:\UnrealGUI` remains a backup.
+The owner explicitly authorized committing, pushing, merging and publishing this
+work as **1.0.3** on 2026-09-30. Merge a reviewed PR after Windows, backend and Go
+checks pass. Run the build-only release workflow on the exact merged main commit,
+then create annotated tag `v1.0.3`. Publish only the hosted, audited, attested
+installer and checksum manifest; verify downloaded assets and provenance. This
+authorization does not permit replacing existing tags/assets or publishing a
+later version. The historical 1.0.1 CI bypass does not apply. Preserve
+`docs/orbit-garden-demo.html`.
+
+Fieldnote originals and pointers are Electron-owned durable metadata. The existing
+SQLite writer and two readers provide search and receipt projections. Pointers
+provide attribution, not access boundaries. Current requests take precedence;
+session/project/other-source guidance is advisory. Eight complete notes and 16 KiB
+are the default budget. No model tool may edit originals. UI drafts never enter
+inference. Background interpretation and Hindsight/timeline inference share a
+two-slot dispatch pool, with no slot held around a Hindsight HTTP request that
+can call the broker. Revisions, withdrawal, compaction dependencies, and receipts
+must survive queued work, retries, workers, forks, restore and offline browsing.
+Guidance snapshots carry a monotonic generation; delayed configurations cannot
+revive withdrawn revisions or remove newly added notes. Receipt originals remain
+usable when SQLite is unavailable or only partially updated. Redact model-facing
+titles and pointer labels as well as bodies; preserve authored originals.
+
+`desktop/computer-host` hosts a constrained protocol over pinned Windows MCP
+service code in `third_party/windows-mcp`; it does not start the upstream MCP
+server. Only Electron can grant selected windows. Bind owner/project/workspace,
+provider/model destination, helper generation, HWND, PID and process start time.
+Revalidate focus, DPI, geometry and fresh elements immediately before dispatch.
+Physical input pauses control; handback is explicit. Stop, lock/desktop changes,
+helper death and restart revoke access. One native input owner; workers cannot
+compete. Unknown or consequential actions require exact host approval. Screen
+content and Jev decisions cannot authorize input. Web tasks use the shared browser.
+Bind the access review to the exact displayed model destination. Stop/disable must
+invalidate pending startup and queued grant/handback work. Agent status and wait
+results cannot disclose other tasks. Shared browser mutations recheck grant and
+control epochs after asynchronous preparation, including takeover/handback cycles.
+
+Never store unpinned screenshot bytes in canonical events. Go resolves opaque
+Computer image refs into a cloned outgoing provider request through transient
+events; expired or revoked refs become text. Automatic memory/support output
+must not ingest native screen content, captures, keystrokes or clipboard data.
+The legacy add-on's grants are withdrawn only through explicit migration; other
+MCP policy stays unchanged. Native acceptance uses disposable windows on active
+desktop 2. Do not claim that offscreen UI or authority tests prove native input.
+
+Run TypeScript, focused and full desktop regressions, Go race/vet in Docker,
+`computer:build`/helper self-tests, `qa-reliability.mjs`, `qa-fieldnotes.mjs`, and
+`qa-computer.mjs`, plus `qa-bughunt.mjs` for delayed Fieldnote navigation. Compile
+with .NET SDK 10.0.401 and locked dependency files.
+Packaging must include the helper hash manifest and regenerated .NET/MCP notices.
+The opt-in 10,000-note/100,000-event fixture is
+`fieldnotes.benchmark.test.ts`; preserve measured results and scope. See
+`docs/FIELDNOTES_COMPUTER_IMPLEMENTATION.md` for evidence and remaining gates.
+
 ## Authorized 1.0.2 work
 
 The owner requested a bug hunt, persistent warning controls, and mainlining this work as **1.0.2**. Include the preceding Git/browser fixes. Run the desktop and packaged regressions, reconcile remote main, create a reviewed PR, and merge after checks pass. Preserve all existing tags and release assets. The prior one-time 1.0.1 CI bypass does not apply to 1.0.2; report any external CI or release blocker explicitly. The repository was verified public on 2026-09-29.
@@ -50,7 +109,7 @@ Hashes and attestations establish integrity and build provenance; they do not
 provide Windows Authenticode publisher trust. The published installer reports
 `NotSigned` (the local 1.0 preflight app EXE did too), so in-app auto-updates
 remain disabled. Never describe this release as signed or suggest that Windows
-warnings are removed. The repository is currently private. Do not move
+warnings are removed. The repository was verified public on 2026-09-30. Do not move
 `v1.0.0` or replace its assets. The one-time v1.0.1 replacement authorization
 does not apply to any later version.
 The owner's authorization for this release does not automatically authorize a
@@ -112,7 +171,8 @@ tagged installer.
 | `internal/openaiapi/` | Generated client. Follow `third_party/openai-openapi/README.md` to regenerate; do not hand-edit generated bindings. |
 | `desktop/worker/` | Optional local decision/entity worker and tests. |
 | `desktop/builtin-skills/` | App-wide read-only PDF, OCR, Markdown, and browser guidance copied into the packaged app and backend image. |
-| `integrations/windows-computer-use/` | Optional, separately installed Windows MCP sidecar setup. It is not bundled with the app or enabled by an installer update. |
+| `integrations/windows-computer-use/` | Legacy optional Windows MCP sidecar for the published 1.0.2. The local candidate adds managed Computer separately. |
+| `desktop/computer-host/` | Self-contained selected-window helper with native dispatch guards; pinned service code is in `third_party/windows-mcp/`. |
 | `desktop/scripts/` | Packaging, notices, audits, fixture QA, and benchmarks. |
 | `.github/workflows/desktop-release.yml` | Authoritative Windows release build, attestation, and publication from a matching tag. The inherited `release.yml` is upstream-only and skips this repository. |
 | `desktop/assets/brand/` | Solid UC vector mark, theme variants, and PNG exports. |
@@ -120,7 +180,7 @@ tagged installer.
 The Go module intentionally retains `github.com/unreallabsai/unreal-agent`.
 Keep the original MIT license and Unreal Labs attribution.
 
-The optional computer-use add-on uses the existing Windows stdio MCP transport.
+The legacy optional computer-use add-on uses the existing Windows stdio MCP transport.
 Its script downloads a SHA-256-pinned upstream executable but never runs it,
 edits app settings, or grants project tools. The user configures Connections and
 reviews the Windows host trust prompt. Every MCP call still needs an approval.

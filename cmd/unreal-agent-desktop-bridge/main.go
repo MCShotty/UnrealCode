@@ -40,11 +40,13 @@ type openParams struct {
 	Credential credential `json:"credential"`
 }
 type sendParams struct {
-	Images     []string   `json:"images,omitempty"`
-	SessionID  string     `json:"sessionId"`
-	MessageID  string     `json:"messageId"`
-	Prompt     string     `json:"prompt"`
-	Credential credential `json:"credential"`
+	NativeContext bool              `json:"nativeContext,omitempty"`
+	Fieldnotes    *fieldnoteReceipt `json:"fieldnotes,omitempty"`
+	Images        []string          `json:"images,omitempty"`
+	SessionID     string            `json:"sessionId"`
+	MessageID     string            `json:"messageId"`
+	Prompt        string            `json:"prompt"`
+	Credential    credential        `json:"credential"`
 }
 type historyParams struct {
 	SessionID string `json:"sessionId"`
@@ -103,7 +105,7 @@ func (a *app) dispatch(req request) (any, error) {
 			return nil, err
 		}
 		return nil, a.mcp.configure(p.Tools)
-	case "host.respond", "host.dispatched":
+	case "host.respond", "host.dispatched", "computer.image.response":
 		p, err := decodeParams[hostReply](req.Params)
 		if err != nil {
 			return nil, err
@@ -379,7 +381,7 @@ func (a *app) dispatch(req request) (any, error) {
 	case "decision.idle":
 		return a.decisionPending.Load() == 0, nil
 	case "health":
-		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion, "capabilities": []string{"permissions.v1", "files.v1", "sessions.v1", "mcp.v1", "context.v1", "teams.v1", "verification.v1", "history.latest.v1", "lifecycle.v1", "controls.v1", "inference.v1", "hooks.v1", "goal.usage.v1", "questions.v2", "provider.issue.v1", "plan.progress.v1", "decision.browser.v1", "response.preview.v1", "documents.v1", "browser.shared.v1"}}, nil
+		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion, "capabilities": []string{"permissions.v1", "files.v1", "sessions.v1", "mcp.v1", "context.v1", "teams.v1", "verification.v1", "history.latest.v1", "lifecycle.v1", "controls.v1", "inference.v1", "hooks.v1", "goal.usage.v1", "questions.v2", "provider.issue.v1", "plan.progress.v1", "decision.browser.v1", "response.preview.v1", "documents.v1", "browser.shared.v1", "fieldnotes.v1", "computer.v1"}}, nil
 	case "decision.configure":
 		config, err := decodeParams[decisionConfig](req.Params)
 		if err != nil {
@@ -588,6 +590,18 @@ func (a *app) dispatch(req request) (any, error) {
 		return a.questionRequest(req)
 	case "session.retry":
 		return a.retryResponse(req)
+	case "fieldnotes.configure":
+		p, err := decodeParams[struct {
+			Notes      []fieldnoteRef `json:"notes"`
+			Generation uint64         `json:"generation"`
+		}](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		if err = a.guidance.configure(p.Notes, p.Generation); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"configured": true}, nil
 	case "session.send":
 		p, err := decodeParams[sendParams](req.Params)
 		if err != nil {
@@ -614,8 +628,14 @@ func (a *app) dispatch(req request) (any, error) {
 		if total > 8*1024*1024 {
 			return nil, errors.New("Image attachments exceed 8 MiB")
 		}
-		if len(p.Images) > 0 {
-			input.Payload, _ = json.Marshal(map[string]any{"prompt": p.Prompt, "images": p.Images})
+		if err := validateFieldnoteReceipt(p.Fieldnotes, string(id), string(input.ID)); err != nil {
+			return nil, err
+		}
+		if p.Fieldnotes != nil {
+			p.Fieldnotes.State = "accepted"
+		}
+		if len(p.Images) > 0 || p.Fieldnotes != nil || p.NativeContext {
+			input.Payload, _ = json.Marshal(map[string]any{"prompt": p.Prompt, "images": p.Images, "fieldnotes": p.Fieldnotes, "nativeContext": p.NativeContext})
 		}
 		if err := a.submit(id, input, p.Credential); err != nil {
 			return nil, err

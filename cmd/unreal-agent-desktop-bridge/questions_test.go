@@ -303,8 +303,9 @@ func TestBackgroundAnswerWaitsForModelBoundary(t *testing.T) {
 }
 
 type failingQuestionClient struct {
-	calls      atomic.Int32
-	answerSeen atomic.Bool
+	calls       atomic.Int32
+	answerSeen  atomic.Bool
+	failureSent atomic.Bool
 }
 
 func (c *failingQuestionClient) Close() error { return nil }
@@ -313,14 +314,43 @@ func (c *failingQuestionClient) Respond(_ context.Context, request llm.Request, 
 	if n == 1 {
 		return llm.Response{ID: uuid.New().String(), Output: []llm.Item{{Type: llm.ItemToolCall, Data: llm.ToolCall{CallID: "q", Name: "RequestInput", Arguments: `{"questions":[{"id":"choice","title":"Target?","choices":[{"id":"a","label":"Alpha"}]}]}`}}}}, nil
 	}
-	encoded, _ := json.Marshal(request.Input)
-	if strings.Contains(string(encoded), "Alpha") {
-		c.answerSeen.Store(true)
+	answered, resolved := false, false
+	for _, item := range request.Input {
+		if message, ok := item.Data.(llm.Message); item.Type == llm.ItemMessage && ok && message.Role == llm.RoleUser && strings.Contains(message.Text, "Alpha") {
+			answered = true
+		}
+		if result, ok := item.Data.(llm.ToolResult); item.Type == llm.ItemToolResult && ok && result.CallID == "q" {
+			resolved = true
+		}
 	}
-	if n == 2 {
+	if !answered || !resolved {
+		// Model requests may observe one of these independent deliveries first.
+		// The original menu already contains "Alpha"; it is not an accepted answer.
+		return llm.Response{ID: uuid.New().String(), Output: []llm.Item{{Type: llm.ItemMessage, Data: llm.Message{Role: llm.RoleAssistant, Text: "Waiting for accepted answer context"}}}}, nil
+	}
+	c.answerSeen.Store(true)
+	if c.failureSent.CompareAndSwap(false, true) {
 		return llm.Response{ID: uuid.New().String(), Failure: &llm.Failure{Code: "server_error", Message: "JSON error injected into SSE stream"}}, nil
 	}
 	return llm.Response{ID: uuid.New().String(), Stop: llm.StopComplete, Output: []llm.Item{{Type: llm.ItemMessage, Data: llm.Message{Role: llm.RoleAssistant, Text: "Recovered using accepted answer"}}}}, nil
+}
+func TestProviderFailureFixtureRequiresAcceptedAnswerAndResolvedQuestion(t *testing.T) {
+	client := &failingQuestionClient{}
+	initial, _ := client.Respond(context.Background(), llm.Request{}, llm.RequestOptions{})
+	menu, _ := client.Respond(context.Background(), llm.Request{Input: initial.Output}, llm.RequestOptions{})
+	if menu.Failure != nil || client.answerSeen.Load() {
+		t.Fatal("The suggested menu was mistaken for a user answer")
+	}
+	answer := llm.Item{Type: llm.ItemMessage, Data: llm.Message{Role: llm.RoleUser, Text: "Alpha"}}
+	partial, _ := client.Respond(context.Background(), llm.Request{Input: []llm.Item{answer}}, llm.RequestOptions{})
+	if partial.Failure != nil || client.answerSeen.Load() {
+		t.Fatal("Failure was injected before question completion reached model context")
+	}
+	resolved := llm.Item{Type: llm.ItemToolResult, Data: llm.ToolResult{CallID: "q"}}
+	failed, _ := client.Respond(context.Background(), llm.Request{Input: []llm.Item{answer, resolved}}, llm.RequestOptions{})
+	if failed.Failure == nil || !client.answerSeen.Load() {
+		t.Fatal("The fixture did not inject failure after the accepted answer")
+	}
 }
 func TestAcceptedAnswerSurvivesProviderFailureAndExplicitRetry(t *testing.T) {
 	a, stop, _, _ := testApp(t, t.TempDir(), false)
@@ -346,6 +376,24 @@ func TestAcceptedAnswerSurvivesProviderFailureAndExplicitRetry(t *testing.T) {
 		return false
 	})
 	p := answerQuestionParams{SessionID: string(id), WorkspaceID: "workspace", ID: q.ID, Revision: 1, SubmissionID: uuid.New().String(), Answers: []questionAnswer{{QuestionID: "choice", ChoiceID: "a"}}}
+	defer func() {
+		if !t.Failed() {
+			return
+		}
+		out, readErr := a.events.outcome(id, false)
+		a.mu.Lock()
+		run := a.running[id]
+		a.mu.Unlock()
+		busy, stopping := false, false
+		if run != nil {
+			busy, stopping = run.busy.Load(), run.stopping.Load()
+		}
+		t.Logf("provider failure diagnostics: outcome=%+v readError=%v running=%t busy=%t stopping=%t calls=%d answerSeen=%t", out, readErr, run != nil, busy, stopping, client.calls.Load(), client.answerSeen.Load())
+		entries, _ := a.events.entries(id, 0, 1000)
+		for _, entry := range entries[max(0, len(entries)-12):] {
+			t.Logf("event %d %s source=%d: %.2048s", entry.Sequence, entry.Event, entry.SourceSequence, entry.Payload)
+		}
+	}()
 	for range 2 {
 		if _, err = a.dispatch(request{Version: 1, Method: "question.answer", Params: mustJSON(t, p)}); err != nil {
 			t.Fatal(err)
@@ -378,6 +426,7 @@ func TestAcceptedAnswerSurvivesProviderFailureAndExplicitRetry(t *testing.T) {
 		t.Fatal("Failure was not persisted")
 	}
 	message := uuid.New().String()
+	beforeRetryCalls := client.calls.Load()
 	params := mustJSON(t, map[string]any{"sessionId": id, "failureSequence": failure, "messageId": message})
 	for range 2 {
 		if _, err = a.dispatch(request{Version: 1, Method: "session.retry", Params: params}); err != nil {
@@ -385,8 +434,8 @@ func TestAcceptedAnswerSurvivesProviderFailureAndExplicitRetry(t *testing.T) {
 		}
 	}
 	waitFor(t, func() bool { out, _ := a.events.outcome(id, true); return out.State == "completed" })
-	if client.calls.Load() != 3 {
-		t.Fatalf("Retry replayed model work: %d", client.calls.Load())
+	if client.calls.Load() != beforeRetryCalls+1 {
+		t.Fatalf("Retry replayed model work: %d requests before, %d after", beforeRetryCalls, client.calls.Load())
 	}
 	rows, _ = a.questions.list(id, "")
 	if len(rows) != 1 || rows[0].SubmissionID != p.SubmissionID {

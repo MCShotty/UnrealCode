@@ -1,5 +1,62 @@
 # Changelog
 
+## 1.0.3 — 2026-09-30
+
+### Added
+
+- App-wide user-authored **Fieldnotes**, with project/session attribution, local
+  matching, editable originals, explicit inclusion/exclusion, durable revision
+  receipts, optional memory interpretation, and withdrawal from future guidance.
+- Default-off, bundled selected-window **Computer** controls: task/model-bound
+  grants, physical takeover, explicit handback, emergency stop, a chat companion,
+  transient screenshots, and a built-in computer-use skill.
+- Packaged regressions for Fieldnotes, Computer startup, asynchronous navigation,
+  and the reliability repairs in the Windows acceptance and release workflows.
+
+### Changed
+
+- **Abilities** brings Skills and MCPs into their own sections. Appearance offers
+  **Cinder Dark**, **Ice Dark**, **Flashbang**, and **Follow Windows**.
+- Workspace transitions and small Material 3 Expressive feedback share motion
+  tokens, preserve reading positions, and honor reduced motion.
+- Fieldnote, timeline, and memory inference share two bounded dispatch slots.
+  Fieldnote originals remain useful offline and with memory disabled.
+
+### Fixed
+
+- Skill creation collisions; stale editor reloads, session refreshes and Fieldnote
+  editing results; cross-project session display; MCP revocation and pagination.
+- Canonical guidance receipts disappearing or changing during cache outages,
+  partial projections, duplicate submissions, continuation, and cache rebuilds.
+- Late guidance configurations reviving withdrawn revisions; obsolete timeline
+  summaries publishing after newer evidence; memory attribution and turn races.
+- Computer startup after disable, queued grants after Stop, task information
+  leakage, stale model-destination reviews, and incomplete credential masks.
+- Readiness rejection messages being replaced by a generic helper-exit error.
+  Elevated processes, missing desktop monitoring, unavailable input monitoring,
+  and incompatible protocols retain their actionable explanations.
+- Browser uploads continuing after cancellation, takeover or origin revocation.
+- Failed metadata writes skipping shutdown barriers, and failed goal saves leaving
+  live scheduling inconsistent with durable state.
+- Windows publisher verification uses the system shell and built-in security
+  module, with unavailable verification distinguished from an invalid signature.
+  Both remain fail-closed; unsigned installation stays manual.
+- Model-facing titles and source labels escaping credential redaction; native
+  observation-derived content entering automatic memory through incomplete scans.
+
+### Known limitations
+
+- The Windows installer remains unsigned. Downloads and installation are manual;
+  checksums and GitHub attestations do not remove Windows publisher warnings.
+- Computer is experimental and off by default. Packaged startup and authority
+  checks do not establish actual native clicking/typing, capture masking, physical
+  takeover, lock/unlock, desktop changes, or mixed-DPI acceptance.
+- Live memory/Hindsight recovery and fresh-machine installation of this version
+  remain separate acceptance work. Deterministic fixtures are identified in the
+  [implementation record](docs/FIELDNOTES_COMPUTER_IMPLEMENTATION.md).
+- Earlier published tags and assets remain unchanged.
+
+
 ## 1.0.2 — 2026-09-29
 
 ### Added

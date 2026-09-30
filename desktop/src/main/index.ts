@@ -1,8 +1,13 @@
+import {assertReviewedComputerDestination} from './computer-policy'
 import { classifyFailure, ActionableError, withEventFailure } from './failures'
 import { commands,validateCommand,type CommandResult } from '../shared/commands'
 import {TimelineService} from './timeline'
 import {modelCatalog,recordModelRejection} from './model-catalog'
 import { modelCapabilities } from './model-capabilities'
+import {ComputerManager} from './computer'
+import type {ComputerOwner,ComputerCall} from '../shared/computer'
+import { Fieldnotes } from './fieldnotes'
+import type { FieldnoteInput,FieldnoteSelection } from '../shared/fieldnotes'
 import { HindsightMemory } from './hindsight-memory'
 import {DocumentReader} from './document-reader'
 import {SharedProjectBrowser} from './shared-browser'
@@ -11,12 +16,19 @@ import { settledMemoryReply } from './memory-retention'
 import { historyCache, closeHistoryCaches, resetHistoryCaches } from './history-cache'
 import { timestampPath, timestampName, storageLocation } from './storage-locations'
 import type { RecoveryAction } from '../shared/failure'
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, shell, Menu, nativeImage, powerMonitor } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, shell, Menu, nativeImage, powerMonitor, globalShortcut } from 'electron'
 import { randomUUID,createHash } from 'node:crypto'
-const imageInputs=new Map<string,{project:string;data:string;createdAt:number}>()
+const imageInputs=new Map<string,{project:string;data:string;createdAt:number;nativeContext?:boolean}>()
 let memoryService:HindsightMemory|undefined
+let fieldnoteService:Fieldnotes|undefined
+let guidanceGeneration=0,guidanceEncoded=''
+function guidanceSnapshot(){const notes=fieldnotes().authority(),encoded=JSON.stringify(notes);if(encoded!==guidanceEncoded){guidanceEncoded=encoded;guidanceGeneration++}return {notes,generation:guidanceGeneration}}
 let timelineService:TimelineService|undefined
 let documentReader:DocumentReader|undefined
+let computerService:ComputerManager|undefined
+function computer(){if(!computerService){computerService=new ComputerManager(app.getPath('userData'),app.isPackaged?join(process.resourcesPath,'computer-host'):join(app.getAppPath(),'generated','computer-host'),{register:()=>globalShortcut.register('Control+Alt+Shift+.',()=>{void computerService?.stop()}),unregister:()=>globalShortcut.unregister('Control+Alt+Shift+.')});computerService.onChanged=()=>window?.webContents.send('computer:changed')}return computerService}
+function computerIdentity(owner:WorkspaceRuntime,target:WorkspaceRuntime,sessionId:string,config:BridgeSessionConfig):ComputerOwner{return {project:owner.project,workspace:target.project,sessionId,workspaceId:config.workspaceId||target.project,destination:JSON.stringify([config.provider,config.model,config.baseUrl||''])}}
+async function computerOwner(id:string){const owner=runtime(),target=await owner.owner(id),config=await target.bridge.request<BridgeSessionConfig>('session.config',{sessionId:id});if(config.specialist)throw Error('Agent team workers cannot own native input. Use the parent task.');return {identity:computerIdentity(owner,target,id,config),config}}
 function documents(){return documentReader||=(new DocumentReader(app.getPath('userData')))}
 const sharedBrowsers=new Map<string,SharedProjectBrowser>()
 function sharedBrowser(root:string):SharedProjectBrowser{let browser=sharedBrowsers.get(root);if(!browser){browser=new SharedProjectBrowser(root,app.getPath('userData'));browser.onChanged=()=>window?.webContents.send('shared-browser:changed',root);sharedBrowsers.set(root,browser)}return browser}
@@ -24,13 +36,28 @@ function timeline(){return timelineService||=(new TimelineService(memory,()=>win
 const hookControllers=new Map<string,AbortController>()
 const browserControllers=new Map<string,AbortController>()
 import {closeProjectFiles} from './project-fs'
-function memory():HindsightMemory {if(!memoryService){memoryService=new HindsightMemory(app.getPath('userData'));memoryService.onChanged=()=>window?.webContents.send('workflow:changed',selected?.project||'')}return memoryService}
+function memory():HindsightMemory {if(!memoryService){memoryService=new HindsightMemory(app.getPath('userData'));memoryService.fieldnoteValidity=refs=>fieldnoteService?.valid(refs)||false;memoryService.onChanged=()=>{window?.webContents.send('workflow:changed',selected?.project||'');fieldnoteService?.schedule()}}return memoryService}
+function fieldnotes():Fieldnotes {
+ if(!fieldnoteService){
+  fieldnoteService=new Fieldnotes(app.getPath('userData'),historyCache(app.getPath('userData')),{
+   available:async()=>{const status=await memory().status('');return {enabled:!!(status.settings.enabled&&status.settings.globalConsent&&status.settings.verifiedProfile),generation:await memory().generation()}},
+   analyse:text=>memory().analyse(text,'fieldnote'),retain:note=>memory().retainFieldnote(note),withdraw:id=>memory().withdrawFieldnote(id),state:(id,revision)=>memory().fieldnoteState(id,revision)
+  })
+  let lastAuthority=''
+  fieldnoteService.onChanged=()=>{
+   window?.webContents.send('fieldnotes:changed')
+   const notes=fieldnoteService!.authority(),encoded=JSON.stringify(notes)
+   if(encoded!==lastAuthority){lastAuthority=encoded;for(const owner of workspaces.values())void owner.visitBridges(target=>target.request('fieldnotes.configure',guidanceSnapshot())).catch(()=>{})}
+  }
+ }
+ return fieldnoteService
+}
 import { execFile } from 'node:child_process'
 import { mkdirSync, realpathSync } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import { join,basename } from 'node:path'
 import { promisify } from 'node:util'
-import type { AgentEvent, BridgeSessionConfig, DecisionBatch, DecisionStatus, Provider } from '../shared/api'
+import type { AgentEvent, BridgeSessionConfig, DecisionBatch, DecisionStatus, Provider, Settings } from '../shared/api'
 import { DockerBridge } from './docker'
 import { codexStatus, credentialFor, getSettings, hasKey, rememberProject, saveKey, updateSettings, migrateLegacySettings, setDecisionConsent, saveAdminKey, hasAdminKey, clearAdminKey, defaultSettings } from './settings'
 import { AccountUsageService } from './account-usage'
@@ -91,6 +118,16 @@ const evaluations = new Evaluations(join(app.getPath('userData'), 'evaluations')
 let sessionUsage = new SessionUsageService(bridge)
 const execFileAsync = promisify(execFile)
 let window: BrowserWindow | null = null
+let appliedTheme: Settings['theme'] = 'system'
+function windowBackgroundColor(): string {
+  const scheme = appliedTheme === 'system' ? (nativeTheme.shouldUseDarkColors ? 'dark' : 'light') : appliedTheme
+  return scheme === 'ice-dark' ? '#10161b' : scheme === 'light' ? '#f0f3f5' : '#151514'
+}
+function applyWindowTheme(theme: Settings['theme']): void {
+  appliedTheme = theme
+  nativeTheme.themeSource = theme === 'ice-dark' ? 'dark' : theme
+  window?.setBackgroundColor(windowBackgroundColor())
+}
 let checkpoints: CheckpointService | null = null
 const connectionVault = new ConnectionVault(join(app.getPath('userData'), 'connection-secrets.json'))
 let connections: McpBroker
@@ -138,7 +175,7 @@ function handle(channel:string,callback:(event:Electron.IpcMainInvokeEvent,...ar
   try{
    if(recoveryState.busy&&!['recovery:status','updates:status','updates:cancel'].includes(channel))throw new Error('App maintenance is in progress')
    if(recoveryState.migrationError&&!recoveryChannels.has(channel))throw new ActionableError(recoveryState.failure!)
-   if(recoveryState.waitingForDependency&&!recoveryChannels.has(channel)&&!dependencyReadChannels.has(channel))throw new ActionableError(recoveryState.failure!)
+   if(recoveryState.waitingForDependency&&!recoveryChannels.has(channel)&&!dependencyReadChannels.has(channel)&&!channel.startsWith('fieldnotes:'))throw new ActionableError(recoveryState.failure!)
    if(workspaceSelection&&/^(editor:|skills:(save|delete)|terminal:)/.test(channel))throw new Error('Wait for the selected task workspace to finish opening')
    tracked=!recoveryChannels.has(channel)&&!['workspace:archive','workspace:restore'].includes(channel);if(tracked)activeIPC++
    return {unrealResult:true,ok:true,value:await callback(event,...args)}
@@ -158,7 +195,7 @@ async function maintenance<T>(work:()=>Promise<T>):Promise<T>{
  if(recoveryState.busy||activeIPC||terminals.size||evaluations.busy)throw new Error('Finish active actions, evaluations and terminals before maintenance')
  recoveryState.busy=true;recoveryState.message='Saving and checking app data…'
  let quiesced=false
- try{for(const owner of workspaces.values())await owner.maintenanceReady();quiesced=true;timelineService?.close();await connections?.disconnectAll();clearTimeout(connectionRefresh);for(const owner of workspaces.values())await owner.stopAll();await memoryService?.prepareBackup();await timelineService?.settled();timelineService=undefined;await drainMetadata();await closeHistoryCaches();return await work()}
+ try{for(const owner of workspaces.values())await owner.maintenanceReady();quiesced=true;timelineService?.close();await computerService?.close();await connections?.disconnectAll();clearTimeout(connectionRefresh);for(const owner of workspaces.values())await owner.stopAll();await fieldnoteService?.close();fieldnoteService=undefined;await memoryService?.prepareBackup();await timelineService?.settled();timelineService=undefined;await drainMetadata();await closeHistoryCaches();return await work()}
  finally{
   try{
    if(quiesced){
@@ -308,11 +345,16 @@ function connectionContext() { const owner = runtime(); return { project: owner.
 async function refreshConnectionCatalog(owner: WorkspaceRuntime): Promise<void> { await owner.visitBridges(target=>target.request('mcp.configure',{tools:connections.catalog({project:owner.project,container:target.containerName})})) }
 async function handleHostEvent(owner: WorkspaceRuntime, event: AgentEvent): Promise<void> {
   if (event.event === 'host.cancel') { const operationId=String((event.payload as { operationId: string }).operationId);hostOperations.cancel(owner.project,event.sessionId,operationId);const key=`${owner.project}:${event.sessionId}:${operationId}`;hookControllers.get(key)?.abort();browserControllers.get(key)?.abort();const worker=owner.teams.view(event.sessionId)?.workers.find(item=>item.requestId===operationId);if(worker)await owner.teams.cancel(event.sessionId,worker.id);return }
-  if (event.event === 'session.status' && ['stopped','error'].includes(String((event.payload as {status:string}).status))) { hostOperations.cancelSession(owner.project,event.sessionId);for(const map of [hookControllers,browserControllers])for(const [key,controller] of map)if(key.startsWith(`${owner.project}:${event.sessionId}:`))controller.abort(); return }
+  if (event.event === 'session.status' && ['stopped','error'].includes(String((event.payload as {status:string}).status))) { computerService?.stopSession(owner.project,event.sessionId);hostOperations.cancelSession(owner.project,event.sessionId);for(const map of [hookControllers,browserControllers])for(const [key,controller] of map)if(key.startsWith(`${owner.project}:${event.sessionId}:`))controller.abort(); return }
+  if(event.event==='computer.image.request'){
+    const request=event.payload as {requestId:string;operationId:string;sessionId:string;workspaceId:string;imageRef:string},target=await owner.owner(event.sessionId),config=await target.bridge.request<BridgeSessionConfig>('session.config',{sessionId:event.sessionId})
+    let text='';if(request.sessionId===event.sessionId&&request.workspaceId===config.workspaceId&&!config.specialist&&(await modelCapabilities(config.provider,config.model,config.baseUrl)).vision)text=computerService?.resolveImage(computerIdentity(owner,target,event.sessionId,config),request.imageRef)||''
+    await target.bridge.request('computer.image.response',{requestId:request.requestId,operationId:request.operationId,sessionId:event.sessionId,text}).catch(()=>{});return
+  }
   if (!['host.request','host.read','host.team','host.model','host.control','host.hook'].includes(event.event)) return
   const operation = event.payload as HostOperation
   const browserKey=`${owner.project}:${event.sessionId}:${operation.operationId}`
-  const browserController=event.event==='host.control'&&['Browser','BrowserDo'].includes(operation.tool)?new AbortController():undefined
+  const browserController=event.event==='host.control'&&['Browser','BrowserDo','Computer'].includes(operation.tool)?new AbortController():undefined
   if(browserController)browserControllers.set(browserKey,browserController)
   let responseBridge:DockerBridge|undefined
   let result: import('../shared/connections').HostResult
@@ -320,6 +362,7 @@ async function handleHostEvent(owner: WorkspaceRuntime, event: AgentEvent): Prom
     const target=await owner.owner(event.sessionId);responseBridge=target.bridge
     const config = await target.bridge.request<BridgeSessionConfig>('session.config',{ sessionId:event.sessionId })
     if (operation.sessionId !== event.sessionId || operation.workspaceId !== config.workspaceId) throw new Error('Host request does not match the active workspace permissions')
+    if(event.event==='host.request'&&computerService&&(await computerService.status()).enabled){const legacy=connections.windowsAddons();const entry=connections.catalog({project:owner.project,workspace:target.project,container:target.bridge.containerName}).find(item=>item.name===operation.tool);if(entry&&legacy.some(item=>item.id===entry.connectionId))throw Error('Managed Computer is enabled. Use its selected-window controls or turn it off before using the legacy add-on.')}
     if(event.event==='host.model') {
       if((!config.teamManaged&&!config.goalManaged)||operation.tool!=='ModelPermit'||typeof operation.arguments.modelRequestId!=='string')throw new Error('Invalid task model permit')
       if(config.goalManaged)await target.planning.permit(event.sessionId,operation.arguments.modelRequestId);if(config.teamManaged)await owner.teamPermit(event.sessionId,operation.arguments.modelRequestId);result={text:'Allowed'}
@@ -344,6 +387,17 @@ async function handleHostEvent(owner: WorkspaceRuntime, event: AgentEvent): Prom
       const args=operation.arguments;let value:unknown
       if(operation.tool==='PlanProgress')value=await target.planning.progress(event.sessionId,args.revision as number,args.milestoneId as string,args.state as 'pending'|'running'|'completed',args.evidence as string[])
       else if(operation.tool==='PlanUpdate'){if(!Array.isArray(args.milestones))throw Error('Plan milestones must be a list');value=await target.planning.saveAgentPlan(event.sessionId,{objective:args.objective as string,body:args.body as string,acceptance:args.acceptance as string[],milestones:args.milestones as string[]})}
+      else if(operation.tool==='Computer'){
+        if(config.specialist)throw Error('Native computer input belongs to the parent task; workers cannot compete for it.')
+        const call=args as unknown as ComputerCall,identity=computerIdentity(owner,target,event.sessionId,config)
+        if(!['status','windows','observe','act','focus','wait'].includes(call.type))throw Error('Unknown computer operation')
+        const readOnly=['status','windows','observe','wait'].includes(call.type)
+        if(!readOnly&&config.mode==='plan')throw Error('Plan mode may observe granted windows; it cannot type, click or change focus.')
+        if(call.image&&!(await modelCapabilities(config.provider,config.model,config.baseUrl)).vision)throw Error('This model has no verified image support. Use an accessibility observation without an image.')
+        const execute=async(signal?:AbortSignal)=>{const combined=signal?AbortSignal.any([signal,browserController!.signal]):browserController!.signal;return {text:JSON.stringify(await computer().call(identity,call,operation.operationId,combined))}}
+        result=readOnly||config.mode==='agent'&&!computer().review(identity,call)?await execute():await hostOperations.run(owner.project,operation,'Selected Windows application: exact action review',execute)
+        await target.bridge.request('host.respond',{requestId:operation.requestId,sessionId:event.sessionId,operationId:operation.operationId,...result}).catch(()=>{});return
+      }
       else if(operation.tool==='Browser'){
         if(config.specialist&&config.parentSessionId){const parent=await owner.owner(config.parentSessionId);target.browser.inherit(parent.browser);target.browser.setPreviewOrigins(Object.values(await parent.bridge.previewAddresses()))}
         const action=args as unknown as import('../shared/browser').BrowserAction;if(action.type==='screenshot'&&!(await modelCapabilities(config.provider,config.model,config.baseUrl)).vision)throw Error('Image input support is not verified for this model. Use a browser snapshot or select a verified vision model.');const readOnly=['snapshot','screenshot'].includes(action.type)
@@ -447,12 +501,15 @@ async function retainMemory(owner:WorkspaceRuntime,event:AgentEvent):Promise<voi
   const status=await memoryService.status(owner.project);if(!status.settings.enabled||!status.settings.globalConsent)return
   const target=await owner.owner(event.sessionId);await target.index.flush()
   const page=await target.index.cache.page(target.project,event.sessionId,{limit:250})
+  if(await target.index.cache.nativeContext(target.project,event.sessionId,event.seq)!==false)return // Exclude native-derived context, including earlier turns and inherited fork history.
   const reply=settledMemoryReply(event,page.events)
   if(!reply)return
   const outcome=(event.payload as any).outcome,selection=target.context.get(event.sessionId),sourceFiles:Array<{path:string;sha256:string}>=[]
   for(const path of [...new Set([...selection.attached,...selection.pinned])].filter(path=>!target.context.isExcluded(path)).slice(0,10)){try{const content=await readFile(target.project,path);sourceFiles.push({path,sha256:createHash('sha256').update(content).digest('hex')})}catch{/* Unavailable sources are not claimed current. */}}
   const specialist=owner.teams.worker(event.sessionId)
-  await memoryService.record(owner.project,{scope:specialist&&specialist.state!=='integrated'?'task':'shared',sessionId:event.sessionId,turnId:outcome?.messageIds?.[0]||String(event.seq),workspace:target.project,sourceFiles,content:`Recorded task outcome: ${outcome?.state||'completed'}. The following is the agent's reported result, not an independent assertion that all claims were verified.\n${reply.text}`,sourceRefs:[`session:${event.sessionId}:event:${reply.seq}`],createdAt:event.recordedAt||new Date().toISOString()})
+  const receipts=fieldnoteService?await fieldnoteService.receiptPage(owner.project,event.sessionId):[]
+  const included=receipts.filter(row=>row.state==='accepted'&&(outcome?.messageIds||[]).includes(row.messageId)).flatMap(row=>row.notes.map(({id,revision})=>({id,revision})))
+  await memoryService.record(owner.project,{scope:specialist&&specialist.state!=='integrated'?'task':'shared',sessionId:event.sessionId,turnId:outcome?.messageIds?.[0]||String(event.seq),workspace:target.project,sourceFiles,fieldnoteDependencies:included,content:`Recorded task outcome: ${outcome?.state||'completed'}. The following is the agent's reported result, not an independent assertion that all claims were verified.\n${reply.text}`,sourceRefs:[`session:${event.sessionId}:event:${reply.seq}`],createdAt:event.recordedAt||new Date().toISOString()})
 }
 
 async function openWorkspace(requested: string): Promise<ReturnType<DockerBridge['status']>> {
@@ -467,11 +524,18 @@ async function openWorkspace(requested: string): Promise<ReturnType<DockerBridge
   let current = workspaces.get(canonical)
   if (!current) {
     current = new WorkspaceRuntime(canonical, app.getPath('userData'), {
-      event: (event) => { if(event.event==='model.request.completed'){const p=event.payload as any;if(p.failure&&typeof p.model==='string')recordModelRejection(p.provider,p.model,p.failure)} const display=withEventFailure(event);window?.webContents.send('agent:event', display);if(display.failure){recordFailure(event.event,{code:display.failure.code,reference:display.failure.reference});window?.webContents.send('app:failure',display.failure);} if (current) {if(!recoveryState.busy&&['session.item','session.idle','verification.result','session.needs_input','operation.started','operation.update','question.updated'].includes(event.event))timeline().changed(current,event.sessionId);void handleHostEvent(current,event).catch(()=>{});if(event.event==='session.idle'&&memoryService)void retainMemory(current,event).catch(()=>{})} },
-      recall:async(prompt,workspace)=>{if(!memoryService)return '';try{const result=await memoryService.recall(canonical,prompt.slice(0,8000),workspace);return JSON.stringify(result)}catch{return 'Project memory is unavailable. Verify against current files and recorded sessions.'}},
+      event: (event) => { if(event.event==='computer.image.request'){if(current)void handleHostEvent(current,event).catch(()=>{});return}if(event.event==='model.request.completed'){const p=event.payload as any;if(p.failure&&typeof p.model==='string')recordModelRejection(p.provider,p.model,p.failure)} const display=withEventFailure(event);window?.webContents.send('agent:event', display);if(display.failure){recordFailure(event.event,{code:display.failure.code,reference:display.failure.reference});window?.webContents.send('app:failure',display.failure);} if (current) {if(!recoveryState.busy&&['session.item','session.idle','verification.result','session.needs_input','operation.started','operation.update','question.updated'].includes(event.event))timeline().changed(current,event.sessionId);void handleHostEvent(current,event).catch(()=>{});if(event.event==='session.idle'&&memoryService)void retainMemory(current,event).catch(()=>{})} },
+      guidance:async(session,workspace,message,prompt,selection,recalled,target)=>{
+        let semantic:string[]=[];try{semantic=JSON.parse(recalled||'{}').fieldnoteIds||[]}catch{/* Factual memory fallback has no note references. */}
+        const config=await target.request<BridgeSessionConfig>('session.config',{sessionId:session})
+        const receipt=config.specialist&&config.parentSessionId?await fieldnotes().inherit(canonical,workspace,session,message,config.parentSessionId):selection===undefined&&(await fieldnotes().receiptPage(canonical,session)).some(r=>r.state==='accepted')?await fieldnotes().inherit(canonical,workspace,session,message,session):await fieldnotes().prepare(canonical,workspace,session,message,prompt,selection||{include:[],exclude:[]},semantic)
+        await target.request('fieldnotes.configure',guidanceSnapshot());return receipt
+      },
+      guidanceAccepted:id=>fieldnotes().accepted(id),
+      recall:async(prompt,workspace)=>{if(!memoryService)return '';try{const result=await memoryService.recall(canonical,prompt.slice(0,8000),workspace) as any;const fieldnoteIds=(result.results||[]).filter((item:any)=>item.source?.fieldnote).map((item:any)=>item.source.fieldnote.id);return JSON.stringify({...result,fieldnoteIds,results:(result.results||[]).filter((item:any)=>!item.source?.fieldnote)})}catch{return 'Project memory is unavailable. Verify against current files and recorded sessions.'}},
       changed: () => window?.webContents.send('workflow:changed', canonical),
       hasTerminal: () => selected?.project === canonical && terminals.size > 0,
-      configure: async (target) => { await configureDecision(target, canonical); await target.request('mcp.configure',{ tools:connections.catalog({ project:canonical,container:target.containerName }) }) },
+      configure: async (target) => { await fieldnotes().load();await target.request('fieldnotes.configure',guidanceSnapshot()); await configureDecision(target, canonical); await target.request('mcp.configure',{ tools:connections.catalog({ project:canonical,container:target.containerName }) }) },
       reviewWorkspace: async snapshot => {
         const omitted = Object.entries(snapshot.omitted)
         const answer = await dialog.showMessageBox(window!, { type: 'question', title: 'Review task workspace snapshot', buttons: ['Create isolated task', 'Use project folder', 'Cancel'], defaultId: 0, cancelId: 2,
@@ -543,9 +607,10 @@ function registerIPC(): void {
   })
   handle('connections:connect', async (_event,id:string,signIn:boolean) => { const owner=runtime();await connections.connect(connectionContext(),id,signIn===true);await refreshConnectionCatalog(owner) })
   handle('connections:disconnect', (_event,id:string) => connections.disconnect(id,connectionContext()))
-  handle('connections:resources', (_event,id:string) => connections.resources(connectionContext(),id))
+  handle('connections:resources', (_event,id:string,cursor?:string) => connections.resources(connectionContext(),id,cursor))
+  handle('connections:cancel-references', (_event,id:string) => connections.cancelReferences(id,connectionContext().project))
   handle('connections:resource', (_event,id:string,uri:string) => connections.resource(connectionContext(),id,uri))
-  handle('connections:prompts', (_event,id:string) => connections.prompts(connectionContext(),id))
+  handle('connections:prompts', (_event,id:string,cursor?:string) => connections.prompts(connectionContext(),id,cursor))
   handle('connections:prompt', (_event,id:string,name:string,args:Record<string,string>) => connections.prompt(connectionContext(),id,name,args))
   handle('host:approvals', (_event,sessionId:string) => hostOperations.approvals(runtime().project,sessionId))
   handle('host:respond', (_event,sessionId:string,id:string,digest:string,allow:boolean) => { if(typeof allow!=='boolean')throw new Error('Invalid approval answer'); return hostOperations.respond(runtime().project,sessionId,id,digest,allow) })
@@ -629,8 +694,7 @@ function registerIPC(): void {
     const previous=getSettings()
     const next = updateSettings(patch)
     releaseNotifications?.configure(notificationPreferences())
-    nativeTheme.themeSource = next.theme
-    window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#10161b' : '#f0f3f5')
+    applyWindowTheme(next.theme)
     window?.webContents.send('settings:changed',next)
     if (bridge.status().ready && (['decisionEngine','decisionModel','glinerEnabled'] as const).some(key=>previous[key]!==next[key])) {
       if (next.decisionEngine === 'jev' && !next.decisionCloudProjects.includes(bridge.projectPath) && !next.decisionCloudDeclinedProjects.includes(bridge.projectPath)) await requestDecisionConsent(bridge.projectPath)
@@ -746,8 +810,8 @@ function registerIPC(): void {
   handle('memory:retry',()=>memory().retry(''))
   handle('memory:recall',(_event,query:string)=>memory().recall(selected?.project||'',query,selected?.active.project||''))
   handle('memory:reflect',(_event,query:string)=>memory().reflect(selected?.project||'',query,selected?.active.project||''))
-  handle('memory:forget',(_event,id:string)=>memory().forget('',id))
-  handle('memory:correct',(_event,id:string,content:string)=>memory().correct('',id,content))
+  handle('memory:forget',async(_event,id:string)=>{const source=await memory().fieldnoteSource(id);if(source){const note=await fieldnotes().get(source.id);await fieldnotes().save({...note,expectedRevision:note.revision,indexing:false});return memory().withdrawFieldnote(source.id)}return memory().forget('',id)})
+  handle('memory:correct',async(_event,id:string,content:string)=>{if(await memory().fieldnoteSource(id))throw Error('Edit the original note in Fieldnotes so its authored text and provenance stay together.');return memory().correct('',id,content)})
   handle('memory:rebuild',()=>memory().rebuild(''))
   handle('memory:export',async()=>{const result=await dialog.showSaveDialog(window!,{title:'Export private app-wide memory',defaultPath:`UnrealCode-memory-${timestampName()}.json`,filters:[{name:'JSON',extensions:['json']}]});if(result.canceled||!result.filePath)return null;await fs.writeFile(result.filePath,await memory().export(''),{mode:0o600});return result.filePath})
   const planningOwner=async(id:string)=>{const owner=await runtime().owner(id);await owner.bridge.request('session.config',{sessionId:id});return owner}
@@ -813,7 +877,7 @@ function registerIPC(): void {
     if(name==='skills'&&args){const skill=(await listAvailableSkills(project())).find(x=>x.name===args);if(!skill)throw Error('Choose an available skill');return {view:'chat',prompt:`Use the ${skill.source} skill ${skill.name}. Read its current instructions using SkillUse.`}}
     if(name==='init')return {view:'chat',prompt:'Inspect this project and propose an AGENTS.md containing accurate build, test, architecture and contribution instructions. Show the proposed content for review before writing it.'}
     if(name==='goal'&&args){await (await planningOwner(id!)).planning.goal(id!,{objective:args,requestLimit:50,tokenLimit:250000,elapsedMinutes:30});return {view:'control',message:'Objective saved paused. Review its limits and choose Resume.'}}
-    const routes:Partial<Record<typeof name,string>>={model:'workflow',agents:'control',tasks:'control',permissions:'chat',status:'control',usage:'usage',context:'context',review:'review',diff:'review',checkpoint:'review',rewind:'review',skills:'skills',mcp:'connections',memory:'memory',browser:'browser',hooks:'hooks',goal:'control',help:'help',new:'new'}
+    const routes:Partial<Record<typeof name,string>>={computer:'computer',fieldnotes:'fieldnotes',model:'workflow',agents:'control',tasks:'control',permissions:'chat',status:'control',usage:'usage',context:'context',review:'review',diff:'review',checkpoint:'review',rewind:'review',skills:'skills',mcp:'connections',memory:'memory',browser:'browser',hooks:'hooks',goal:'control',help:'help',new:'new'}
     return {view:routes[name]||'chat'}
   })
   handle('session:config', async (_event, sessionId: string) => ({...await sessionRequest('session.config', sessionId) as BridgeSessionConfig,pendingMode:(await runtime().owner(sessionId)).pendingModes.get(sessionId)}))
@@ -864,15 +928,20 @@ function registerIPC(): void {
     for(const image of pending){imageInputs.set(image.id,{project:owner.project,data:image.data,createdAt:Date.now()});result.push({id:image.id,name:image.name,width:image.width,height:image.height})}return result
   })
   handle('images:discard',(_event,ids:string[])=>{if(!Array.isArray(ids)||ids.length>30||ids.some(id=>typeof id!=='string'||id.length>100))throw Error('Invalid image attachment IDs');for(const id of ids)imageInputs.delete(id)})
-  handle('session:send', async(_event, sessionId: string, prompt: string, messageId: string,imageIds:string[]=[]) => {const owner=runtime();if(!Array.isArray(imageIds)||imageIds.some(id=>typeof id!=='string')||imageIds.length>3)throw Error('Invalid image attachments');if(imageIds.length){const config=await sessionRequest('session.config',sessionId) as BridgeSessionConfig;if(!(await modelCapabilities(config.provider,config.model,config.baseUrl)).vision)throw Error('Image input support is not verified for this model. Choose a verified vision model or a runtime that reports vision support.')}if(!Array.isArray(imageIds)||imageIds.length>3)throw Error('At most three images can be attached');const images=imageIds.map(id=>{const image=imageInputs.get(id);if(!image||image.project!==owner.project)throw Error('Image attachment expired or belongs to another project');return image.data});await owner.send(sessionId,prompt,messageId,terminals.size>0,images);for(const id of imageIds)imageInputs.delete(id)})
+  handle('session:send', async(_event, sessionId: string, prompt: string, messageId: string,imageIds:string[]=[],noteSelection?:FieldnoteSelection) => {const owner=runtime();if(!Array.isArray(imageIds)||imageIds.some(id=>typeof id!=='string')||imageIds.length>3)throw Error('Invalid image attachments');if(imageIds.length){const config=await sessionRequest('session.config',sessionId) as BridgeSessionConfig;if(!(await modelCapabilities(config.provider,config.model,config.baseUrl)).vision)throw Error('Image input support is not verified for this model. Choose a verified vision model or a runtime that reports vision support.')}if(!Array.isArray(imageIds)||imageIds.length>3)throw Error('At most three images can be attached');const images=imageIds.map(id=>{const image=imageInputs.get(id);if(!image||image.project!==owner.project)throw Error('Image attachment expired or belongs to another project');return image.data});await owner.send(sessionId,prompt,messageId,terminals.size>0,images,noteSelection||{include:[],exclude:[]},imageIds.some(id=>imageInputs.get(id)?.nativeContext));for(const id of imageIds)imageInputs.delete(id)})
   handle('session:stop', (_event, sessionId: string) => runtime().stop(sessionId))
   handle('session:fork', (_event, sessionId: string) => runtime().fork(sessionId))
   handle('session:latest',async(_event,id:string)=>(await runtime().historyPage(id,{limit:1000})).events)
   handle('session:events', (_event, sessionId: string, after: number) => sessionRequest('session.events', sessionId, { after, limit: 1000 }))
 
   handle('files:list', (_event, relative?: string) => listFiles(project(), relative))
-  handle('editor:read', (_event, path: string) => readEditableFile(project(), path))
-  handle('editor:base', (_event, path: string) => editorBase(project(), path))
+  const expectedWorkspace = async (expected?: string): Promise<string> => {
+    const root = project(), canonical = await fs.realpath(root)
+    if (expected !== undefined && (typeof expected !== 'string' || expected.toLowerCase() !== canonical.toLowerCase())) throw new Error('The active workspace changed. Return to the original workspace before continuing.')
+    return root
+  }
+  handle('editor:read', async (_event, path: string, workspace?: string) => readEditableFile(await expectedWorkspace(workspace), path))
+  handle('editor:base', async (_event, path: string, workspace?: string) => editorBase(await expectedWorkspace(workspace), path))
   handle('editor:save', (_event, path: string, revision: string, content: string, workspace: string) => idleMutation(async root => {
     if (typeof workspace !== 'string' || workspace.toLowerCase() !== (await fs.realpath(root)).toLowerCase()) throw new Error('The active task workspace changed. Reopen this editor tab in its original workspace before saving.')
     return saveEditableFile(root, path, revision, content, app.getPath('userData'))
@@ -886,8 +955,35 @@ function registerIPC(): void {
   handle('git:availability', () => runtime().gitAvailability())
   handle('files:changes', () => gitChanges(project()))
   handle('files:diff', (_event, relative: string) => gitDiff(project(), relative))
+  handle('computer:status',async()=>{computer().setLegacy(connections.windowsAddons());return computer().status()})
+  handle('computer:enable',(_event,enabled:boolean)=>computer().enable(enabled))
+  handle('computer:windows',()=>computer().windows())
+  handle('computer:preview',(_event,id:string)=>computer().preview(id))
+  handle('computer:latest',()=>computer().latest())
+  handle('computer:grant',async(_event,id:string,windows:string[],control:boolean,reviewedDestination:string)=>{const {identity,config}=await computerOwner(id);assertReviewedComputerDestination(identity,reviewedDestination);if(control&&config.mode==='plan')throw Error('Plan mode can receive observation access only');return computer().grantWindows(identity,windows,control)})
+  handle('computer:control',async(_event,action:string)=>{if(action==='pause')await computer().pause();else if(action==='stop')await computer().stop();else if(action==='resume')await computer().resume();else throw Error('Unknown computer control');return computer().status()})
+  handle('computer:migrate',async(_event,ids:string[])=>{await connections.withdrawWindowsAddons(ids);for(const owner of workspaces.values())await refreshConnectionCatalog(owner);await computer().enable(true)})
+  handle('computer:pin',async(_event,sessionId:string,id:string)=>{const {identity}=await computerOwner(sessionId),data=computer().pin(identity,id),imageId=randomUUID();if(imageInputs.size>=30)throw Error('Finish or remove pending images first');imageInputs.set(imageId,{project:identity.project,data,createdAt:Date.now(),nativeContext:true});const dimensions=checkedImageDimensions(Buffer.from(data.split(',')[1],'base64'));return {id:imageId,name:'Pinned computer evidence.png',...dimensions}})
+  handle('fieldnotes:status',()=>fieldnotes().status())
+  handle('fieldnotes:list',(_event,query:import('../shared/fieldnotes').FieldnoteQuery={})=>fieldnotes().list(query,`fieldnotes-list:${_event.sender.id}`))
+  handle('fieldnotes:get',(_event,id:string)=>fieldnotes().get(id))
+  handle('fieldnotes:save',(_event,value:FieldnoteInput)=>fieldnotes().save(value))
+  handle('fieldnotes:delete',(_event,id:string,revision:number)=>fieldnotes().remove(id,revision))
+  handle('fieldnotes:retry',(_event,id:string)=>fieldnotes().retry(id))
+  handle('fieldnotes:targets',async()=>{for(const path of [...new Set([...getSettings().recentProjects,...getSettings().trustedProjects])])await fieldnotes().registerProject(path);return fieldnotes().targets()})
+  handle('fieldnotes:pick-project',async()=>{const chosen=await dialog.showOpenDialog(window!,{title:'Choose a Fieldnote pointer (does not grant project access)',properties:['openDirectory']});if(chosen.canceled||!chosen.filePaths[0])return null;return fieldnotes().registerProject(await fs.realpath(chosen.filePaths[0]))})
+  handle('fieldnotes:sessions',async(_event,id:string)=>{const target=(await fieldnotes().targets()).find(p=>p.id===id);if(!target)throw Error('Unknown project pointer');return historyCache(app.getPath('userData')).sessions(target.path)})
+  handle('fieldnotes:drafts',()=>fieldnotes().savedDrafts())
+  handle('fieldnotes:draft',(_event,key:string,value:FieldnoteInput|null)=>fieldnotes().draft(key,value))
+  handle('fieldnotes:suggest',(_event,query:string,sessionId?:string)=>fieldnotes().suggestions(query,selected?.project||'',sessionId))
+  handle('fieldnotes:receipts',(_event,id:string)=>fieldnotes().receiptPage(selected?.project||'',id))
+  handle('fieldnotes:open',async(_event,id:string)=>{const note=await fieldnotes().get(id);await openWorkspace(note.pointer.projectPath);if(note.pointer.sessionId)window?.webContents.send('app:navigate',{project:note.pointer.projectPath,sessionId:note.pointer.sessionId});else window?.webContents.send('app:navigate',{project:note.pointer.projectPath})})
+  handle('fieldnotes:export',async()=>{const choice=await dialog.showSaveDialog(window!,{title:'Export private Fieldnotes',defaultPath:`UnrealCode-fieldnotes-${timestampName()}.json`,filters:[{name:'JSON',extensions:['json']}]});if(choice.canceled||!choice.filePath)return null;await fs.writeFile(choice.filePath,await fieldnotes().export(),{mode:0o600});return choice.filePath})
   handle('skills:list', () => listAvailableSkills(project()))
-  handle('skills:save', (_event, name: string, content: string) => idleMutation((root) => saveSkill(root, name, content)))
+  handle('skills:save', (_event, name: string, content: string, revision?: string, workspace?: string) => idleMutation(async (root) => {
+    if (workspace !== undefined && (typeof workspace !== 'string' || workspace.toLowerCase() !== (await fs.realpath(root)).toLowerCase())) throw new Error('The active workspace changed. Your skill draft is retained.')
+    return saveSkill(root, name, content, revision)
+  }))
   handle('skills:delete', (_event, name: string) => idleMutation((root) => deleteSkill(root, name)))
   handle('document:open-project',(_event,path:string,password?:string)=>documents().openProject(project(),path,password))
   handle('document:open-external',async(_event,password?:string)=>{const choice=await dialog.showOpenDialog(window!,{title:'Open PDF',properties:['openFile'],filters:[{name:'PDF documents',extensions:['pdf']}]});return choice.canceled||!choice.filePaths[0]?null:documents().openExternal(choice.filePaths[0],password)})
@@ -926,7 +1022,7 @@ function createWindow(): void {
     width: 1500, height: 940, minWidth: 1000, minHeight: 650,
     // Explicit automation option for CI and non-disruptive local smoke checks.
     show: !backgroundCheck,
-    title: 'UnrealCode', backgroundColor: nativeTheme.shouldUseDarkColors ? '#10161b' : '#f0f3f5',
+    title: 'UnrealCode', backgroundColor: windowBackgroundColor(),
     icon: join(app.isPackaged ? process.resourcesPath : join(__dirname, '../..'), 'assets', 'unrealcode-icon.png'),
     webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: !backgroundCheck, offscreen: backgroundCheck }
   })
@@ -949,8 +1045,8 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   try { await recoverStartup() } catch { /* Show recovery controls without overwriting prior data. */ }
-  nativeTheme.themeSource = recoveryState.migrationError ? 'system' : getSettings().theme
-  nativeTheme.on('updated', () => window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#10161b' : '#f0f3f5'))
+  applyWindowTheme(recoveryState.migrationError ? 'system' : getSettings().theme)
+  nativeTheme.on('updated', () => window?.setBackgroundColor(windowBackgroundColor()))
   app.setAppUserModelId('ai.mcshotty.unrealcode')
   registerIPC()
   registerRecoveryIPC()
@@ -961,5 +1057,6 @@ app.whenReady().then(async () => {
 })
 
 let shutdownReady=false,shutdownPending=false
-app.on('before-quit', event => {if(shutdownReady)return;event.preventDefault();if(shutdownPending)return;shutdownPending=true;releaseNotifications?.close();timelineService?.close();documentReader?.closeAll();for(const browser of sharedBrowsers.values())browser.close();closeTerminals();hostOperations?.cancelAll();for(const map of [hookControllers,browserControllers])for(const controller of map.values())controller.abort();evaluations.stopAll();void (async()=>{await Promise.allSettled([memoryService?.stop(),connections?.close(),...[...workspaces.values()].map(owner=>owner.stopAll())]);await timelineService?.settled();await releaseNotifications?.settled();await drainMetadata();await closeHistoryCaches()})().finally(()=>{closeProjectFiles();shutdownReady=true;app.quit()})})
+app.whenReady().then(()=>{powerMonitor.on('lock-screen',()=>{void computerService?.stop()});powerMonitor.on('suspend',()=>{void computerService?.stop()})})
+app.on('before-quit', event => {if(shutdownReady)return;event.preventDefault();if(shutdownPending)return;shutdownPending=true;releaseNotifications?.close();timelineService?.close();documentReader?.closeAll();for(const browser of sharedBrowsers.values())browser.close();closeTerminals();hostOperations?.cancelAll();for(const map of [hookControllers,browserControllers])for(const controller of map.values())controller.abort();evaluations.stopAll();void (async()=>{await Promise.allSettled([computerService?.close(),fieldnoteService?.close(),memoryService?.stop(),connections?.close(),...[...workspaces.values()].map(owner=>owner.stopAll())]);await timelineService?.settled();await releaseNotifications?.settled();await drainMetadata();await closeHistoryCaches()})().finally(()=>{closeProjectFiles();shutdownReady=true;app.quit()})})
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

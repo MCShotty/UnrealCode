@@ -28,3 +28,8 @@ it('waits for a terminal outcome and rejects unrelated session events',()=>{
 it('uses a verified turn identity when the input anchor fell outside the bounded page',()=>{
  expect(settledMemoryReply(idle(300,'completed',['current'],'current-turn'),[reply(299,'current-turn','Current result')])).toEqual({seq:299,text:'Current result'})
 })
+
+it('does not let the anchor fallback replace a response from a known turn',()=>{
+ const events=[input(1,'current'),reply(2,'current-turn','Current result'),reply(3,'different-turn','Unrelated result')]
+ expect(settledMemoryReply(idle(4,'completed',['current'],'current-turn'),events)).toEqual({seq:2,text:'Current result'})
+})

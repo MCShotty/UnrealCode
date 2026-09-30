@@ -38,7 +38,7 @@ function validateSettingsPatch(patch: Partial<Settings>): void {
   if (has('decisionSetupSeen') && typeof patch.decisionSetupSeen !== 'boolean') throw new Error('Invalid decision setup preference')
   if (has('decisionModel') && !bounded(patch.decisionModel, 1024)) throw new Error('Invalid decision model')
   if (has('glinerEnabled') && typeof patch.glinerEnabled !== 'boolean') throw new Error('Invalid GLiNER preference')
-  if (has('theme') && !['dark','light','system'].includes(patch.theme as string)) throw new Error('Invalid theme')
+  if (has('theme') && !['dark','ice-dark','light','system'].includes(patch.theme as string)) throw new Error('Invalid theme')
   if (has('executionMode') && !['plan','ask','agent'].includes(patch.executionMode as string)) throw new Error('Invalid execution mode')
   for (const key of ['notifications','warningNotifications','automaticUpdateChecks','taskIsolation','autoCompaction'] as const) if (has(key) && typeof patch[key] !== 'boolean') throw new Error('Invalid saved app preference')
   if(has('updateChannel')&&!['stable','preview'].includes(patch.updateChannel as string))throw Error('Invalid update channel')
@@ -103,7 +103,7 @@ export function updateSettings(patch: Partial<Settings>): Settings {
   if (patch.taskIsolation !== undefined) { if (typeof patch.taskIsolation !== 'boolean') throw new Error('Invalid isolation preference'); next.taskIsolation = patch.taskIsolation }
   if (patch.executionMode !== undefined) { if (!['plan', 'ask', 'agent'].includes(patch.executionMode)) throw new Error('Invalid execution mode'); next.executionMode = patch.executionMode }
   if (patch.notifications !== undefined) { if (typeof patch.notifications !== 'boolean') throw new Error('Invalid notification preference'); next.notifications = patch.notifications }
-  if (patch.theme !== undefined && !['dark', 'light', 'system'].includes(patch.theme)) throw new Error('Invalid theme')
+  if (patch.theme !== undefined && !['dark', 'ice-dark', 'light', 'system'].includes(patch.theme)) throw new Error('Invalid theme')
   if (patch.layout) {
     const value = patch.layout
     if (![value.sessionWidth, value.activityWidth].every(Number.isFinite) ||

@@ -16,7 +16,7 @@ it('coalesces events, bounds global concurrency, and waits 20 seconds between up
  service.changed(owner,'a');service.changed(owner,'a');service.changed(owner,'b');service.changed(owner,'c');await vi.advanceTimersByTimeAsync(1)
  expect(starts).toEqual(['a','b']);service.changed(owner,'a');releases.shift()!();await vi.advanceTimersByTimeAsync(1);expect(starts).toEqual(['a','b','c']);releases.shift()!();releases.shift()!();await vi.advanceTimersByTimeAsync(19000);expect(starts).toHaveLength(3);await vi.advanceTimersByTimeAsync(1000);expect(starts).toEqual(['a','b','c','a']);releases.shift()!();service.close();await vi.advanceTimersByTimeAsync(60000);expect(starts).toHaveLength(4)
 })
-it.each(['profile','plan','turn','disable','failure','progress'])('discards an observer response after %s changes',async(change)=>{
+it.each(['profile','plan','turn','disable','failure','progress','events'])('discards an observer response after %s changes',async(change)=>{
  let epoch=0,enabled=true,release!:(value:any)=>void
  const memory={status:vi.fn(async()=>({settings:{enabled,globalConsent:true}})),generation:vi.fn(async()=>epoch),analyse:vi.fn(()=>new Promise(resolve=>release=resolve))}
  const cache={putTimeline:vi.fn()},owner={project:'p',index:{flush:vi.fn(),cache},owner:vi.fn()} as any;owner.owner.mockResolvedValue(owner)
@@ -30,6 +30,7 @@ it.each(['profile','plan','turn','disable','failure','progress'])('discards an o
  if(change==='turn')view.mockResolvedValue({...initial,workId:'new-work'} as any)
  if(change==='failure')view.mockResolvedValue({...initial,state:'failed',evidence:[...evidence,{seq:11,kind:'session.idle',text:'Required verification failed'}]} as any)
  if(change==='progress')view.mockResolvedValue({...initial,plan:{...initial.plan,updatedAt:'later',milestones:[{id:'verified',text:'Verify',state:'completed',evidence:['event:11']}]}} as any)
+ if(change==='events')view.mockResolvedValue({...initial,evidence:[...evidence,{seq:11,kind:'failure',text:'Tool failed'}]} as any)
  release({text:JSON.stringify({summary:'Working',phase:'working',evidence:[10]}),provider:'fixture',model:'fixture',usage:{inputTokens:1,outputTokens:1}})
  await pending;expect(cache.putTimeline).not.toHaveBeenCalled();service.close()
 })

@@ -14,7 +14,7 @@ export type Settings = {
   thinkingLevel: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   systemPrompt: string
   projectInstructions: Record<string, string>
-  theme: 'dark' | 'light' | 'system'
+  theme: 'dark' | 'ice-dark' | 'light' | 'system'
   layout: { sessionWidth: number; activityWidth: number; sessions: boolean; activity: boolean; focus: boolean }
   notifications: boolean
   warningNotifications: boolean
@@ -64,7 +64,7 @@ export type OperationLane = { id: string; sessionId: string; type: string; tool?
 export type ExecutionSummary = { operations: OperationLane[]; modelMs: number; toolWallMs: number; toolOverlapMs: number; modelCalls: number; approvalWaitMs?: number; hostWaitMs?: number }
 export type FileEntry = { name: string; path: string; directory: boolean; size: number }
 export type EditableFile = { path: string; revision: string; content: string; workspace: string }
-export type SkillEntry = { name: string; description: string; content: string; source?: 'built-in' | 'project' }
+export type SkillEntry = { name: string; description: string; content: string; source?: 'built-in' | 'project'; revision?: string; workspace?: string }
 export type DockerStatus = { ready: boolean; message: string; container?: string; phase?: 'checking'|'available'|'building'|'running'|'unavailable'; failure?: import('./failure').AppFailure }
 export type BridgeSessionConfig = { provider: Provider; model: string; baseUrl: string; thinkingLevel: string; serviceTier?:string; systemPrompt: string; disallowedTools: string[]; parentSessionId?: string; mode?: ExecutionMode; pendingMode?:ExecutionMode; workspaceId?: string; workspace?: 'project' | 'isolated'; queueTaskId?: string; teamEnabled?:boolean; teamManaged?:boolean; goalManaged?:boolean; specialist?:boolean }
 export type GitHubStatus = { installed: boolean; authenticated: boolean; account?: string; message: string }
@@ -197,9 +197,10 @@ export interface DesktopAPI {
   connectionGrant(grant: Omit<import('./connections').ConnectionGrant,'project'|'revision'>): Promise<void>
   connectionConnect(id: string,signIn: boolean): Promise<void>
   connectionDisconnect(id: string): Promise<void>
-  connectionResources(id: string): Promise<import('./connections').ConnectionResource[]>
+  connectionResources(id: string, cursor?: string): Promise<import('./connections').ConnectionPage<import('./connections').ConnectionResource>>
+  connectionCancelReferences(id: string): Promise<void>
   connectionResource(id: string,uri: string): Promise<string>
-  connectionPrompts(id: string): Promise<import('./connections').ConnectionPrompt[]>
+  connectionPrompts(id: string, cursor?: string): Promise<import('./connections').ConnectionPage<import('./connections').ConnectionPrompt>>
   connectionPrompt(id: string,name: string,args: Record<string,string>): Promise<string>
   hostApprovals(sessionId: string): Promise<import('./connections').HostApproval[]>
   hostRespond(sessionId: string,id: string,digest: string,allow: boolean): Promise<void>
@@ -211,9 +212,9 @@ export interface DesktopAPI {
   workspaceRetain(id: string): Promise<void>
   workspaceArchive(id:string):Promise<boolean>
   workspaceRestore(id:string):Promise<boolean>
-  editorRead(path: string): Promise<EditableFile>
+  editorRead(path: string, workspace?: string): Promise<EditableFile>
   editorSave(path: string, revision: string, content: string, workspace: string): Promise<EditableFile>
-  editorBase(path: string): Promise<string>
+  editorBase(path: string, workspace?: string): Promise<string>
   editorExternal(path: string): Promise<void>
   sessionConfig(sessionId: string): Promise<BridgeSessionConfig>
   sessionMode(sessionId: string, mode: ExecutionMode): Promise<void>
@@ -238,7 +239,7 @@ export interface DesktopAPI {
   handoffStart(sessionId: string, summary: string, destination: Pick<BridgeSessionConfig, 'provider' | 'model' | 'baseUrl' | 'thinkingLevel'>): Promise<{ sessionId: string }>
   searchHistory(query: string, sessionId?: string, allProjects?: boolean): Promise<import('./workflow').SearchHit[]>
   getEventWindow(sessionId: string, sequence: number): Promise<AgentEvent[]>
-  onNavigate(callback: (target: { project: string; sessionId: string; seq?: number }) => void): () => void
+  onNavigate(callback: (target: { project: string; sessionId?: string; seq?: number }) => void): () => void
   onWorkflowChanged(callback: (project: string) => void): () => void
   checkpoints(): Promise<Checkpoint[]>
   checkpointPreview(id: string, path: string): Promise<CheckpointPreview>
@@ -292,7 +293,7 @@ export interface DesktopAPI {
   createSession(config: BridgeSessionConfig,options?:import('./teams').TeamOptions): Promise<{ sessionId: string }>
   openSession(sessionId: string): Promise<void>
   selectSession(sessionId: string): Promise<void>
-  sendMessage(sessionId: string, prompt: string, messageId: string, imageIds?:string[]): Promise<void>
+  sendMessage(sessionId: string, prompt: string, messageId: string, imageIds?:string[],fieldnotes?:import('./fieldnotes').FieldnoteSelection): Promise<void>
   stopSession(sessionId: string): Promise<void>
   forkSession(sessionId: string): Promise<{ sessionId: string }>
   getEvents(sessionId: string, after: number): Promise<AgentEvent[]>
@@ -302,7 +303,33 @@ export interface DesktopAPI {
   gitChanges(): Promise<string[] | null>
   gitDiff(relative: string): Promise<string>
   listSkills(): Promise<SkillEntry[]>
-  saveSkill(name: string, content: string): Promise<void>
+  computerStatus():Promise<import('./computer').ComputerStatus>
+  computerEnable(enabled:boolean):Promise<import('./computer').ComputerStatus>
+  computerWindows():Promise<import('./computer').ComputerWindow[]>
+  computerPreview(windowId:string):Promise<import('./computer').ComputerObservation>
+  computerLatest():Promise<import('./computer').ComputerObservation|null>
+  computerGrant(sessionId:string,windows:string[],control:boolean,reviewedDestination:string):Promise<import('./computer').ComputerStatus>
+  computerControl(action:'pause'|'resume'|'stop'):Promise<import('./computer').ComputerStatus>
+  computerMigrate(ids:string[]):Promise<void>
+  computerPin(sessionId:string,imageRef:string):Promise<{id:string;name:string;width:number;height:number}>
+  onComputerChanged(callback:()=>void):()=>void
+  fieldnoteStatus():Promise<import('./fieldnotes').FieldnoteStatus>
+  fieldnoteList(query?:import('./fieldnotes').FieldnoteQuery):Promise<import('./fieldnotes').FieldnotePage>
+  fieldnoteGet(id:string):Promise<import('./fieldnotes').Fieldnote>
+  fieldnoteSave(value:import('./fieldnotes').FieldnoteInput):Promise<import('./fieldnotes').Fieldnote>
+  fieldnoteDelete(id:string,revision:number):Promise<void>
+  fieldnoteRetry(id:string):Promise<void>
+  fieldnoteTargets():Promise<Array<{id:string;path:string;name:string}>>
+  fieldnotePickProject():Promise<{id:string;path:string;name:string}|null>
+  fieldnoteSessions(projectId:string):Promise<SessionInfo[]>
+  fieldnoteDrafts():Promise<import('./fieldnotes').FieldnoteDraft[]>
+  fieldnoteDraft(key:string,value:import('./fieldnotes').FieldnoteInput|null):Promise<void>
+  fieldnoteSuggest(query:string,sessionId?:string):Promise<import('./fieldnotes').FieldnotePage>
+  fieldnoteReceipts(sessionId:string):Promise<import('./fieldnotes').FieldnoteReceipt[]>
+  fieldnoteOpen(id:string):Promise<void>
+  fieldnoteExport():Promise<string|null>
+  onFieldnotesChanged(callback:()=>void):()=>void
+  saveSkill(name: string, content: string, revision?: string, workspace?: string): Promise<SkillEntry>
   deleteSkill(name: string): Promise<void>
   terminalStart(): Promise<string>
   terminalWrite(id: string, data: string): Promise<void>

@@ -245,7 +245,7 @@ it('preserves an ambiguous duplicate-root recovery journal',async()=>{
  expect(await exists(journal)).toBe(true)
 })
 it('backs up before migration and does not accept future schema versions',async()=>{
- const {data,service}=await fixture();await fs.writeFile(join(data,'settings.json'),'{}');const backup=await service.migrate();expect(backup).toBeTruthy();expect(await exists(join(backup!,'manifest.json'))).toBe(true);expect(await service.migrate()).toBeUndefined();await fs.writeFile(join(data,'data-version.json'),'{"schema":2}');await expect(service.migrate()).rejects.toThrow('older')
+ const {data,service}=await fixture();await fs.writeFile(join(data,'settings.json'),'{}');const backup=await service.migrate();expect(backup).toBeTruthy();expect(await exists(join(backup!,'manifest.json'))).toBe(true);expect(await service.migrate()).toBeUndefined();await fs.writeFile(join(data,'data-version.json'),'{"schema":3}');await expect(service.migrate()).rejects.toThrow('older')
 })
 it('restores valid settings while preserving a damaged current settings file',async()=>{const {data,service}=await fixture();await fs.writeFile(join(data,'settings.json'),'{"theme":"light"}');const backup=join(root,'backup');await service.export(backup);await fs.writeFile(join(data,'settings.json'),'{damaged');await expect(service.migrate()).rejects.toThrow();const prior=await service.restore(backup);expect(await fs.readFile(join(prior,'metadata','settings.json'),'utf8')).toBe('{damaged');expect(JSON.parse(await fs.readFile(join(data,'settings.json'),'utf8')).theme).toBe('light')})
 it('halts restore before replacing settings when a memory dump is missing',async()=>{

@@ -1,40 +1,59 @@
 # Verify an UnrealCode Windows release
 
-UnrealCode 1.0.1 is **not Authenticode signed**. These steps compare the installer
-with the SHA-256 manifest published on GitHub. The corrected same-version 1.0.1
-replacement was built locally after GitHub Actions billing blocked runner startup;
-it has **no GitHub Artifact Attestation**. These checks do not make
-Windows display a verified publisher or eliminate SmartScreen warnings.
+Current release: **1.0.3**. The installer is **not Authenticode signed**.
+SHA-256 verifies downloaded bytes against the release manifest; GitHub Artifact
+Attestations verify the hosted build's repository, workflow, tag and commit.
+Neither establishes a trusted Windows publisher or removes SmartScreen warnings.
 
-Download `UnrealCode-Setup-1.0.1.exe` and `SHA256SUMS` from the same
-[GitHub release](https://github.com/MCShotty/UnrealCode/releases/tag/v1.0.1).
-In PowerShell, from the download folder:
+Download `UnrealCode-Setup-1.0.3.exe` and `SHA256SUMS` from the same
+[GitHub release](https://github.com/MCShotty/UnrealCode/releases/tag/v1.0.3).
+In PowerShell, from that download folder:
 
 ```powershell
 $expected = (Get-Content .\SHA256SUMS -Raw).Trim() -split '  '
-if ($expected.Count -ne 2 -or $expected[1] -ne 'UnrealCode-Setup-1.0.1.exe') {
+if ($expected.Count -ne 2 -or $expected[1] -ne 'UnrealCode-Setup-1.0.3.exe') {
     throw 'Unexpected SHA256SUMS format'
 }
-$actual = (Get-FileHash .\UnrealCode-Setup-1.0.1.exe -Algorithm SHA256).Hash
+$actual = (Get-FileHash .\UnrealCode-Setup-1.0.3.exe -Algorithm SHA256).Hash
 if ($actual -ne $expected[0]) { throw 'Installer checksum mismatch' }
 ```
 
-The normal release workflow builds from a Git tag, runs tests and audits, and
-creates an attestation. It could not run for this replacement. The published
-[workflow](../.github/workflows/desktop-release.yml),
-[packaging script](scripts/build-release.mjs), and
-[checksum script](scripts/sha256-release.mjs) show the build procedure. The
-[replacement acceptance record](REPLACEMENT_ACCEPTANCE_1.0.1.md) documents
-local tests and the bypass. The original 1.0.1 release's attestation applies
-only to its archived installer, **not** to the replacement.
+With GitHub CLI installed, verify provenance against this repository and workflow:
 
-A matching hash establishes integrity relative to the downloaded manifest;
-it does not prove who built the installer or that it is free of defects. If
-the checksum verification fails, do not run the installer; report it using
-[SECURITY.md](../SECURITY.md).
+```powershell
+gh attestation verify .\UnrealCode-Setup-1.0.3.exe --repo MCShotty/UnrealCode --signer-workflow MCShotty/UnrealCode/.github/workflows/desktop-release.yml --source-ref refs/tags/v1.0.3 --deny-self-hosted-runners
+```
+
+For an exact commit check, fetch the tag in a clone of this repository, resolve
+`git rev-parse 'v1.0.3^{commit}'`, and add that SHA with `--source-digest`.
+The [release workflow](../.github/workflows/desktop-release.yml),
+[packaging script](scripts/build-release.mjs), and
+[checksum script](scripts/sha256-release.mjs) are public. A local candidate hash
+can differ from the hosted installer; always use the manifest for your download.
+
+If integrity or provenance verification fails, do not run the installer. Report
+it using [SECURITY.md](../SECURITY.md). A passing result does not establish that
+the software is free of defects.
 
 ## Updating an existing installation
 
-Close UnrealCode after saving buffers and settling active tasks, then run the verified installer. Version 1.0.0 needs this manual upgrade to acquire release notifications. An earlier private 1.0.1 installation also requires manual reinstall of the corrected 1.0.1 release; its version string is unchanged and cannot trigger a newer-version notice. Version 1.0.1 checks GitHub when due after startup and once daily by default; this private repository may require the existing host `gh` login. Notifications open the release/changelog page and do not install an executable. The signature checks for automatic installation remain in place.
+Save buffers, settle active tasks, close UnrealCode, then run the verified
+installer. Existing settings and history are preserved through normal migration
+and recovery checks. Computer remains disabled by default; prior grants are not
+restored automatically. Fieldnote originals work without memory enablement.
 
-A local candidate checksum may differ from the published replacement. Always compare against the manifest attached to the release you downloaded.
+Unsigned updates require manual installation. Settings → Recovery → Application
+updates supports release notifications, channel selection, manual checks and
+an automatic-check toggle. Checks run when due after startup and at most daily;
+notifications open GitHub and never download, execute or restart an installer.
+Version 1.0.0 needs a manual upgrade to acquire release notifications.
+
+## Historical 1.0.1 replacement
+
+The same-version 1.0.1 replacement was built locally after GitHub Actions billing
+blocked runner startup, under an explicit one-time owner authorization. It has
+**no GitHub build attestation**. The original 1.0.1 attestation belongs only to its
+archived installer. See the [replacement acceptance record](REPLACEMENT_ACCEPTANCE_1.0.1.md).
+This exception does not apply to 1.0.3; published earlier tags and assets remain
+unchanged. Installing over the historical 1.0.1 replacement is a normal newer-version
+manual upgrade.

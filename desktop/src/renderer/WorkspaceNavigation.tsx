@@ -1,11 +1,11 @@
-import { Activity, BarChart3, BookOpen, Brain, Clock3, Code2, File, Folder, GitBranch, GitPullRequest, Globe2, ListTodo, MessageCircle, Plus, Search, Settings2, SlidersHorizontal, TerminalSquare, Unplug, Zap } from 'lucide-react'
+import { Monitor, Activity, BarChart3, BookOpen, Brain, Clock3, Code2, File, Folder, GitBranch, GitPullRequest, Globe2, ListTodo, MessageCircle, Plus, Search, Settings2, SlidersHorizontal, TerminalSquare, Zap } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useReducedMotion } from './useReducedMotion'
 import { BrandMark } from './BrandMark'
 import { spatial } from './motion'
 import { ExpressiveButton } from './ExpressiveButton'
 
-export type View = 'control' | 'memory' | 'browser' | 'documents' | 'hooks' | 'context' | 'connections' | 'diagnostics' | 'workflow' | 'review' | 'projects' | 'chat' | 'sessions' | 'files' | 'skills' | 'usage' | 'github' | 'settings' | 'terminal'
+export type View = 'computer' | 'fieldnotes' | 'control' | 'memory' | 'browser' | 'documents' | 'hooks' | 'context' | 'connections' | 'diagnostics' | 'workflow' | 'review' | 'projects' | 'chat' | 'sessions' | 'files' | 'skills' | 'usage' | 'github' | 'settings' | 'terminal'
 export const navigation: { id: View; label: string; icon: typeof Folder; group: string }[] = [
   { id: 'chat', label: 'Chat', icon: MessageCircle, group: 'Workspace' },
   { id: 'sessions', label: 'Sessions', icon: Clock3, group: 'Workspace' },
@@ -13,14 +13,15 @@ export const navigation: { id: View; label: string; icon: typeof Folder; group: 
   { id: 'review', label: 'Review', icon: GitBranch, group: 'Workspace' },
   { id: 'workflow', label: 'Workflow', icon: ListTodo, group: 'Workspace' },
   { id: 'control', label: 'Task controls', icon: SlidersHorizontal, group: 'Workspace' },
+  { id: 'computer', label: 'Computer', icon: Monitor, group: 'Tools & knowledge' },
   { id: 'browser', label: 'Browser', icon: Globe2, group: 'Tools & knowledge' },
   { id: 'documents', label: 'Documents', icon: BookOpen, group: 'Tools & knowledge' },
   { id: 'terminal', label: 'Terminal', icon: TerminalSquare, group: 'Tools & knowledge' },
   { id: 'github', label: 'GitHub', icon: GitPullRequest, group: 'Tools & knowledge' },
   { id: 'context', label: 'Context', icon: BookOpen, group: 'Tools & knowledge' },
-  { id: 'skills', label: 'Skills', icon: Code2, group: 'Tools & knowledge' },
+  { id: 'skills', label: 'Abilities', icon: Code2, group: 'Tools & knowledge' },
+  { id: 'fieldnotes', label: 'Fieldnotes', icon: File, group: 'Tools & knowledge' },
   { id: 'memory', label: 'Memory', icon: Brain, group: 'Tools & knowledge' },
-  { id: 'connections', label: 'Connections', icon: Unplug, group: 'Tools & knowledge' },
   { id: 'hooks', label: 'Hooks', icon: Zap, group: 'Tools & knowledge' },
   { id: 'projects', label: 'Projects', icon: Folder, group: 'Manage' },
   { id: 'usage', label: 'Usage', icon: BarChart3, group: 'Manage' },
@@ -40,10 +41,10 @@ export function WorkspaceNavigation({ view, onNavigate, onNew, onCommands, ready
     </div>
     <nav aria-label="Main navigation">{['Workspace', 'Tools & knowledge', 'Manage'].map(group => <section className="nav-group" key={group} aria-label={group}>
       <h2>{group}</h2>
-      {navigation.filter(item => item.group === group).map(({ id, label, icon: Icon }) => <button className={`nav-item ${view === id ? 'active' : ''}`} key={id} aria-label={label} aria-current={view === id ? 'page' : undefined} title={label} onClick={() => onNavigate(id)}>
-        {view === id && (reduced ? <span className="active-nav-bg"/> : <motion.span layoutId="active-nav" className="active-nav-bg" transition={spatial.fast}/>)}
+      {navigation.filter(item => item.group === group).map(({ id, label, icon: Icon }) => { const selected = view === id || (id === 'skills' && view === 'connections'); return <button className={`nav-item ${selected ? 'active' : ''}`} key={id} aria-label={label} aria-current={selected ? 'page' : undefined} title={label} onClick={() => onNavigate(id)}>
+        {selected && (reduced ? <span className="active-nav-bg"/> : <motion.span layoutId="active-nav" className="active-nav-bg" transition={spatial.fast}/>)}
         <Icon size={19}/><span className="nav-label"><span className="full-nav-label">{label}</span><span className="compact-nav-label">{({ control: 'Controls', connections: 'Connect', diagnostics: 'Diagnose' } as Partial<Record<View, string>>)[id] || label}</span></span>
-      </button>)}
+      </button>})}
     </section>)}</nav>
     <div className="rail-bottom"><div className="agent-ready" title={ready ? 'Container connected' : 'Browse cached history; connect Docker to run tasks'}><span className={`status-dot ${ready ? 'on' : ''}`}/><div><strong>{ready ? 'Ready to work' : 'Offline workspace'}</strong><small>{ready ? 'Container connected' : 'Cached history available'}</small></div></div><small title={project}>{project}</small><small>v{version}</small></div>
   </aside>

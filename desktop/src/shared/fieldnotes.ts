@@ -1,0 +1,15 @@
+export type FieldnotePointer = { projectId: string; projectPath: string; projectName: string; sessionId?: string; sessionTitle?: string }
+export type FieldnoteInterpretation = { summary: string; topics: string[]; applicability: string; quotes: string[]; revision: number; provider: string; model: string; createdAt: string }
+export type FieldnoteSync = { state: 'local' | 'pending' | 'analysing' | 'retaining' | 'indexed' | 'failed' | 'disabled'; attempts: number; error?: string; documentId?: string; generation?: number; retryAt?: string }
+export type Fieldnote = { id: string; revision: number; title: string; body: string; pointer: FieldnotePointer; enabled: boolean; indexing: boolean; createdAt: string; updatedAt: string; deletedAt?: string; interpretation?: FieldnoteInterpretation; sync: FieldnoteSync }
+export type FieldnoteInput = Pick<Fieldnote, 'title' | 'body' | 'pointer' | 'enabled' | 'indexing'> & { id?: string; expectedRevision?: number }
+export type FieldnoteDraft = { key: string; value: FieldnoteInput; updatedAt: string }
+export type FieldnoteQuery = { query?: string; cursor?: string; limit?: number; includeDisabled?: boolean; project?: string; sessionId?: string; suggest?: boolean }
+export type FieldnotePage = { notes: Fieldnote[]; nextCursor?: string; total: number; generation: number; message?: string }
+export type FieldnoteSelection = { include: string[]; exclude: string[] }
+export type FieldnoteSnapshot = { id: string; revision: number; title: string; text: string; pointer: FieldnotePointer; reason: string; redacted?: boolean }
+export type FieldnoteReceipt = { messageId: string; project: string; workspace: string; sessionId: string; createdAt: string; state: 'prepared' | 'accepted'; notes: FieldnoteSnapshot[]; omitted: Array<{id: string; title: string; reason: string}> }
+export type FieldnoteStatus = { ready: boolean; count: number; pending: number; message?: string }
+export const FIELDNOTE_MAX_BYTES = 16 * 1024
+export const FIELDNOTE_CONTEXT_MAX_BYTES = 16 * 1024
+export const FIELDNOTE_CONTEXT_MAX_NOTES = 8

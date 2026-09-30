@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { writeFileSync,mkdirSync,readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -48,4 +49,4 @@ if(process.platform==='win32'){
  }
 }
 const {build,Platform}=require('electron-builder')
-await build({targets:Platform.WINDOWS.createTarget('nsis'),publish:'never',config:{...(output?{directories:{output}}:{}),publish:{provider:'github',owner:'MCShotty',repo:'UnrealCode',channel,releaseType:channel==='preview'?'prerelease':'release'},generateUpdatesFilesForAllChannels:false,...(publisher?{win:{publisherName:publisher}}:{}),...(stable?{forceCodeSigning:true}:{})}})
+await build({targets:Platform.WINDOWS.createTarget('nsis'),publish:'never',config:{afterSign:async context=>{const directory=join(context.appOutDir,'resources','computer-host'),file=join(directory,'UnrealCode.ComputerHost.exe'),manifest=join(directory,'manifest.json');const value=JSON.parse(readFileSync(manifest,'utf8'));value.sha256=createHash('sha256').update(readFileSync(file)).digest('hex');writeFileSync(manifest,JSON.stringify(value,null,2))},...(output?{directories:{output}}:{}),publish:{provider:'github',owner:'MCShotty',repo:'UnrealCode',channel,releaseType:channel==='preview'?'prerelease':'release'},generateUpdatesFilesForAllChannels:false,...(publisher?{win:{publisherName:publisher}}:{}),...(stable?{forceCodeSigning:true}:{})}})

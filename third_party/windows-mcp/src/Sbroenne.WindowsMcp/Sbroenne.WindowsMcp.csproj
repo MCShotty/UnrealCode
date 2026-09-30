@@ -1,0 +1,59 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsAsErrors />
+    <!-- Disable CA1822 (CA1822: Member can be static) - acceptable for DI container registrations and alternative patterns -->
+    <NoWarn>$(NoWarn);CA1822;CA1805</NoWarn>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <RootNamespace>Sbroenne.WindowsMcp</RootNamespace>
+    <AssemblyName>Sbroenne.WindowsMcp</AssemblyName>
+    <Description>MCP Server for Windows automation - UI automation, mouse, keyboard, window management, and screenshots</Description>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!-- Version properties - updated by release workflow -->
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+
+    <!-- Production optimization: exclude debug symbols and XML docs from publish -->
+    <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+    <PublishDocumentationFile Condition="'$(Configuration)' == 'Release'">false</PublishDocumentationFile>
+
+    <!-- Optimize single-file size when publishing as self-contained -->
+    <EnableCompressionInSingleFile Condition="'$(Configuration)' == 'Release'">true</EnableCompressionInSingleFile>
+
+    <!-- WinRT/C#/Win projection trimming for smaller output -->
+    <CsWinRTEnableLogging>false</CsWinRTEnableLogging>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="Program.cs" />
+    <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Abstractions" />
+    <PackageReference Include="Interop.UIAutomationClient" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Sbroenne.WindowsMcp.Tests" />
+  </ItemGroup>
+
+  <!-- Windows Forms is enabled via UseWindowsForms; no WPF dependency needed -->
+
+</Project>

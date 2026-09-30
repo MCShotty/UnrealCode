@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
@@ -120,7 +120,7 @@ export async function listSkills(root: string): Promise<SkillEntry[]> {
     totalBytes += bytes.length
     const content = bytes.toString('utf8')
     const description = content.match(/^description:\s*(.+)$/m)?.[1]?.trim() || ''
-    result.push({ name, description, content, source: 'project' })
+    result.push({ name, description, content, source: 'project', revision: createHash('sha256').update(bytes).digest('hex'), workspace: root })
   }
   return result.sort((a, b) => a.name.localeCompare(b.name))
 }
@@ -139,7 +139,7 @@ export async function listAvailableSkills(root: string): Promise<SkillEntry[]> {
       if (!entry.isDirectory() || !skillName.test(entry.name)) continue
       const content = (await readBoundedRegularFile(join(base, entry.name, 'SKILL.md'), skillLimit)).toString('utf8')
       const description = content.match(/^description:\s*(.+)$/m)?.[1]?.trim() || ''
-      builtins.set(entry.name, { name: entry.name, description, content, source: 'built-in' })
+      builtins.set(entry.name, { name: entry.name, description, content, source: 'built-in', revision: 'missing', workspace: root })
     }
     break
   }
@@ -147,14 +147,19 @@ export async function listAvailableSkills(root: string): Promise<SkillEntry[]> {
   return [...builtins.values()].sort((a, b) => a.name.localeCompare(b.name))
 }
 
-export async function saveSkill(root: string, name: string, content: string): Promise<void> {
+export async function saveSkill(root: string, name: string, content: string, expectedRevision = 'missing'): Promise<SkillEntry> {
   skillDir(root, name)
   if (Buffer.byteLength(content, 'utf8') > skillLimit) throw new Error('Skill file is too large')
   if (!/^---\s*\r?\n[\s\S]*?\r?\n---/.test(content) || !/^name:\s*\S+/m.test(content) || !/^description:\s*\S+/m.test(content)) {
     throw new Error('SKILL.md needs YAML frontmatter with name and description')
   }
+  if (content.match(/^name:\s*(.+)$/m)?.[1]?.trim() !== name) throw new Error('The frontmatter name must match the skill folder name')
+  if (expectedRevision !== 'missing' && !/^[a-f0-9]{64}$/.test(expectedRevision)) throw new Error('Reload the skill before updating it')
   return withSkillLock(root, name, async (root) => {
-    await projectWrite(root,`.harness/skills/${name}/SKILL.md`,Buffer.from(content))
+    const bytes = Buffer.from(content)
+    try { await projectWrite(root,`.harness/skills/${name}/SKILL.md`,bytes,{expected:expectedRevision}) }
+    catch (error) { throw new Error(expectedRevision === 'missing' ? 'The skill could not be created. Choose an unused folder name; an existing skill will not be replaced.' : 'The skill could not be saved. Reload its latest revision before retrying; your draft is retained.', {cause:error}) }
+    return {name,content,description:content.match(/^description:\s*(.+)$/m)?.[1]?.trim()||'',source:'project',revision:createHash('sha256').update(bytes).digest('hex'),workspace:root}
   })
 }
 

@@ -1,0 +1,346 @@
+using Microsoft.Extensions.AI;
+using ModelContextProtocol.Server;
+
+namespace Sbroenne.WindowsMcp.Prompts;
+
+/// <summary>
+/// Copilot-focused prompt templates for canonical Windows MCP workflows.
+/// All workflows use explicit window handles for targeting.
+/// </summary>
+[McpServerPromptType]
+public sealed class WindowsAutomationPrompts
+{
+    /// <summary>Canonical workflow for Windows UI automation. Find handle first, then interact.</summary>
+    /// <param name="goal">What you want to achieve (1 sentence). Example: 'Click the Settings gear and enable Dark Mode'.</param>
+    /// <param name="target">App/window identifier (partial title match). Example: 'Visual Studio Code' or 'Notepad'.</param>
+    /// <returns>A multi-message prompt template.</returns>
+    [McpServerPrompt(Name = "windows_mcp_quickstart")]
+    public static IEnumerable<ChatMessage> Quickstart(
+        string goal,
+        string target)
+    {
+        return
+        [
+            new(ChatRole.System,
+                "You are operating a Windows automation MCP server with focused tools for app launching and UI interaction. " +
+                "Launch with app(programPath='...') OR find existing windows with window_management(action='find'). " +
+                WindowsAutomationGuidance.LaunchTargetInstructions + " " +
+                "Use mouse_control and keyboard_control only as fallbacks. " +
+                "Browser automation is fully supported: Edge and Chrome page content (links, buttons, forms) is discoverable via ui_* tools using ARIA labels and visible text. " +
+                "Use the windows_mcp_browser_automation prompt for a browser-specific workflow."),
+            new(ChatRole.User,
+                $"Goal: {goal}\n" +
+                $"App: {target}\n" +
+                "\n" +
+                "Step 1 - Observe launch or existing windows (choose one):\n" +
+                $"• app(programPath='{target}') — observe launch; returns a handle only when one window is identified\n" +
+                $"• window_management(action='find', title='{target}') — find already-running app\n" +
+                "\n" +
+                "Step 2 - Resolve the intended window:\n" +
+                WindowsAutomationGuidance.LaunchTargetInstructions + "\n\n" +
+                "Step 3 - Interact only with the identified window:\n" +
+                "• Find: ui_find(windowHandle='<handle>', nameContains='...') — discover elements\n" +
+                "• Discover: ui_find(windowHandle='<handle>', nameContains='...', requireUnique=true) — obtain an observed ID\n" +
+                "• Click: ui_click(windowHandle='<handle>', elementId='<observed-id>') — click buttons, tabs, checkboxes\n" +
+                "• Type: ui_type(windowHandle='<handle>', elementId='<observed-id>', text='...') — enter text\n" +
+                "• Read: ui_read(windowHandle='<handle>', elementId='<observed-id>') — get only this element's text\n" +
+                "• Read table: ui_read_table(windowHandle='<handle>', elementId='<observed-grid-id>') — extract structured rows + headers\n" +
+
+                "• Save: file_save(windowHandle='<handle>', filePath='...') — saves files, handles Save As dialogs automatically\n" +
+                "• Open: file_open(windowHandle='<handle>', filePath='...') — opens an existing file, handles Open dialogs automatically\n" +
+                "• Clipboard: clipboard(action='get') / clipboard(action='set', text='...') — fastest bulk text IO; pair with copy/paste hotkeys\n" +
+                "• Batch: ui_batch(windowHandle='<handle>', steps='[...]') — combine steps; discover fresh controls for reusable workflows\n" +
+                "\n" +
+                "If you don't know element names:\n" +
+                "• screenshot_control(target='window', windowHandle='<handle>') — see numbered elements; image stays omitted by default to save tokens\n" +
+                "\n" +
+                "Fallbacks (only if ui_* tools fail):\n" +
+                "• mouse_control(action='click', windowHandle='<handle>', x=..., y=...) — use clickablePoint from find result\n" +
+                "• keyboard_control(action='press', key='s', modifiers='ctrl') — for hotkeys (ensure window is active)")
+        ];
+    }
+
+    /// <summary>Find a UI element and click it using window handle.</summary>
+    /// <param name="windowTitle">Window title to find (partial match). Example: 'Visual Studio Code', 'Notepad'.</param>
+    /// <param name="elementDescription">What you want to click. Example: 'Save button', 'OK', 'Settings gear'.</param>
+    /// <param name="nameContains">Optional element name substring. Example: 'Save' or 'OK'.</param>
+    /// <param name="automationId">Optional AutomationId if known (most reliable).</param>
+    /// <returns>A multi-message prompt template.</returns>
+    [McpServerPrompt(Name = "windows_mcp_find_and_click")]
+    public static IEnumerable<ChatMessage> FindAndClick(
+        string windowTitle,
+        string elementDescription,
+        string? nameContains = null,
+        string? automationId = null)
+    {
+        return
+        [
+            new(ChatRole.System,
+                "First find the window handle, discover the target with ui_find, then use ui_click with its returned ID. " +
+                "Use mouse_control only as fallback when ui_click fails."),
+            new(ChatRole.User,
+                $"Window: {windowTitle}\n" +
+                $"Click target: {elementDescription}\n" +
+                (string.IsNullOrWhiteSpace(automationId) ? "" : $"AutomationId: {automationId}\n") +
+                (string.IsNullOrWhiteSpace(nameContains) ? "" : $"nameContains: {nameContains}\n") +
+                "\n" +
+                "Step 1: Find the window:\n" +
+                $"window_management(action='find', title='{windowTitle}')\n" +
+                "\n" +
+                "Step 2: Click the element (using handle from step 1):\n" +
+                "• ui_click(windowHandle='<handle>', elementId='<ID returned by ui_find>')\n" +
+                "• For checkboxes: ui_click also handles toggle state automatically.\n" +
+                "\n" +
+                "If click fails, use mouse_control(action='click', windowHandle='<handle>', x=..., y=...) with element's clickablePoint.")
+        ];
+    }
+
+    /// <summary>Enter text into a field using window handle.</summary>
+    /// <param name="windowTitle">Window title to find (partial match). Example: 'Visual Studio Code', 'Notepad'.</param>
+    /// <param name="text">The text to enter.</param>
+    /// <param name="fieldDescription">What field you want to type into. Example: 'Search box', 'Username field'.</param>
+    /// <param name="nameContains">Optional element name substring for the target Edit control.</param>
+    /// <param name="automationId">Optional AutomationId if known.</param>
+    /// <param name="clearFirst">Whether to clear existing text before typing (default: true).</param>
+    /// <returns>A multi-message prompt template.</returns>
+    [McpServerPrompt(Name = "windows_mcp_type_text")]
+    public static IEnumerable<ChatMessage> TypeText(
+        string windowTitle,
+        string text,
+        string fieldDescription,
+        string? nameContains = null,
+        string? automationId = null,
+        bool clearFirst = true)
+    {
+        return
+        [
+            new(ChatRole.System,
+                "First find the window handle and discover the input ID, then use ui_type. Only use keyboard_control as fallback."),
+            new(ChatRole.User,
+                $"Window: {windowTitle}\n" +
+                $"Field: {fieldDescription}\n" +
+                $"Text: {text}\n" +
+                (string.IsNullOrWhiteSpace(automationId) ? "" : $"AutomationId: {automationId}\n") +
+                (string.IsNullOrWhiteSpace(nameContains) ? "" : $"nameContains: {nameContains}\n") +
+                $"clearFirst: {clearFirst}\n" +
+                "\n" +
+                "Step 1: Find the window:\n" +
+                $"window_management(action='find', title='{windowTitle}')\n" +
+                "\n" +
+                "Step 2: Type into the field (using handle from step 1):\n" +
+                $"ui_type(windowHandle='<handle>', elementId='<ID returned by ui_find>', text='{text}', clearFirst={clearFirst.ToString().ToLowerInvariant()})\n" +
+                "\n" +
+                "If UIA typing fails: Activate window first, then use keyboard_control(action='type', text='...').")
+        ];
+    }
+
+    /// <summary>Element discovery strategy for Electron/Chromium apps (VS Code, Teams, Slack).</summary>
+    /// <param name="windowTitle">Window title to find (partial match). Example: 'Visual Studio Code', 'Teams', 'Slack'.</param>
+    /// <param name="intent">What you are trying to locate/click/type. Example: 'Settings', 'Search', 'Run and Debug'.</param>
+    /// <returns>A multi-message prompt template.</returns>
+    [McpServerPrompt(Name = "windows_mcp_electron_discovery")]
+    public static IEnumerable<ChatMessage> ElectronDiscovery(
+        string windowTitle,
+        string intent)
+    {
+        return
+        [
+            new(ChatRole.System,
+                "Electron apps expose large accessibility trees. This is the safest starting pattern for Electron, " +
+                "and for Edge/Chrome page content when accessibility is exposed. Use sortByProminence=true when multiple matches."),
+            new(ChatRole.User,
+                $"Window: {windowTitle}\n" +
+                $"Intent: {intent}\n" +
+                "\n" +
+                "Strategy:\n" +
+                $"1) window_management(action='find', title='{windowTitle}') → get handle\n" +
+                "2) screenshot_control(target='window', windowHandle='<handle>') — see numbered elements; keep default image omission for token efficiency.\n" +
+                "3) ui_find(windowHandle='<handle>', nameContains='...', sortByProminence=true) — discover elements.\n" +
+                "4) Prefer nameContains and namePattern for ARIA labels; automationId may be absent in Electron or browser content.\n" +
+                "5) ui_click(windowHandle='<handle>', elementId='<observed-id>') — click the element.\n" +
+                "6) For text input, use ui_type with the element.\n" +
+                "7) Real browser pages are best-effort today: start with page content before browser chrome.")
+        ];
+    }
+
+    /// <summary>Browser workflow for Edge/Chrome page content using the same semantic UI tools.</summary>
+    /// <param name="browser">Browser executable or window title. Example: 'msedge.exe', 'chrome.exe', 'Microsoft Edge'.</param>
+    /// <param name="goal">What you want to do on the page. Example: 'Open docs and click Sign in'.</param>
+    /// <param name="url">Optional URL to open when launching a new browser instance.</param>
+    /// <returns>A multi-message prompt template.</returns>
+    [McpServerPrompt(Name = "windows_mcp_browser_automation")]
+    public static IEnumerable<ChatMessage> BrowserAutomation(
+        string browser,
+        string goal,
+        string? url = null)
+    {
+        return
+        [
+            new(ChatRole.System,
+                "For Edge/Chrome page content, use semantic ui_* discovery with ARIA labels and visible text. " +
+                "app requests renderer accessibility; an existing browser may still expose a reduced tree. " +
+                "Browser chrome is best-effort: prefer shortcuts. For SSO, look for an existing signed-in window first. " +
+                WindowsAutomationGuidance.LaunchTargetInstructions),
+            new(ChatRole.User,
+                $"Browser: {browser}\n" +
+                $"Goal: {goal}\n" +
+                (string.IsNullOrWhiteSpace(url) ? "" : $"URL: {url}\n") +
+                "\n" +
+                "1) Observe existing windows or launch — prefer reusing an existing session:\n" +
+                $"   • window_management(action='find', title='{browser}') — find already-open browser first\n" +
+                (string.IsNullOrWhiteSpace(url)
+                    ? $"   • app(programPath='{browser}') — only if no existing window found\n"
+                    : $"   • app(programPath='{browser}', arguments='{url}') — only if no existing window found\n") +
+                "2) " + WindowsAutomationGuidance.LaunchTargetInstructions + "\n" +
+                "3) Use ui_find(windowHandle='<handle>', nameContains='...', controlType='Button'/'Hyperlink'/'Edit'/'Document', sortByProminence=true).\n" +
+                "4) Discover using nameContains or namePattern for page text and ARIA labels, then pass the returned ID to ui_click or ui_type.\n" +
+                "5) For browser chrome, prefer keyboard_control: Ctrl+L address bar, Ctrl+R refresh, Ctrl+Tab next tab.\n" +
+                "6) If names are unclear, use screenshot_control(target='window', windowHandle='<handle>') first; keep the default image omission for token efficiency.")
+        ];
+    }
+
+    /// <summary>Verification workflow when you need high confidence after an interaction.</summary>
+    /// <param name="windowTitle">Window title to find (partial match). Example: 'Visual Studio Code', 'Notepad'.</param>
+    /// <param name="expectedOutcome">What should have changed. Example: 'Dialog closed', 'Toggle is ON', 'Text appears'.</param>
+    /// <returns>A multi-message prompt template.</returns>
+    [McpServerPrompt(Name = "windows_mcp_verify_change")]
+    public static IEnumerable<ChatMessage> VerifyChange(
+        string windowTitle,
+        string expectedOutcome)
+    {
+        return
+        [
+            new(ChatRole.System,
+                "Prefer deterministic verification with ui_find (includes timeout) or ui_read. Window-level waits use window_management(action='wait_for')."),
+            new(ChatRole.User,
+                $"Window: {windowTitle}\n" +
+                $"Expected outcome: {expectedOutcome}\n" +
+                "\n" +
+                $"First: window_management(action='find', title='{windowTitle}') → get handle\n" +
+                "\n" +
+                "Verification options (choose the most deterministic):\n" +
+                "1) window_management(action='list', filter='...') — verify a closed window/dialog is absent.\n" +
+                "2) ui_find(windowHandle='<handle>', nameContains='...') — verify element exists (has built-in timeout).\n" +
+                "3) ui_read(windowHandle='<handle>', elementId='<observed-id>') — check text content changed.\n" +
+                "5) screenshot_control(target='window', windowHandle='<handle>', annotate=true) — visual element discovery.\n" +
+                "6) ui_read(windowHandle='<handle>') — for custom-rendered text (uses OCR fallback).")
+        ];
+    }
+
+    /// <summary>Atomic toggle operation using ui_click (handles toggle state automatically).</summary>
+    /// <param name="windowTitle">Window title to find (partial match). Example: 'Visual Studio Code', 'Settings'.</param>
+    /// <param name="toggleDescription">What toggle/checkbox you want to set. Example: 'Dark Mode toggle', 'Enable notifications'.</param>
+    /// <param name="desiredState">The desired state: 'on' or 'off'.</param>
+    /// <param name="nameContains">Optional element name substring.</param>
+    /// <param name="automationId">Optional AutomationId if known (most reliable).</param>
+    /// <returns>A multi-message prompt template.</returns>
+    [McpServerPrompt(Name = "windows_mcp_toggle_element")]
+    public static IEnumerable<ChatMessage> ToggleElement(
+        string windowTitle,
+        string toggleDescription,
+        string desiredState,
+        string? nameContains = null,
+        string? automationId = null)
+    {
+        return
+        [
+            new(ChatRole.System,
+                "Use ui_click for toggle operations. It handles checkbox/toggle states."),
+            new(ChatRole.User,
+                $"Window: {windowTitle}\n" +
+                $"Toggle target: {toggleDescription}\n" +
+                $"Desired state: {desiredState}\n" +
+                (string.IsNullOrWhiteSpace(automationId) ? "" : $"AutomationId: {automationId}\n") +
+                (string.IsNullOrWhiteSpace(nameContains) ? "" : $"nameContains: {nameContains}\n") +
+                "\n" +
+                "Step 1: Find the window:\n" +
+                $"window_management(action='find', title='{windowTitle}')\n" +
+                "\n" +
+                "Step 2: Click the toggle (using handle from step 1):\n" +
+                "ui_click(windowHandle='<handle>', elementId='<observed checkbox/radio ID from ui_find>')\n" +
+                "\n" +
+                "The response includes the current toggle state after clicking.\n" +
+                "Verify with ui_find to confirm the element state changed.")
+        ];
+    }
+
+    /// <summary>Save a file using file_save tool. Handles Save As dialog automatically if filePath provided.</summary>
+    /// <param name="windowTitle">Window title to find (partial match). Example: 'Word', 'Notepad', 'Visual Studio Code'.</param>
+    /// <param name="filePath">Optional: Full file path for Save As dialog (e.g., 'C:\temp\document.docx'). If omitted and Save As dialog appears, it returns a hint to interact manually.</param>
+    /// <returns>A multi-message prompt template.</returns>
+    [McpServerPrompt(Name = "windows_mcp_save_file")]
+    public static IEnumerable<ChatMessage> SaveFile(
+        string windowTitle,
+        string? filePath = null)
+    {
+        return
+        [
+            new(ChatRole.System,
+                "Use file_save for saving files. It handles Save As dialogs automatically. " +
+                "Works universally across all Windows apps including Office, Notepad, and Electron apps. " +
+                "Pattern based on FlaUI and pywinauto modal window handling."),
+            new(ChatRole.User,
+                $"Window: {windowTitle}\n" +
+                (string.IsNullOrWhiteSpace(filePath) ? "" : $"File path: {filePath}\n") +
+                "\n" +
+                "Step 1: Find the window:\n" +
+                $"window_management(action='find', title='{windowTitle}')\n" +
+                "\n" +
+                "Step 2: Save the file (using handle from step 1):\n" +
+                (string.IsNullOrWhiteSpace(filePath)
+                    ? "file_save(windowHandle='<handle>') — triggers Ctrl+S\n"
+                    : $"file_save(windowHandle='<handle>', filePath='{filePath}')\n") +
+                "\n" +
+                "What happens:\n" +
+                "• Sends Ctrl+S to the focused window\n" +
+                "• Waits up to 2 seconds for a Save As dialog\n" +
+                "• If dialog appears AND filePath provided: auto-fills filename and confirms\n" +
+                "• Handles overwrite confirmation dialogs automatically\n" +
+                "\n" +
+                "MANUAL WORKFLOW if file_save fails:\n" +
+                "1) keyboard_control(action='press', key='s', modifiers='ctrl') — trigger Ctrl+S\n" +
+                "2) window_management(action='find', title='Save As') — discover Save As dialog\n" +
+                "3) Use modal window handle with ui_type, ui_click:\n" +
+                "   - Discover the Edit input and Save button with ui_find on the modal window.\n" +
+                "   - ui_type(windowHandle='<modal_handle>', elementId='<input-id>', text='<filename>')\n" +
+                "   - ui_click(windowHandle='<modal_handle>', elementId='<save-button-id>')\n" +
+                "\n" +
+                "IMPORTANT: Do NOT use keyboard_control for typing file paths! " +
+                "Use ui_type with the modal window handle to directly interact with the filename field.")
+        ];
+    }
+
+    /// <summary>Wait for UI changes to complete before proceeding (dialogs closing, states changing).</summary>
+    /// <param name="windowTitle">Window title to find (partial match). Example: 'Visual Studio Code', 'Notepad'.</param>
+    /// <param name="waitType">What kind of wait: 'element_disappear', 'element_state', or 'input_idle'.</param>
+    /// <param name="targetDescription">What you're waiting for. Example: 'Save dialog to close', 'Toggle to be ON'.</param>
+    /// <returns>A multi-message prompt template.</returns>
+    [McpServerPrompt(Name = "windows_mcp_wait_for_change")]
+    public static IEnumerable<ChatMessage> WaitForChange(
+        string windowTitle,
+        string waitType,
+        string targetDescription)
+    {
+        return
+        [
+            new(ChatRole.System,
+                "Use ui_find with timeoutMs to wait for elements. Use window_management(wait_for) to wait for new windows."),
+            new(ChatRole.User,
+                $"Window: {windowTitle}\n" +
+                $"Wait type: {waitType}\n" +
+                $"Waiting for: {targetDescription}\n" +
+                "\n" +
+                $"First: window_management(action='find', title='{windowTitle}') → get handle\n" +
+                "\n" +
+                "Choose the appropriate wait approach:\n" +
+                "• window_disappear: window_management(action='list', filter='...') and confirm the handle is absent.\n" +
+                "  Use for: dialogs closing and popups dismissing; wait_for_state is only for state changes on a window that still exists.\n" +
+                "\n" +
+                "• element_appear: ui_find(windowHandle='<handle>', nameContains='...', timeoutMs=5000)\n" +
+                "  Use for: waiting for elements to appear (built-in retry with timeout).\n" +
+                "\n" +
+                "• input_idle: keyboard_control(action='wait_for_idle')\n" +
+                "  Use for: waiting for application to process input before sending more keystrokes.")
+        ];
+    }
+}

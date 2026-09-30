@@ -2,7 +2,7 @@ const { parentPort, workerData, threadId } = require('node:worker_threads')
 const { DatabaseSync } = require('node:sqlite')
 const db = new DatabaseSync(workerData.path, { readOnly: workerData.reader === true })
 db.exec('PRAGMA busy_timeout=2000; PRAGMA foreign_keys=ON;')
-if(db.prepare('PRAGMA user_version').get().user_version>4)throw Error('History cache version is newer than this application')
+if(db.prepare('PRAGMA user_version').get().user_version>5)throw Error('History cache version is newer than this application')
 if (!workerData.reader) {
   if (db.prepare('PRAGMA journal_mode=WAL').get().journal_mode !== 'wal') throw Error('History cache requires a local disk with SQLite WAL support')
   db.exec(`PRAGMA synchronous=NORMAL;
@@ -21,12 +21,16 @@ if (!workerData.reader) {
 } else db.exec('PRAGMA query_only=ON')
 const activityModule=require('./activity-projection.cjs')
 const timelineProjection=require('./timeline-projection.cjs')
+const fieldnotes=require('./fieldnotes-projection.cjs')
+if(!workerData.reader)fieldnotes.initialize(db)
 if(!workerData.reader)activityModule.initialize(db)
 const activity=activityModule.service(db)
+if(!workerData.reader)db.exec("CREATE INDEX IF NOT EXISTS activity_name ON activity_calls(project,session,json_extract(data,'$.name'))")
 if(!workerData.reader&&db.prepare('PRAGMA user_version').get().user_version<4){
  db.exec('BEGIN IMMEDIATE')
  try{for(const row of db.prepare('SELECT project,session FROM sessions').all())activity.project(row.project,row.session);db.exec('PRAGMA user_version=4; COMMIT')}catch(error){db.exec('ROLLBACK');throw error}
 }
+if(!workerData.reader)db.exec('PRAGMA user_version=5');
 const get = (value,key) => value && typeof value === 'object' ? value[key] ?? value[key[0].toLowerCase()+key.slice(1)] : undefined
 function searchable(event) {
   if(event.event === 'operation.update') { const s=get(event.payload,'State');return JSON.stringify({command:get(get(s,'Input'),'Command'),output:get(s,'Result'),stdout:get(s,'InlineOut'),stderr:get(s,'InlineErr'),error:get(s,'TerminalError')}) }
@@ -48,6 +52,7 @@ function ingest(batch){return transaction(()=>{
     ensure.run(project,event.sessionId)
     const filenames=db.prepare('SELECT path FROM files WHERE project=? AND session=? AND seq=?').all(project,event.sessionId,event.seq).map(x=>x.path)
     const inserted=insert.run(project,event.sessionId,event.seq,event.event,event.recordedAt||null,JSON.stringify(event),[searchable(event),...filenames].join('\n').toLowerCase(),[searchable(event),...filenames].join('\n'))
+    const noteReceipt=get(get(get(event.payload,'Data'),'Payload'),'Fieldnotes');if(inserted.changes&&noteReceipt?.messageId)fieldnotes.run(db,'fieldnotes.receipt.put',{receipt:{...noteReceipt,state:'accepted'}})
     if(inserted.changes&&event.payload?.outcome?.state){const prior=session.get(project,event.sessionId);if(prior?.metadata){const meta=JSON.parse(prior.metadata);if(event.seq>(meta.outcomeSequence||0)){Object.assign(meta,{state:event.payload.outcome.state,outcome:event.payload.outcome,outcomeSequence:event.seq});db.prepare('UPDATE sessions SET metadata=? WHERE project=? AND session=?').run(JSON.stringify(meta),project,event.sessionId)}}}
     if(inserted.changes){const key=JSON.stringify([project,event.sessionId]),prior=touched.get(key);touched.set(key,[project,event.sessionId,Math.min(prior?.[2]??event.seq,event.seq)])}
   }
@@ -60,6 +65,13 @@ function ingest(batch){return transaction(()=>{
   }
 })}
 function run(method,p){
+  if(method.startsWith('fieldnotes.'))return fieldnotes.run(db,method,p)
+  if(method==='memory.native-context'){
+    const row=session.get(p.project,p.session)
+    if(!row||row.cursor<row.high||row.cursor<(p.through||0))return undefined
+    if(db.prepare("SELECT 1 FROM activity_calls WHERE project=? AND session=? AND json_extract(data,'$.name')='Computer' LIMIT 1").get(p.project,p.session))return true
+    return !!db.prepare("SELECT 1 FROM events WHERE project=? AND session=? AND kind='session.item' AND (json_extract(payload,'$.payload.Data.Payload.nativeContext')=1 OR json_extract(payload,'$.payload.data.payload.nativeContext')=1) LIMIT 1").get(p.project,p.session)
+  }
   if(method==='work.view')return {...activity.view(p),connected:!!p.connected,cache:status(p.project,p.session)}
   if(method==='activity.page')return {...activity.page(p),connected:!!p.connected,cache:status(p.project,p.session)}
   if(method==='activity.detail')return activity.detail(p)

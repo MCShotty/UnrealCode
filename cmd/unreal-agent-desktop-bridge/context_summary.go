@@ -18,17 +18,18 @@ import (
 )
 
 type contextSummary struct {
-	ID             string           `json:"id"`
-	SessionID      string           `json:"sessionId"`
-	CreatedAt      time.Time        `json:"createdAt"`
-	Text           string           `json:"text"`
-	SourceSequence uint64           `json:"sourceSequence"`
-	PrefixItems    int              `json:"prefixItems"`
-	PrefixHash     string           `json:"prefixHash"`
-	Provider       string           `json:"provider"`
-	Model          string           `json:"model"`
-	Active         bool             `json:"active"`
-	Usage          map[string]int64 `json:"usage"`
+	FieldnoteDependencies []fieldnoteRef   `json:"fieldnoteDependencies,omitempty"`
+	ID                    string           `json:"id"`
+	SessionID             string           `json:"sessionId"`
+	CreatedAt             time.Time        `json:"createdAt"`
+	Text                  string           `json:"text"`
+	SourceSequence        uint64           `json:"sourceSequence"`
+	PrefixItems           int              `json:"prefixItems"`
+	PrefixHash            string           `json:"prefixHash"`
+	Provider              string           `json:"provider"`
+	Model                 string           `json:"model"`
+	Active                bool             `json:"active"`
+	Usage                 map[string]int64 `json:"usage"`
 }
 
 func contextHash(items []llm.Item) string {
@@ -213,7 +214,7 @@ func (a *app) createSummary(id session.ID, secret credential) (contextSummary, e
 	for index := range values {
 		values[index].Active = false
 	}
-	value = contextSummary{ID: uuid.New().String(), SessionID: string(id), CreatedAt: time.Now().UTC(), Text: strings.TrimSpace(text.String()), SourceSequence: uint64(sequence), PrefixItems: len(raw.Request.Input), PrefixHash: fingerprint, Provider: config.Provider, Model: model, Active: true, Usage: map[string]int64{"input": response.Usage.InputTokens, "output": response.Usage.OutputTokens}}
+	value = contextSummary{FieldnoteDependencies: builder.guidanceDependencies(), ID: uuid.New().String(), SessionID: string(id), CreatedAt: time.Now().UTC(), Text: strings.TrimSpace(text.String()), SourceSequence: uint64(sequence), PrefixItems: len(raw.Request.Input), PrefixHash: fingerprint, Provider: config.Provider, Model: model, Active: true, Usage: map[string]int64{"input": response.Usage.InputTokens, "output": response.Usage.OutputTokens}}
 	values = append(values, value)
 	if err = a.saveSummaries(id, values); err != nil {
 		return value, err

@@ -1,0 +1,562 @@
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using UIA = Interop.UIAutomationClient;
+
+namespace Sbroenne.WindowsMcp.Automation;
+
+/// <summary>
+/// Tree operations for UI Automation service.
+/// </summary>
+public sealed partial class UIAutomationService
+{
+    /// <inheritdoc/>
+    public async Task<UIAutomationResult> GetTreeAsync(string? windowHandle, string? parentElementId, int maxDepth, string? controlTypeFilter, CancellationToken cancellationToken = default)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            return await _staThread.ExecuteAsync(() =>
+            {
+                UIA.IUIAutomationElement? rootElement;
+                if (!string.IsNullOrEmpty(parentElementId))
+                {
+                    if (!ReferenceMatchesWindow(parentElementId, windowHandle))
+                    {
+                        return UIAutomationResult.CreateFailure(
+                            "get_tree", UIAutomationErrorType.InvalidParameter,
+                            "The parent reference does not belong to the requested window. Rediscover within that window.");
+                    }
+
+                    rootElement = ElementIdGenerator.ResolveToAutomationElement(parentElementId);
+                    if (rootElement == null)
+                    {
+                        return UIAutomationResult.CreateFailure(
+                            "get_tree",
+                            UIAutomationErrorType.ElementNotFound,
+                            $"Parent element not found or stale: {parentElementId}",
+                            CreateDiagnostics(stopwatch));
+                    }
+                }
+                else
+                {
+                    rootElement = GetRootElement(windowHandle);
+                }
+
+                if (rootElement == null)
+                {
+                    return UIAutomationResult.CreateFailure(
+                        "get_tree",
+                        UIAutomationErrorType.WindowNotFound,
+                        "Could not find the specified window or foreground window.",
+                        CreateDiagnostics(stopwatch));
+                }
+
+                // Detect framework and get optimal search strategy
+                var strategy = GetFrameworkStrategy(rootElement);
+                var controlTypeSet = ParseControlTypeFilter(controlTypeFilter);
+                var elementsScanned = 0;
+
+                // Use framework-aware depth: if caller used default (5), use framework recommendation
+                // Otherwise respect explicit caller value, but still cap at 20
+                var effectiveMaxDepth = maxDepth == 5
+                    ? strategy.RecommendedMaxDepth
+                    : Math.Min(maxDepth, 20);
+
+                // Use single-call bulk fetch: get ALL elements in one COM call, then reconstruct tree
+                // This is dramatically faster than per-level FindAllBuildCache calls
+                var trees = BuildTreeWithBulkFetch(
+                    rootElement,
+                    effectiveMaxDepth,
+                    controlTypeSet,
+                    strategy.UsePostHocFiltering,
+                    string.Equals(strategy.FrameworkName, "Chromium/Electron", StringComparison.Ordinal),
+                    ref elementsScanned);
+
+                var wasTruncated = elementsScanned > MaxElementsToScan;
+
+                stopwatch.Stop();
+                LogSearchPerformance(
+                    _logger,
+                    "get_tree",
+                    elementsScanned,
+                    stopwatch.ElapsedMilliseconds,
+                    trees?.Length ?? 0);
+
+                if (wasTruncated)
+                {
+                    LogTreeTruncated(_logger, elementsScanned, MaxElementsToScan);
+                }
+
+                string? windowTitle = rootElement.GetName();
+
+                if (trees is null || trees.Length == 0)
+                {
+                    return UIAutomationResult.CreateFailure(
+                        "get_tree",
+                        UIAutomationErrorType.ElementNotFound,
+                        "Could not build element tree.",
+                        CreateDiagnosticsWithContext(stopwatch, rootElement, null, elementsScanned, windowTitle, windowHandle));
+                }
+
+                var diagnostics = CreateDiagnosticsWithContext(stopwatch, rootElement, null, elementsScanned, windowTitle, windowHandle);
+                if (wasTruncated)
+                {
+                    diagnostics = diagnostics with
+                    {
+                        Warnings =
+                        [
+                            $"Tree truncated at {MaxElementsToScan} elements (scanned {elementsScanned}). " +
+                            "Results are incomplete — scope to a smaller parentElementId/windowHandle, add a controlTypeFilter, " +
+                            "or scroll content into view and retry."
+                        ]
+                    };
+                }
+
+                return UIAutomationResult.CreateSuccessCompactTree("get_tree", trees, diagnostics);
+            }, cancellationToken);
+        }
+        catch (COMException ex)
+        {
+            LogGetTreeError(_logger, windowHandle, ex);
+            return UIAutomationResult.CreateFailure(
+                "get_tree",
+                COMExceptionHelper.GetErrorType(ex),
+                COMExceptionHelper.GetErrorMessage(ex, "GetTree"),
+                CreateDiagnostics(stopwatch));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogGetTreeError(_logger, windowHandle, ex);
+            return UIAutomationResult.CreateFailure(
+                "get_tree",
+                UIAutomationErrorType.InternalError,
+                $"An error occurred: {ex.Message}",
+                CreateDiagnostics(stopwatch));
+        }
+    }
+
+    /// <summary>
+    /// Controls whether waits are assisted by UIA structure-changed events. Polling remains the
+    /// correctness guarantee either way; this only decides whether a sleep can be cut short.
+    /// Exposed so the spike benchmark can measure both paths in a single process.
+    /// </summary>
+    /// <remarks>
+    /// Defaults to <see langword="false"/>: the issue #189 spike measured only a ~5% median
+    /// latency gain, inside run-to-run noise. Even when an event woke the waiter immediately,
+    /// latency stayed near 460ms, so the cost of the UIA query itself dominates — not the sleep
+    /// this mechanism shortens. Kept, disabled, so the benchmark stays reproducible.
+    /// </remarks>
+    internal static bool EventAssistedWaitEnabled { get; set; } = false;
+
+    /// <summary>
+    /// Counts structure-changed events observed by the most recent event-assisted wait. Diagnostic
+    /// only, for the spike benchmark.
+    /// </summary>
+    internal static int LastWaitEventCount { get; private set; }
+
+    /// <summary>
+    /// Subscribes to structure changes for the query's window, when event assistance is enabled and
+    /// the provider allows it. Returns <see langword="null"/> to mean "poll unassisted".
+    /// </summary>
+    private async Task<StructureChangeSignal?> TrySubscribeToStructureChangesAsync(
+        ElementQuery query,
+        CancellationToken cancellationToken)
+    {
+        if (!EventAssistedWaitEnabled)
+        {
+            return null;
+        }
+
+        try
+        {
+            var root = await _staThread.ExecuteAsync(
+                () => GetRootElement(query.WindowHandle),
+                cancellationToken).ConfigureAwait(false);
+
+            return root is null
+                ? null
+                : await StructureChangeSignal.CreateAsync(_staThread, root, cancellationToken).ConfigureAwait(false);
+        }
+        catch (COMException)
+        {
+            // Subscription is an optimisation; never fail a wait because it could not be set up.
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Sleeps for <paramref name="delay"/>, returning early if the tree changed underneath us.
+    /// </summary>
+    private static async Task DelayOrUntilStructureChangedAsync(
+        StructureChangeSignal? signal,
+        int delay,
+        CancellationToken cancellationToken)
+    {
+        if (signal is null)
+        {
+            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        _ = await signal.WaitForChangeAsync(TimeSpan.FromMilliseconds(delay), cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<UIAutomationResult> WaitForElementAsync(ElementQuery query, int timeoutMs, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        var stopwatch = Stopwatch.StartNew();
+        // Subscribe before the first probe, so a change that lands between probing and sleeping
+        // still wakes us instead of being lost.
+        var signal = await TrySubscribeToStructureChangesAsync(query, cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            return await WaitForFindResultAsync(
+                query,
+                timeoutMs,
+                () => FindElementsAsync(query with { TimeoutMs = 0 }, cancellationToken),
+                (delay, token) => DelayOrUntilStructureChangedAsync(signal, delay, token),
+                () => stopwatch.ElapsedMilliseconds,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            stopwatch.Stop();
+            if (signal is not null)
+            {
+                LastWaitEventCount = signal.EventCount;
+                await signal.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task<UIAutomationResult> WaitForElementDisappearAsync(ElementQuery query, int timeoutMs, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        var stopwatch = Stopwatch.StartNew();
+        var signal = await TrySubscribeToStructureChangesAsync(query, cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            return await WaitForDisappearResultAsync(
+                query,
+                timeoutMs,
+                () => FindElementsAsync(query with { TimeoutMs = 0 }, cancellationToken),
+                (delay, token) => DelayOrUntilStructureChangedAsync(signal, delay, token),
+                () => stopwatch.ElapsedMilliseconds,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            stopwatch.Stop();
+            if (signal is not null)
+            {
+                LastWaitEventCount = signal.EventCount;
+                await signal.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static bool IsRetryableWaitAbsence(string? errorType) =>
+        errorType is UIAutomationErrorType.ElementNotFound or UIAutomationErrorType.WindowNotFound;
+
+    private static bool IsSatisfiedDisappearAbsence(string? errorType) =>
+        errorType is UIAutomationErrorType.ElementNotFound or
+            UIAutomationErrorType.ElementStale or
+            UIAutomationErrorType.WindowNotFound;
+
+    /// <inheritdoc/>
+    public async Task<UIAutomationResult> WaitForElementStateAsync(string elementId, string desiredState, int timeoutMs, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(elementId);
+        ArgumentException.ThrowIfNullOrEmpty(desiredState);
+
+        var stopwatch = Stopwatch.StartNew();
+        var delay = 50;
+        const int MaxDelay = 500;
+
+        // Parse the desired state
+        var (targetProperty, targetValue) = ParseDesiredState(desiredState.ToLowerInvariant());
+        if (targetProperty == null)
+        {
+            return UIAutomationResult.CreateFailure(
+                "wait_for_state",
+                UIAutomationErrorType.InvalidParameter,
+                $"Invalid desiredState '{desiredState}'. Valid values: enabled, disabled, on, off, indeterminate, visible, offscreen",
+                null);
+        }
+
+        while (stopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var element = await ResolveElementAsync(elementId, cancellationToken);
+            if (element == null)
+            {
+                stopwatch.Stop();
+                return UIAutomationResult.CreateFailure(
+                    "wait_for_state",
+                    UIAutomationErrorType.ElementNotFound,
+                    $"Element '{elementId}' no longer exists (stale reference)",
+                    new UIAutomationDiagnostics { DurationMs = stopwatch.ElapsedMilliseconds });
+            }
+
+            // Check if the element has reached the desired state
+            var currentValue = GetElementPropertyValue(element, targetProperty);
+            if (Equals(currentValue, targetValue))
+            {
+                stopwatch.Stop();
+                return UIAutomationResult.CreateSuccessCompact(
+                    "wait_for_state",
+                    [element],
+                    new UIAutomationDiagnostics { DurationMs = stopwatch.ElapsedMilliseconds });
+            }
+
+            await Task.Delay(delay, cancellationToken);
+            delay = Math.Min(delay * 2, MaxDelay);
+        }
+
+        stopwatch.Stop();
+
+        // Get final state for diagnostics
+        var finalElement = await ResolveElementAsync(elementId, cancellationToken);
+        var finalValue = finalElement != null ? GetElementPropertyValue(finalElement, targetProperty) : "unknown";
+
+        return UIAutomationResult.CreateFailure(
+            "wait_for_state",
+            UIAutomationErrorType.Timeout,
+            $"Element did not reach state '{desiredState}' within {timeoutMs}ms. Current {targetProperty}: {finalValue}",
+            new UIAutomationDiagnostics
+            {
+                DurationMs = stopwatch.ElapsedMilliseconds,
+                ElapsedBeforeTimeout = stopwatch.ElapsedMilliseconds
+            });
+    }
+
+    private static (string? property, object? value) ParseDesiredState(string state)
+    {
+        return state switch
+        {
+            "enabled" => ("IsEnabled", true),
+            "disabled" => ("IsEnabled", false),
+            "on" => ("ToggleState", "On"),
+            "off" => ("ToggleState", "Off"),
+            "indeterminate" => ("ToggleState", "Indeterminate"),
+            "visible" => ("IsOffscreen", false),
+            "offscreen" => ("IsOffscreen", true),
+            _ => (null, null)
+        };
+    }
+
+    private static object? GetElementPropertyValue(UIElementInfo element, string property)
+    {
+        return property switch
+        {
+            "IsEnabled" => element.IsEnabled,
+            "IsOffscreen" => element.IsOffscreen,
+            "ToggleState" => element.ToggleState,
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Builds element tree using a SINGLE FindFirstBuildCache call with TreeScope_Subtree.
+    /// This caches the ENTIRE subtree including children relationships in one COM call.
+    /// We then traverse using GetCachedChildren() which reads from cache (no COM calls).
+    /// </summary>
+    private UIElementInfo[]? BuildTreeWithBulkFetch(
+        UIA.IUIAutomationElement rootElement,
+        int maxDepth,
+        HashSet<string>? controlTypeFilter,
+        bool usePostHocFiltering,
+        bool detectSemanticLayoutActions,
+        ref int elementsScanned)
+    {
+        try
+        {
+            // Create cache request with TreeScope_Subtree to cache entire tree including children
+            // Uses shared cache request that includes all needed properties plus pattern availability
+            var cacheRequest = Uia.CreateElementCacheRequest(UIA.TreeScope.TreeScope_Subtree);
+
+            // ONE COM call to fetch entire tree with all properties and children cached
+            var cachedRoot = rootElement.FindFirstBuildCache(
+                UIA.TreeScope.TreeScope_Element,
+                Uia.TrueCondition,
+                cacheRequest);
+
+            if (cachedRoot == null)
+            {
+                return null;
+            }
+
+            // Now traverse using GetCachedChildren() - NO additional COM calls!
+            return BuildTreeFromCachedElement(
+                cachedRoot,
+                rootElement,
+                maxDepth,
+                0,
+                controlTypeFilter,
+                usePostHocFiltering,
+                detectSemanticLayoutActions,
+                ref elementsScanned);
+        }
+        catch (Exception ex) when (COMExceptionHelper.IsExpectedElementTraversalFailure(ex))
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Recursively builds tree from cached element using GetCachedChildren().
+    /// This makes NO COM calls since all data is already cached.
+    /// </summary>
+    private UIElementInfo[] BuildTreeFromCachedElement(
+        UIA.IUIAutomationElement element,
+        UIA.IUIAutomationElement rootElement,
+        int maxDepth,
+        int currentDepth,
+        HashSet<string>? controlTypeFilter,
+        bool usePostHocFiltering,
+        bool detectSemanticLayoutActions,
+        ref int elementsScanned)
+    {
+        elementsScanned++;
+
+        if (elementsScanned > MaxElementsToScan || currentDepth > maxDepth)
+        {
+            return [];
+        }
+
+        var controlTypeName = element.GetCachedControlTypeName().ToLowerInvariant();
+        var matchesFilter = controlTypeFilter == null || controlTypeFilter.Contains(controlTypeName);
+
+        // Get children from cache (should be NO COM call if cached correctly)
+        var childInfos = new List<UIElementInfo>();
+        if (currentDepth < maxDepth)
+        {
+            // Try to get cached children first - this is the fast path
+            UIA.IUIAutomationElementArray? cachedChildren = null;
+            try
+            {
+                cachedChildren = element.GetCachedChildren();
+            }
+            catch (Exception ex) when (COMExceptionHelper.IsExpectedElementTraversalFailure(ex))
+            {
+                // Children not cached - this shouldn't happen with TreeScope_Subtree
+                // Fall through with null
+            }
+
+            if (cachedChildren != null && cachedChildren.Length > 0)
+            {
+                for (var i = 0; i < cachedChildren.Length && elementsScanned <= MaxElementsToScan; i++)
+                {
+                    var child = cachedChildren.GetElement(i);
+                    if (child == null)
+                    {
+                        continue;
+                    }
+
+                    var childInfo = BuildTreeFromCachedElement(
+                        child, rootElement, maxDepth, currentDepth + 1,
+                        controlTypeFilter,
+                        usePostHocFiltering,
+                        detectSemanticLayoutActions,
+                        ref elementsScanned);
+
+                    childInfos.AddRange(childInfo);
+                }
+            }
+        }
+
+        // Post-hoc filtering (Electron): include if matches OR has matching descendants
+        if (usePostHocFiltering && controlTypeFilter != null)
+        {
+            if (!matchesFilter && childInfos.Count == 0)
+            {
+                return [];
+            }
+
+            var elementInfo = ConvertToElementInfo(
+                element,
+                rootElement,
+                _coordinateConverter,
+                null,
+                fromCachedElement: true,
+                detectSemanticLayoutActions: detectSemanticLayoutActions);
+            if (elementInfo == null)
+            {
+                return [.. childInfos];
+            }
+
+            return
+            [
+                childInfos.Count > 0
+                    ? elementInfo with { Children = [.. childInfos] }
+                    : elementInfo
+            ];
+        }
+
+        // Inline filtering: only include if matches
+        if (!matchesFilter)
+        {
+            if (childInfos.Count == 0)
+            {
+                return [];
+            }
+
+            if (childInfos.Count == 1)
+            {
+                return [childInfos[0]];
+            }
+
+            // Preserve the non-matching ancestor when it is the only way to keep several matching
+            // descendant branches connected. Dropping all but childInfos[0] silently lost controls.
+            var ancestor = ConvertToElementInfo(
+                element,
+                rootElement,
+                _coordinateConverter,
+                null,
+                fromCachedElement: true,
+                detectSemanticLayoutActions: detectSemanticLayoutActions);
+            return ancestor is null
+                ? [.. childInfos]
+                : [ancestor with { Children = [.. childInfos] }];
+        }
+
+        var info = ConvertToElementInfo(
+            element,
+            rootElement,
+            _coordinateConverter,
+            null,
+            fromCachedElement: true,
+            detectSemanticLayoutActions: detectSemanticLayoutActions);
+        if (info == null)
+        {
+            return [.. childInfos];
+        }
+
+        return
+        [
+            childInfos.Count > 0
+                ? info with { Children = [.. childInfos] }
+                : info
+        ];
+    }
+
+    private static HashSet<string>? ParseControlTypeFilter(string? filter)
+    {
+        if (string.IsNullOrWhiteSpace(filter))
+        {
+            return null;
+        }
+
+        return filter.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => s.ToLowerInvariant())
+            .ToHashSet();
+    }
+}

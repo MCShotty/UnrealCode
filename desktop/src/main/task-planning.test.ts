@@ -1,4 +1,5 @@
-import {afterEach,expect,it} from 'vitest'
+import {afterEach,expect,it,vi} from 'vitest'
+import {promises as fs} from 'node:fs'
 import {mkdtemp,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
@@ -8,6 +9,14 @@ import {parseCommand,validateCommand} from '../shared/commands'
 import {documentedCapabilities} from '../shared/model-capabilities'
 const roots:string[]=[];afterEach(async()=>{for(const root of roots.splice(0))await rm(root,{recursive:true,force:true})})
 async function setup(){const root=await mkdtemp(join(tmpdir(),'unrealcode-planning-'));roots.push(root);return {root,id:randomUUID(),store:new TaskPlanning(root)}}
+it('rolls back live goal scheduling if a resume or pause cannot be persisted',async()=>{
+ const {id,store}=await setup();await store.goal(id,{objective:'Bounded work',requestLimit:10,tokenLimit:100,elapsedMinutes:5})
+ const rename=vi.spyOn(fs,'rename').mockRejectedValueOnce(Object.assign(Error('Fixture disk full'),{code:'ENOSPC'}))
+ try{await expect(store.goalAction(id,'resume')).rejects.toThrow('disk full');expect(store.active()).toEqual([])}finally{rename.mockRestore()}
+ await store.goalAction(id,'resume')
+ const failedPause=vi.spyOn(fs,'rename').mockRejectedValueOnce(Object.assign(Error('Fixture disk full'),{code:'ENOSPC'}))
+ try{await expect(store.goalAction(id,'pause')).rejects.toThrow('disk full');expect(store.active()).toEqual([id]);expect((await store.read(id)).goal?.state).toBe('running')}finally{failedPause.mockRestore()}
+})
 it('charges late goal responses after pause, deduplicates them, and excludes unrelated requests',async()=>{
  const {id,store}=await setup();await store.goal(id,{objective:'Bounded work',requestLimit:10,tokenLimit:100,elapsedMinutes:5})
  await store.goalAction(id,'resume');await store.permit(id,'inflight');await store.goalAction(id,'pause')
