@@ -1,0 +1,1 @@
+Guide checked against UnrealCode 1.0.3 on September 30, 2026. [Home](https://github.com/MCShotty/UnrealCode/wiki/Home) · [Source](https://github.com/MCShotty/UnrealCode) · [Privacy](https://github.com/MCShotty/UnrealCode/blob/main/PRIVACY.md) · [Release verification](https://github.com/MCShotty/UnrealCode/blob/main/desktop/VERIFY_RELEASE.md)

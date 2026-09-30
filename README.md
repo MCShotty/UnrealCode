@@ -7,110 +7,66 @@
 
 # UnrealCode
 
-**A Windows desktop workspace for AI-assisted coding, built on Unreal Agent.**
+**A Windows workspace for coding with an AI agent, built on Unreal Agent.**
 
-Bring your own provider, open a project, and work with an agent that can inspect code, edit files, run tools in Docker, and respond to steering while it works. Review the conversation, parallel tool activity, changes, and measured usage in one application. Use isolated Git worktrees when a task needs its own workspace, then review and integrate its changes into your project.
+Bring your own model, open a project, and use chat, editing, parallel tools, review, and recovery in one app. You can steer the agent while it works, give independent tasks to subagents, and inspect what changed before integrating it. Unreal Engine is not required.
 
-UnrealCode is a general-purpose coding application. It does not require Unreal Engine. Its execution engine is the [Unreal Agent Go harness](https://github.com/unreallabsai/unreal-agent) from Unreal Labs; the desktop application adds the interface, project controls, provider setup, integrations, and recovery workflows.
+**[Download 1.0.3](https://github.com/MCShotty/UnrealCode/releases/tag/v1.0.3)** · **[Full wiki](https://github.com/MCShotty/UnrealCode/wiki)** · **[Changelog](CHANGELOG.md)**
 
-> **Windows distribution:** Releases use an unsigned installer, a SHA-256 manifest, and a Git tag. The hosted release workflow produces GitHub build attestations; the historical, locally built 1.0.1 replacement has none. [Verify the release](desktop/VERIFY_RELEASE.md) before installing. Windows will still report an unknown publisher. The repository and release listing are public. Downloads and installation remain manual. See the [changelog](CHANGELOG.md) and [Releases page](https://github.com/MCShotty/UnrealCode/releases).
+The installer is **unsigned**. Verify its [checksum and GitHub build attestation](desktop/VERIFY_RELEASE.md), then install manually. These checks do not remove Windows publisher warnings. Release notifications open GitHub; they never download or execute an installer.
 
-## New in 1.0.3
+## Start here
 
-- **Fieldnotes:** an app-wide guidance library with project/session pointers,
-  revision receipts, explicit selections, offline originals, and optional memory
-  interpretation. [How it works](#fieldnotes-and-computer).
-- **Managed Computer:** experimental, default-off access to selected Windows
-  windows, with task/model-bound reviews, takeover, explicit handback, and an
-  emergency stop. Native acceptance limits are disclosed below.
-- **Abilities and appearance:** Skills and MCPs share one section. Choose Cinder
-  Dark, Ice Dark, Flashbang, or Follow Windows, with consistent expressive motion.
-- **Reliability:** guidance replay/cache recovery, stale UI responses, memory and
-  timeline ownership, browser revocation, native startup/stop, and shutdown fixes.
+1. Install Docker Desktop and start its **Linux container engine**.
+2. Configure a provider in **Settings > Provider**.
+3. Open an NTFS project folder and review the trust prompt.
+4. Let UnrealCode prepare its bundled Docker backend.
+5. Start in **Ask** mode. Try asking it to inspect the project and run relevant tests.
 
-See the [1.0.3 changelog](CHANGELOG.md#103--2026-09-30) for details.
+Git is needed for repository features, isolated worktrees, and Agent team. GitHub CLI is needed for GitHub integration. Plain folders still work for chat and files. Optional memory and decision engines can be left off.
 
-### Included from earlier releases
+Read [Getting started](https://github.com/MCShotty/UnrealCode/wiki/Getting-started) for installation and [Troubleshooting](https://github.com/MCShotty/UnrealCode/wiki/Troubleshooting) for Docker, models, and recovery.
 
-- **App-wide memory:** enable it once, select its separate model, and recall relevant knowledge across chats and trusted projects with source attribution. Existing project memories migrate only after expanded-scope consent.
-- **Useful activity timelines:** recorded events remain available offline; optional memory-model summaries cite evidence and describe inferred stages without changing approved plans.
-- **Provider recovery:** searchable Codex model discovery and explicit refusal, account-access, quota, rate-limit and context-limit explanations. A declined response is recorded as a failure.
-- **A clearer workspace:** contained Files & skills picker, cobalt/red/steel light and dark themes, accessible contrast, and Material 3 Expressive feedback that respects reduced motion.
-- **Release notifications:** optional startup/daily checks, a dismissible notice, and a link to the release changelog. See [upgrade instructions](#installing-and-upgrading).
-- **Replacement build repairs:** Jev type normalization, clearer Agent team prerequisites, verified memory-provider switching with rollback, durable partial responses, streamed text previews, and a concise stage timeline.
-- **Documents and browser:** built-in PDF, OCR, Markdown, and browser-use skills; a local PDF reader with page text and English/Arabic OCR; live project browser tabs shared with the main agent only under explicit origin grants.
+## What is in the app?
 
-The [1.0.1 changelog](CHANGELOG.md#101--2026-09-29) also covers the memory, shutdown, timeline and Docker reliability fixes.
+| Area | Features | Guide |
+| --- | --- | --- |
+| Chat | Persistent sessions, streaming where supported, questions, forks, live steering, collapsible work, and cancellation. | [Chat and sessions](https://github.com/MCShotty/UnrealCode/wiki/Chat-and-sessions) |
+| Coding | Monaco, container terminal, diffs, checkpoints, conflict-aware integration, Git and GitHub. | [Files](https://github.com/MCShotty/UnrealCode/wiki/Files-and-terminal), [Review](https://github.com/MCShotty/UnrealCode/wiki/Review-and-GitHub) |
+| Task control | Plan, Ask, Agent, versioned plans, bounded goals, queues, background jobs, hooks, and saved verification workflows. | [Planning](https://github.com/MCShotty/UnrealCode/wiki/Planning-and-goals), [Workflows](https://github.com/MCShotty/UnrealCode/wiki/Workflows-jobs-and-hooks) |
+| Agent team | Manual or opt-in automatic subagents, separate role profiles, isolated worktrees, and reviewed integration. | [Agent team](https://github.com/MCShotty/UnrealCode/wiki/Agent-team) |
+| Knowledge | Context inspection, instructions, app-wide Fieldnotes, optional Hindsight memory, skills, and MCP connections under Abilities. | [Context](https://github.com/MCShotty/UnrealCode/wiki/Context-and-instructions), [Fieldnotes](https://github.com/MCShotty/UnrealCode/wiki/Fieldnotes), [Memory](https://github.com/MCShotty/UnrealCode/wiki/Memory), [Abilities](https://github.com/MCShotty/UnrealCode/wiki/Skills-and-MCP) |
+| Browser and documents | Live project tabs, origin-based agent grants, PDF reading/parsing, selected-page English/Arabic OCR, and Markdown guidance. | [Browser](https://github.com/MCShotty/UnrealCode/wiki/Browser), [Documents](https://github.com/MCShotty/UnrealCode/wiki/Documents-and-OCR) |
+| Computer | Experimental, default-off selected-window controls, reviewed task/model-bound grants, takeover, handback, and emergency stop. | [Computer](https://github.com/MCShotty/UnrealCode/wiki/Computer) |
+| Visibility | Tool Activity, stage timelines, measured usage, diagnostics, support, backups, and cleanup previews. | [Activity](https://github.com/MCShotty/UnrealCode/wiki/Tool-Activity-and-timeline), [Recovery](https://github.com/MCShotty/UnrealCode/wiki/Storage-and-recovery) |
 
-## What you can do
+Appearance offers **Cinder Dark**, **Ice Dark**, **Flashbang**, and **Follow Windows**. Material 3 Expressive motion respects reduced motion. See [Settings and shortcuts](https://github.com/MCShotty/UnrealCode/wiki/Settings-and-shortcuts) for every slash command and keyboard control.
 
-| Area | Features |
-| --- | --- |
-| **Coding sessions** | Chat, persistent history, resume and fork, live steering, independent parallel tools, and cancellation of one operation or the whole session. |
-| **Execution controls** | Plan, Ask, and Agent modes; Ask is the default. Approval previews identify the operation, workspace, and arguments. Native file tools detect stale revisions before patching. |
-| **Project workspaces** | Reviewed snapshots of tracked and non-ignored files, isolated Git tasks, conflict-aware integration, turn checkpoints, selective rollback, and recoverable worktree archival. |
-| **Editing and review** | Monaco tabs, syntax highlighting, search/replace, unsaved buffers, selection-to-chat, unified/side-by-side comparisons, changed files, verification results, and review comments sent as steering. |
-| **GitHub** | Existing `git`/`gh` login, cloning, branches/worktrees, staging, commits, pushes, PR creation/review, checks, and issue or review-comment intake. Remote changes have explicit previews. |
-| **Tools and context** | MCP connections, a searchable tool catalog, local repository retrieval with file/line references, attachments, explicit skills, pinned context, exclusions, and reversible summaries. |
-| **Continuity** | A persistent queue per project, manual provider handoff into a linked session, local conversation search, and optional Windows notifications. Projects can run concurrently; each project's queued tasks run sequentially. |
-| **Agent team (subagents)** | Off / Manual / Automatic project defaults with per-task controls. Explorer, implementer, reviewer and browser tester profiles can select their own model, endpoint, effort and limits. Isolated worktrees, queued dispatch, follow-up, cancellation, reviewed integration and separate/combined usage. No nested delegation. Git, an opened repository root, and an initial commit are required; GitHub login and a clean working tree are not. |
-| **Plans and commands** | Shared slash/menu/palette commands, editable versioned plans, explicit implementation, bounded persistent goals, safe-boundary mode changes, and capability-aware speed/effort controls. `/fast` requests a provider tier and reports the actual tier returned. |
-| **App-wide memory** | Optional local Hindsight with a separately verified model, bounded retention, cross-project recall with source attribution, corrections, forgetting, exports and recovery. Unintegrated specialist knowledge remains task-scoped. Coding stays available during memory outages. |
-| **Activity timeline** | Durable factual events and approved plan stages, with optional evidence-linked summaries from the memory model. Observer usage is recorded separately within memory usage; analysis runs at most once per 20 seconds per conversation with two global slots. |
-| **Browser and jobs** | Live in-app project tabs with their own sign-ins, back/forward, find, zoom and downloads. The main agent can use those tabs only after project and exact-origin grants and handback; its browser tools and optional Jev BrowserDo remain permission-bound. Specialist workers retain isolated browser state. Managed background commands and reviewed container hooks remain available. |
-| **Documents and skills** | Built-in read-only PDF reading/parsing, English and Arabic OCR, Markdown, and browser-use guidance across projects. A PDF reader renders pages and selectable text; bounded agent tools inspect metadata, page text, search, and selected-page OCR. Trusted `.harness/skills` files may extend or override built-ins without gaining permissions. |
-| **Verification** | Saved review/test/fix workflows, named verification commands, bounded opt-in repair loops, local model health checks, and explicitly started decision-model comparisons. |
-| **Usage and performance** | Provider-reported session tokens, cache/reasoning/decision usage where available, a parallel operation inspector, Codex subscription percentages, and optional organization reports. No estimated dollar costs. |
-| **Desktop experience** | Dark, Light, and Follow Windows themes; resizable/collapsible panels, focus layout, command palette, container terminal, restrained spring animations, and reduced-motion support. |
-| **Recovery and releases** | Settings/session backup and restore, integrity checks, pre-migration backups, guarded recovery-volume reattachment, cleanup previews, and redacted support exports. Unsigned builds can discover releases but cannot automatically install them. |
+## Models and credentials
 
-## Providers and sign-in
+Supported providers are ChatGPT/Codex through an existing external Codex login, OpenAI, Anthropic API, OpenRouter, Fireworks, Ollama, and OpenAI-compatible servers. **Claude subscription login is not supported.**
 
-All coding providers use Unreal Agent's coordinator, session history, and tools. UnrealCode does not launch a separate Claude Code session engine.
+The shared model selector distinguishes catalog listings, explicit access rejections, and unknown availability. Manual IDs are unverified. `/fast` requests a supported provider speed tier; it does not switch models or lower reasoning. Changing an existing provider uses a reviewed handoff.
 
-| Provider | Authentication / runtime |
-| --- | --- |
-| **ChatGPT / Codex** | An existing external Codex login. Login and token refresh happen through Codex; the installed Codex CLI also supplies subscription limit percentages. |
-| **OpenAI** | API key entered in Settings. |
-| **Anthropic Claude** | Anthropic API key entered in Settings. **Claude subscription login is not supported.** |
-| **OpenRouter / Fireworks** | The corresponding provider API key. |
-| **Ollama** | A separately installed local Ollama server, with model discovery. |
-| **OpenAI-compatible local servers** | A local or private-network Chat Completions endpoint, with optional API key. Capabilities depend on the runtime. |
+Keys stay in Electron main and use Windows encryption when available. Provider credentials reach the backend in memory, not Docker arguments or environment variables. Memory chooses its own model but shares that provider's saved credentials with chat.
 
-API keys stay in Electron's main process and are encrypted locally with Electron `safeStorage` when available; otherwise they remain in memory for that run. Provider credentials reach the backend through its private input stream, never Docker arguments or environment variables. The renderer receives credential status, not plaintext keys.
+Jev, Laya, and Off are optional decision-engine choices. GLiNER is separate local entity extraction. Jev requires its host key and project cloud consent. Decision results never grant permissions, and unavailable engines are not silently replaced.
 
-The shared model selector reads the installed Codex CLI's paginated catalog for chat, memory and specialist profiles. Listed models are distinguished from explicit access rejections; hidden or omitted models are not assumed unavailable. Manual model IDs are labelled unverified. Changing a provider for an existing conversation uses reviewed handoff.
+## Storage and privacy
 
-## Installing and upgrading
+Project files remain in the chosen folder or a task worktree. Backend sessions live in Docker volumes. Electron stores settings, Fieldnote originals, recovery metadata, and a rebuildable SQLite history cache with one writer and two readers.
 
-Download the installer and `SHA256SUMS` from the same [GitHub release](https://github.com/MCShotty/UnrealCode/releases), follow the [verification guide](desktop/VERIFY_RELEASE.md), settle active tasks, and close UnrealCode before installing. Settings and session data are preserved; normal migration/recovery checks still apply.
+Cached history and Fieldnotes work offline. Running tools needs the backend. Restart restores visible state without replaying commands, workers, queues, or goals automatically.
 
-**All unsigned upgrades require manual installation**, including 1.0.3. Version 1.0.0 cannot acquire release notifications through its disabled updater. **Settings → Recovery → Application updates** offers Stable/Preview channels, manual checks, and an automatic-check switch. Automatic checks are enabled by default and run when due after startup and at most once daily. Public release checks send no project content. No installer is downloaded or run automatically. The historical same-version 1.0.1 replacement required a manual reinstall; later versions can be announced as newer.
+Memory is optional and app-wide after scope and model consent. It recalls relevant knowledge with source attribution; unintegrated worker findings remain task-scoped. Fieldnotes are user-authored guidance with visible revision receipts. Notes and memories cannot grant access to another project's files.
 
-Memory remains optional. Before existing project memories become app-wide, review the broader recall scope and the configured model destination. Disabled memory stays disabled; enabling it does not ingest every historical conversation. Repository-specific knowledge keeps its original source labels and cannot grant access to another project's files.
+PDF/OCR processing stays local. Documents are not automatically remembered. Browser sign-ins are isolated per project and excluded from normal backups. Computer captures are transient unless explicitly attached, and native-derived content is excluded from automatic memory.
 
-Session usage and account usage are separate. OpenAI/Anthropic organization reports require optional, separate admin credentials and can include usage from other applications. Codex percentages come from reported account limits, not a conversion from token counts. Unknown context limits and unavailable account data are labelled accordingly.
+Read [PRIVACY.md](PRIVACY.md) for destinations and exclusions. Report security issues privately through [SECURITY.md](SECURITY.md).
 
-## Optional decision models
+## Build and contribute
 
-Choose **Jev**, **Laya**, or **Off** globally in Settings. This choice applies to all projects and chats. The main coding model still plans, writes code, explains results, and handles uncertainty.
-
-- **Jev / TypeSafe:** bounded Choice, Noul, and Score questions over focused evidence. Requires `TYPESAFE_API_KEY` in the host environment and separate consent for each project before project text is sent to TypeSafe.
-- **Laya:** an optional local worker installed with its model cache on demand.
-- **GLiNER:** optional local entity extraction. It is a separate tool, not a decision engine.
-
-Decision traces retain purpose, evidence references, engine/model, probabilities, latency, and reported usage. An unavailable engine is shown explicitly; the app does not silently switch engines. Decision results never authorize tools, Git operations, or broader permissions. Opt-in evaluations compare paired tasks in disposable worktrees and report observations, not promised savings.
-
-## Getting started
-
-### Requirements
-
-- Windows with Docker Desktop running its **Linux container engine**.
-- Git for repository features; GitHub CLI (`gh`) signed in for GitHub integration.
-- One configured provider or local model server. No API key is needed to build the app or run fixture tests.
-- For source development: Node.js 24+ and npm. Docker supplies the pinned Go toolchain; host Go is optional.
-
-### Run from source
+Source development needs Windows, Node.js 24+, npm, .NET SDK **10.0.401**, and Docker's Linux engine. The host file helper uses the Go version in `go.mod`, or Docker can build it. Installed users do not need a .NET SDK.
 
 ```powershell
 git clone https://github.com/MCShotty/UnrealCode.git
@@ -119,142 +75,16 @@ npm ci
 npm run dev
 ```
 
-On first launch, choose or skip the decision engine, select a provider, open a project, and review its trust prompt. The app prepares its Docker backend from bundled source. Missing Docker, expired credentials, and unreachable endpoints have setup/reconnect actions.
+Use `npm run typecheck`, `npm test`, and `npm run build:win` for a local candidate. Builds do not publish. [BUILDING.md](desktop/BUILDING.md) covers full gates; [AGENTS.md](AGENTS.md) records current architecture and working rules. The wiki is also tracked in [docs/wiki](docs/wiki/Home.md).
 
-Start with **Ask** mode. Use **Review** to inspect a task's changes before integrating an isolated workspace or restoring selected checkpoint files.
+Authorized releases use a reviewed commit, exact-commit preflight, annotated tag, hosted build, audits, checksum manifest, and GitHub attestation. The historical local 1.0.1 replacement has no hosted attestation. Earlier tags and assets stay intact.
 
-## How it works
+## Attribution and current limits
 
-```text
-React desktop interface
-        │ narrow typed preload API
-Electron main: credentials · trust · GitHub · MCP · workspaces · recovery
-        │ versioned JSONL requests, responses, and sequenced events
-Docker backend: Unreal Agent Go bridge
-        ├─ one coordinator per active session
-        ├─ asynchronous, independently cancellable operations
-        ├─ selected provider and optional decision worker
-        └─ trusted project mount + durable session volume
-```
+UnrealCode uses the [Unreal Agent Go harness](https://github.com/unreallabsai/unreal-agent) from Unreal Labs and retains its [MIT license](LICENSE) and module path. [Dependency notices](desktop/third-party-licenses/README.md) cover Electron/Chromium, React, Monaco, terminal components, PDF.js, Tesseract.js, adapted Jev browser code, and the pinned Windows MCP service used by Computer.
 
-The harness retains asynchronous tool execution and live steering. Waiting for one tool or approval does not serialize unrelated tool operations. The app records overlap and measured usage; it does not promise a fixed speedup or token reduction for every task.
+Docker Desktop, Git/gh, Codex CLI, Ollama, optional memory images, OCR language data, isolated-browser runtime, and model weights are separate installs or downloads.
 
-Project files remain in the selected folder or an app-owned task worktree. Preferences, queue/index/checkpoint metadata, and recovery copies live in app data; raw sessions/events live in Docker volumes. Five built-in read-only skills ship with the app; `.harness/skills` supplies trusted project extensions or overrides. Restart restores history and visible state; interrupted execution requires an explicit resume.
+Windows with Docker is the supported coding platform. Native host execution of the coding backend, macOS/Linux desktop releases, a marketplace, and full language-server/debugger support are outside this version. Computer remains experimental: actual native input/capture, physical takeover, lock/desktop/DPI behavior, live populated-memory recovery, fresh-machine 1.0.3 installation, and full assistive-technology acceptance remain open. Recovery import currently needs the original profile and project paths.
 
-Electron uses a bundled native Go helper for host project and recovery file access.
-It operates through opened directory handles to resist concurrent junction swaps.
-Hard-linked files and ReFS locations are currently unsupported; use NTFS.
-
-MCP supports remote Streamable HTTP, Windows-hosted stdio, and container stdio through the official SDK. Host servers have the Windows account's access and require separate host trust. Project grants and per-call approvals apply; server-initiated model sampling is disabled. Context exclusions control retrieval, not filesystem permissions.
-
-**Abilities** contains separate **Skills** and **MCPs** sections. Use Skills to inspect built-in guidance or create a project skill; use MCPs to add a server and review its project grants. `/skills` and `/mcp` open the corresponding section directly. Appearance offers **Cinder Dark** (graphite and coral), **Ice Dark** (the original blue and steel palette), **Flashbang** (light), and **Follow Windows**.
-
-### Fieldnotes and Computer
-
-Version 1.0.3 adds these sections. Computer is experimental and disabled by default;
-its native desktop and live-memory acceptance limits remain documented.
-
-**Fieldnotes** is your app-wide notebook for user-authored guidance. Open it from
-the welcome screen, navigation, or `/fieldnotes`. Each note keeps a project or
-project/session pointer for attribution. Relevant guidance can help another
-project without granting access to the source project's files. Saving makes the
-original immediately usable, including with memory off. Unsaved drafts stay local.
-The separately consented memory model interprets saved notes in the background.
-
-The composer shows suggested notes and lets you pin or exclude them. Each accepted
-request keeps an inclusion receipt with exact revisions and source labels. Current
-requests take precedence; among applicable conflicting notes, session guidance
-precedes project guidance, then other sources. The agent must identify meaningful
-conflicts and distinguish desired changes from claims about existing code. Context
-is limited to eight complete notes and 16 KiB; explicit selections over the budget
-must be adjusted. Disabling or deleting guidance prevents future use, including
-through dependent summaries, without rewriting historical chats or backups.
-
-**Computer** bundles an adapted Windows helper and a built-in computer-use skill.
-Enable it, choose windows, and review observation or routine interaction access for
-one conversation and its model destination. `/computer` opens management; the chat
-toolbar opens its companion pane. Physical input pauses the agent. **Hand back**
-is explicit; **Stop** and **Ctrl+Alt+Shift+.** revoke control. Unknown or consequential
-actions still need exact-operation approval. Plan mode observes only. Workers,
-elevated windows, personal browsers, and UnrealCode's own permission controls do
-not receive native input access. Website tasks continue to use the shared Browser.
-
-Captures expire in memory and reach vision-capable providers only when needed for
-an authorized request. Canonical conversation logs retain references rather than
-raw screenshot bytes. **Attach evidence to chat** deliberately converts a capture
-to a normal attachment. Grants are never restored after restart. See the
-[implementation and verification record](docs/FIELDNOTES_COMPUTER_IMPLEMENTATION.md)
-for current evidence and remaining native acceptance gates.
-
-### Legacy Windows computer-use add-on
-
-The [Windows computer-use MCP add-on](integrations/windows-computer-use/README.md)
-can be installed separately and connected to an existing UnrealCode 1.0.2 app.
-It adds window inspection and interaction through a pinned, allowlisted
-Windows-hosted server, with project grants and per-call approvals. Installation
-and connection are manual; it does not change the 1.0.2 installer or provide a
-built-in computer-use panel. The 1.0.3 Computer page offers a reviewed
-migration that preserves the add-on configuration and withdraws its overlapping
-grants across projects. Known Windows add-on calls cannot compete while managed
-Computer is enabled. Other MCP approval behavior is unchanged.
-
-See [desktop documentation](desktop/README.md), [harness architecture](docs/UNREAL_AGENT_ARCHITECTURE.md), and [security boundaries](SECURITY.md) for details.
-
-## Third-party code and attribution
-
-UnrealCode retains the upstream **MIT license and Unreal Labs attribution**. The Go module path remains `github.com/unreallabsai/unreal-agent` to preserve internal imports and upstream history.
-
-| Component | Used for | License / provenance |
-| --- | --- | --- |
-| **Unreal Agent** | Coordinator, inbox, operations, session store, tools, and provider foundations; extended by UnrealCode. | [MIT](LICENSE), Unreal Labs. Starting revision: `1b9f778453f411c029b39b85102aaefb95e7e48d`. |
-| **Electron / Chromium / Node.js** | Desktop shell and embedded runtime. | Electron/Node MIT plus Chromium component licenses; shipped notices accompany the installer. |
-| **React / React DOM** | Desktop interface. | MIT. |
-| **Monaco Editor** | Local editor and diff components. | MIT. |
-| **xterm.js / node-pty** | Terminal rendering and host PTY transport for container commands. | MIT, with winpty and Microsoft terminal component notices. |
-| **Motion / Lucide / react-markdown** | Animation, interface icons, and Markdown messages. | Motion/react-markdown MIT; Lucide ISC. |
-| **Official MCP TypeScript SDK / Ajv** | MCP transports and argument validation. | MIT. |
-| **electron-updater** | Update metadata, downloads, and installer verification integration. | MIT, with transitive dependency notices. |
-| **Playwright Core** | Dedicated project-browser automation. | Apache-2.0; bundled package notices. Chromium runtime downloads on demand. |
-| **PDF.js / Tesseract.js / tessdata_fast** | Local PDF rendering and text extraction, with selected-page OCR. | Apache-2.0. English/Arabic language data downloads only when requested and is SHA-256 checked against the pinned source. |
-| **@napi-rs/canvas / Skia** | Off-main-thread PDF page rendering for OCR. | MIT / BSD-style; bundled source and native-package notices. |
-| **jev-browser 0.1.1** | Adapted page-diff and one-outcome decision flow for the shared Electron browser; no separate browser process or environment-key client. | MIT, Ying-Kai Liao; pinned source and modification notice. |
-| **mime-types / mime-db** | Preserve upload content types when sending confined file buffers to the project browser. | MIT. |
-| **Hindsight / PostgreSQL + pgvector** | Optional local long-term memory and its database. | MIT / PostgreSQL-style licenses; separately downloaded pinned images. [Runtime inventory](desktop/OPTIONAL_RUNTIME_INVENTORY.md). |
-| **Go modules and generated OpenAI client** | Runtime helpers, image handling, and typed Responses API bindings. | [Go notices](desktop/third-party-licenses/go/) and [pinned OpenAPI provenance](third_party/openai-openapi/README.md). |
-
-The [third-party notice inventory](desktop/third-party-licenses/README.md) and [generated npm notices](desktop/third-party-licenses/NPM_NOTICES.txt) contain the complete production dependency attributions, including specifically reviewed license exceptions. The Windows build regenerates notices and rejects unreviewed licenses. Docker base-image package notices remain inside the image.
-
-[Claude Code GUI](https://github.com/markes76/claude-code-gui) was a visual and workflow reference; UnrealCode's desktop implementation is built around Unreal Agent. Its branding and Claude-specific pages are not included. The flat UC mark was redrawn from the project owner's supplied reference; editable SVGs and light/dark exports are in [desktop/assets/brand](desktop/assets/brand/).
-
-**Not bundled in the Windows installer:** Docker Desktop, Windows Git, GitHub CLI, Codex CLI, Ollama, optional Laya/GLiNER packages, the legacy Playwright browser runtime, Hindsight/PostgreSQL images, OCR language data, or model weights. The new shared browser uses Electron's included Chromium; the older isolated browser remains available for recovery. The locally built backend image installs its own Git and Python utilities. No provider login, API credential, signing certificate, or real project backup belongs in a release.
-
-## Build, test, and contribute
-
-From `desktop/`:
-
-```powershell
-npm run typecheck
-npm test
-npm run build:win
-```
-
-The build creates a local NSIS installer under `desktop/dist/`; it does not publish a GitHub release. The [Windows release workflow](.github/workflows/desktop-release.yml) builds from a tagged commit and publishes only after the tests, audits, checksum, and attestation checks pass. Its [packaging](desktop/scripts/build-release.mjs) and [checksum](desktop/scripts/sha256-release.mjs) scripts are in this repository. See [BUILDING.md](desktop/BUILDING.md) for local steps and [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance. Coding assistants should read [AGENTS.md](AGENTS.md). Report vulnerabilities using [SECURITY.md](SECURITY.md).
-
-## Release provenance, signing, and privacy
-
-The Windows installer is unsigned. Its SHA-256 manifest checks the downloaded
-bytes against the release manifest. The corrected 1.0.1 replacement has no
-GitHub build attestation; the original 1.0.1 and 1.0.0 releases did. Use the
-[verification guide](desktop/VERIFY_RELEASE.md) for each
-download. The [code signing policy](CODE_SIGNING_POLICY.md) records the deferred
-SignPath option; no installer is represented as signed before its actual
-signature is checked. [Privacy and data flows](PRIVACY.md) explains local storage
-and when configured providers, connections, and other services receive information.
-
-### Current limits
-
-Windows + Docker is the supported target. Native execution, macOS/Linux desktop support, full language servers/debugging, an extension marketplace, and Claude subscription integration are outside this release. Recovery import currently requires the original Windows profile/app-data and project paths. Trusted publisher identity and automatic installation remain unavailable for unsigned builds. Full assistive-technology acceptance has not been established.
-
-### Warning popups
-
-Settings → Appearance → **Show warning popups** controls optional and background warnings. You can also select **Silence warnings** on an advisory notice. The preference survives restart. Failed tasks, data problems, approvals and required answers stay visible; muting does not remove inline feature status or support diagnostics.
+See [1.0.3 release notes](desktop/RELEASE_NOTES_1.0.3.md) and the [implementation evidence](docs/FIELDNOTES_COMPUTER_IMPLEMENTATION.md). Unsigned installation stays manual.
