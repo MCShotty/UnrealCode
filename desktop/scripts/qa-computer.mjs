@@ -11,8 +11,23 @@ try{
  await page.getByRole('heading',{name:'Open a workspace'}).waitFor();await page.getByRole('button',{name:'Open Computer',exact:true}).click();await page.getByRole('heading',{name:'Computer',exact:true}).waitFor()
  await page.getByText('Computer is off',{exact:true}).waitFor()
  // Actual bundled process protocol and minimal environment; no window capture or native input.
- await page.getByRole('button',{name:'Enable Computer',exact:true}).click();await page.getByText('Ready when you are',{exact:true}).waitFor({timeout:25000})
- assert.equal((await page.evaluate(()=>window.unreal.computerStatus())).grant,undefined)
+ await page.getByRole('button',{name:'Enable Computer',exact:true}).click()
+ let startup
+ for(const deadline=Date.now()+25000;Date.now()<deadline;){
+  startup=await page.evaluate(()=>window.unreal.computerStatus())
+  if(startup.enabled&&startup.startup&&['ready','unavailable'].includes(startup.state))break
+  await new Promise(resolve=>setTimeout(resolve,100))
+ }
+ assert(startup?.enabled&&['ready','unavailable'].includes(startup.state),'Helper startup must settle within 25 seconds')
+ assert.equal(startup.grant,undefined);assert.equal(startup.startup?.protocol,1,'The actual bundled process must complete the versioned handshake')
+ const restricted=startup.state==='unavailable'
+ if(restricted){
+  assert(startup.startup.elevated||!startup.startup.inputMonitor||!startup.startup.desktopReady,'Only verified safety prerequisites may block startup; crashes must fail this test')
+  assert.match(startup.message,/administrator|monitoring is unavailable/)
+  assert.equal(startup.generation,undefined);assert.equal(startup.shortcut,false)
+  await page.getByText('Computer needs attention',{exact:true}).waitFor()
+  console.log('Actual helper handshake; safe environment restriction:',startup.startup,startup.message)
+ }else await page.getByText('Ready when you are',{exact:true}).waitFor()
  const shortcut=await app.evaluate(({globalShortcut})=>{const key='Control+Alt+Shift+.';const ok=globalShortcut.register(key,()=>{});globalShortcut.unregister(key);return ok});assert(shortcut,'Emergency shortcut must register before input is granted')
  await page.getByRole('button',{name:'Turn off Computer',exact:true}).click();await page.getByText('Computer is off',{exact:true}).waitFor()
  for(const theme of ['dark','ice-dark','light']){await page.evaluate(theme=>window.unreal.updateSettings({theme}),theme);await page.waitForFunction(theme=>document.documentElement.dataset.theme===theme,theme);await page.screenshot({path:join(root,`computer-${theme}.png`),animations:'disabled'})}
@@ -30,5 +45,5 @@ try{
  await page.getByRole('button',{name:'Stop',exact:true}).click();await page.getByText('Ready when you are',{exact:true}).waitFor()
  assert(await page.locator('.computer-page').evaluate(element=>element.scrollWidth<=element.clientWidth+1))
  await page.getByRole('button',{name:'Back to workspaces'}).click();assert.deepEqual(errors,[])
- console.log('PASS: Computer standalone navigation, real bundled helper startup/stop, emergency shortcut, disabled-by-default grants, themes, accessibility, 200% scaling and reduced motion. '+root)
+ console.log(`PASS: Computer standalone navigation, actual helper protocol/${restricted?'fail-closed environment restriction':'ready startup'}/stop, emergency shortcut, disabled-by-default grants, fixture handback, themes, accessibility, 200% scaling and reduced motion. ${root}`)
 }catch(error){console.error('Computer UI failure:',errors);const page=await app.firstWindow();console.error(await page.locator('.computer-page').innerText());console.error(await page.evaluate(()=>window.unreal.computerStatus()));throw error}finally{await app.close()}

@@ -10,11 +10,11 @@ vi.mock('node:child_process',()=>({spawn:native.spawn}))
 import {ComputerManager} from './computer'
 const cleanup:Array<()=>Promise<unknown>>=[]
 afterEach(async()=>{vi.restoreAllMocks();for(const close of cleanup.splice(0).reverse())await close();native.spawn.mockReset()})
-function child(ready=true){
+function child(ready=true,handshake:Record<string,unknown>={}){
  const process=new EventEmitter() as any;process.exitCode=null;process.stdout=new PassThrough();process.stderr=new PassThrough()
  process.kill=vi.fn(()=>{if(process.exitCode===null){process.exitCode=0;process.emit('exit',0)}})
  process.stdin=new Writable({write(chunk,_encoding,done){const call=JSON.parse(chunk.toString());queueMicrotask(()=>process.stdout.emit('data',Buffer.from(JSON.stringify({id:call.id,result:{state:'ready'}})+'\n')));done()}})
- if(ready)setImmediate(()=>process.stdout.emit('data',Buffer.from(JSON.stringify({event:'ready',protocol:1,generation:'fixture',inputMonitor:true,desktopReady:true,elevated:false})+'\n')))
+ if(ready)setImmediate(()=>process.stdout.emit('data',Buffer.from(JSON.stringify({event:'ready',protocol:1,generation:'fixture',inputMonitor:true,desktopReady:true,elevated:false,...handshake})+'\n')))
  return process
 }
 async function fixture(){
@@ -38,4 +38,20 @@ it('closes a spawned helper that has not sent its ready event',async()=>{
  await vi.waitFor(()=>expect(native.spawn).toHaveBeenCalled())
  await expect(manager.enable(false)).resolves.toMatchObject({state:'disabled'})
  await rejected;expect(process.kill).toHaveBeenCalled()
+})
+it.each([
+ [{elevated:true,desktopReady:false},/without Run as administrator/],
+ [{desktopReady:false},/Desktop monitoring is unavailable/],
+ [{inputMonitor:false},/Physical input monitoring is unavailable/],
+ [{protocol:2},/protocol is incompatible/],
+ [{elevated:'false'},/without Run as administrator/]
+])('preserves a rejected readiness explanation after the child exits: %j',async(handshake,reason)=>{
+ const {manager}=await fixture();let helper:any
+ native.spawn.mockImplementation(()=>helper=child(true,handshake))
+ await expect(manager.enable(true)).rejects.toThrow(reason)
+ await new Promise(resolve=>setImmediate(resolve))
+ const status=await manager.status()
+ expect(status.state).toBe('unavailable');expect(status.message).toMatch(reason)
+ expect(status.grant).toBeUndefined();expect(status.generation).toBeUndefined()
+ expect(status.startup).toBeDefined();expect(helper.kill).toHaveBeenCalled()
 })

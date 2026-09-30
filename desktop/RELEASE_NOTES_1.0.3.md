@@ -30,6 +30,8 @@ three named themes, and the reliability repairs from the latest bug hunt.
   and paging; memory/timeline evidence and attribution races.
 - Computer startup/stop, reviewed model destinations, task isolation and capture
   bounds; browser uploads after cancellation or grant/control changes.
+- Computer startup now preserves the specific prerequisite failure after its
+  helper exits; elevated or unmonitored desktops remain blocked.
 - Shutdown write barriers, failed goal persistence, model-facing metadata
   redaction, and automatic-memory exclusion for native-derived content.
 

@@ -32,6 +32,9 @@
   summaries publishing after newer evidence; memory attribution and turn races.
 - Computer startup after disable, queued grants after Stop, task information
   leakage, stale model-destination reviews, and incomplete credential masks.
+- Readiness rejection messages being replaced by a generic helper-exit error.
+  Elevated processes, missing desktop monitoring, unavailable input monitoring,
+  and incompatible protocols retain their actionable explanations.
 - Browser uploads continuing after cancellation, takeover or origin revocation.
 - Failed metadata writes skipping shutdown barriers, and failed goal saves leaving
   live scheduling inconsistent with durable state.

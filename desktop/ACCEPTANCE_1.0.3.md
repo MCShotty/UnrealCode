@@ -4,7 +4,7 @@ Prepared 2026-09-30 from `codex/fieldnotes-computer`. This record distinguishes
 local precommit checks from the later exact-commit hosted build and publication.
 The owner authorized a new 1.0.3 release; earlier tags/assets remain preserved.
 
-## Fresh local precommit checks
+## Initial local precommit checks
 
 - TypeScript: both renderer and main/preload configurations pass.
 - Desktop: **523 passed, 6 explicitly skipped, 0 failed**, 529 total. Report:
@@ -24,6 +24,16 @@ The owner authorized a new 1.0.3 release; earlier tags/assets remain preserved.
   `DA7F98618543892A937AAC6D33FAF6E8CF0C612686C50C4143000E3AAAB5C8A4`.
 
 ## Hosted release requirements
+
+The first hosted Windows runs exposed a Computer startup QA failure. The actual
+helper's readiness rejection was overwritten by a generic exit message. The
+follow-up retains protocol/input-monitor/desktop/elevation diagnostics and rejects
+unsafe or malformed readiness. Five new lifecycle regressions plus existing
+Computer regressions pass (16 focused tests). A rebuilt local helper completes
+the real protocol/ready/stop sequence in the offscreen source UI check. Hosted
+tests now require the actual versioned handshake: a verified unsafe desktop
+prerequisite must remain blocked, while a crash or incompatible helper fails.
+This does not establish native input, and no safety check is bypassed for CI.
 
 The PR must pass Windows desktop/packaged checks, Docker backend compatibility,
 and Go race/vet/build CI. After merge, the build-only release workflow must pass
