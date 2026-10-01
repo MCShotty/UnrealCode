@@ -20,4 +20,6 @@ The timeline uses recorded chat, tools, workers, verification, and lifecycle eve
 
 Optional memory-model summaries cite evidence and label inferred progress. They do not edit approved plans or turn an inference into verified completion. Failures, required answers, and failed verification take precedence.
 
-Summaries run at most once per conversation every 20 seconds, with two global inference slots and no repeated idle requests. If memory is unavailable, the factual timeline stays useful. Saved records remain available offline without rerunning historical inference.
+In 1.0.3, summaries run at most once per conversation every 20 seconds. The local 1.0.4 candidate instead maintains connected stages, refreshing cached views every three seconds while visible and analysing meaningful changes at a three-second minimum. One analysis runs per conversation, sharing two global slots with Fieldnotes and Hindsight. Polling and idle ticks do not create inference requests. If memory is unavailable, the factual timeline stays useful. Saved records remain available offline without rerunning historical inference.
+
+The 1.0.4 work feed shows four compact entries and a faded earlier peek. **Show all** pages the full feed without hiding steering messages, answers, approvals or actionable failures. Approved executing revisions remain visible while newer plan drafts are edited.

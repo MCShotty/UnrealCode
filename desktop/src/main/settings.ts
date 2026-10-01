@@ -9,7 +9,7 @@ import { readBoundedJSONSync } from './bounded-file-read'
 
 const defaults: Settings = {
   recentProjects: [], trustedProjects: [], provider: 'openai-codex', model: 'gpt-6-astra',
-  thinkingLevel: 'high', systemPrompt: '', projectInstructions: {}, theme: 'system', disallowedTools: [], baseUrl: '',
+  thinkingLevel: 'high', systemPrompt: '', projectInstructions: {}, theme: 'system', density:'compact', disallowedTools: [], baseUrl: '',
   layout: { sessionWidth: 246, activityWidth: 340, sessions: true, activity: true, focus: false },
   notifications: false, warningNotifications:true, automaticUpdateChecks:true, updateChannel:'stable', executionMode: 'ask', taskIsolation: true, autoCompaction: false,
   decisionEngine: 'off', decisionSetupSeen: false, decisionModel: 'jev-latest', decisionCloudProjects: [], decisionCloudDeclinedProjects: [], glinerEnabled: false
@@ -39,6 +39,7 @@ function validateSettingsPatch(patch: Partial<Settings>): void {
   if (has('decisionModel') && !bounded(patch.decisionModel, 1024)) throw new Error('Invalid decision model')
   if (has('glinerEnabled') && typeof patch.glinerEnabled !== 'boolean') throw new Error('Invalid GLiNER preference')
   if (has('theme') && !['dark','ice-dark','light','system'].includes(patch.theme as string)) throw new Error('Invalid theme')
+  if (has('density') && !['compact','cozy'].includes(patch.density as string)) throw new Error('Invalid appearance density')
   if (has('executionMode') && !['plan','ask','agent'].includes(patch.executionMode as string)) throw new Error('Invalid execution mode')
   for (const key of ['notifications','warningNotifications','automaticUpdateChecks','taskIsolation','autoCompaction'] as const) if (has(key) && typeof patch[key] !== 'boolean') throw new Error('Invalid saved app preference')
   if(has('updateChannel')&&!['stable','preview'].includes(patch.updateChannel as string))throw Error('Invalid update channel')
@@ -94,7 +95,7 @@ export function defaultSettings():Settings{return structuredClone(defaults)}
 
 export function updateSettings(patch: Partial<Settings>): Settings {
   validateSettingsPatch(patch)
-  const allowed: (keyof Settings)[] = ['provider', 'model', 'thinkingLevel', 'systemPrompt', 'projectInstructions', 'theme', 'disallowedTools', 'baseUrl', 'decisionEngine', 'decisionSetupSeen', 'decisionModel', 'glinerEnabled']
+  const allowed: (keyof Settings)[] = ['provider', 'model', 'thinkingLevel', 'systemPrompt', 'projectInstructions', 'theme', 'density', 'disallowedTools', 'baseUrl', 'decisionEngine', 'decisionSetupSeen', 'decisionModel', 'glinerEnabled']
   const next = getSettings()
   if(patch.warningNotifications!==undefined)next.warningNotifications=patch.warningNotifications
   if(patch.automaticUpdateChecks!==undefined)next.automaticUpdateChecks=patch.automaticUpdateChecks

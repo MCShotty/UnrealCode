@@ -19,7 +19,7 @@ function asMessage(value: unknown): string {
   if (value && typeof value === 'object') return string(field(value, 'prompt', 'Prompt', 'Text', 'text'))
   return ''
 }
-export type ParsedEntry = { id: string; kind: 'user' | 'assistant' | 'tool' | 'decision' | 'status' | 'question'; seq?: number; eventSequences?:number[]; text: string; title: string; timestamp: string; status?: string; raw?: unknown; phase?:string; activityId?:string; questionResponseId?:string }
+export type ParsedEntry = { id: string; kind: 'user' | 'assistant' | 'tool' | 'decision' | 'status' | 'question'; seq?: number; eventSequences?:number[]; text: string; title: string; timestamp: string; status?: string; raw?: unknown; phase?:string; stageId?:string; activityId?:string; questionResponseId?:string }
 export function parseEvents(events: AgentEvent[]): ParsedEntry[] {
   const result: ParsedEntry[] = []
   const compactionTurns=new Set<string>()

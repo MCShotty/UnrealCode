@@ -154,3 +154,28 @@ a runner that never starts has not passed. Audit all reachable Git history and t
 release payload before publishing. Keep upstream MIT attribution and dependency
 notices. Do not claim unsigned distribution covers signed-update or invalid-signature
 acceptance; those features remain unavailable until a trusted signer exists.
+
+## Local 1.0.4 checks
+
+Run from `desktop` unless noted:
+
+```powershell
+npm run typecheck
+node node_modules/vitest/vitest.mjs run --maxWorkers=2 --testTimeout=15000
+node scripts/qa-104.mjs
+node scripts/qa-material.mjs --motion
+node scripts/qa-work-activity.mjs
+node scripts/qa-coding.mjs
+node scripts/qa-teams.mjs
+node scripts/qa-shared-documents.mjs
+npm run build:release:unsigned -- --output=dist-104-local --extract-uninstaller
+$env:UNREALCODE_QA_EXECUTABLE=(Resolve-Path dist-104-local/win-unpacked/UnrealCode.exe).Path
+node scripts/qa-104.mjs --packaged
+node scripts/audit-release.mjs
+```
+
+Offscreen checks use disposable profiles and fixtures. Native Computer acceptance
+needs its separate explicit prerequisites. Do not run benchmarks alongside builds
+or large parallel suites, and retain failed attempts in the coverage record.
+Canonical Go checks use `./cmd/... ./harness/... ./internal/...`; `./...` from a
+workspace containing old unpacked backend copies can also traverse those copies.

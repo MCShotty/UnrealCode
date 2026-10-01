@@ -61,9 +61,9 @@ try {
   await api('command', { name: 'rename', args: 'Explore the Fieldnotes workspace', sessionId: id })
   await composer.fill('Keep this draft while I inspect the workspace.')
   await shot('chat-dark'); await audit('chat-dark')
-  const work = page.locator('.tool-summary').first().locator('xpath=ancestor::section[contains(@class,"work-section")]')
+  const work = page.locator('.work-section').first()
   if (await work.locator('.work-disclosure').getAttribute('aria-expanded') === 'false') await work.locator('.work-disclosure').click()
-  await page.locator('.tool-summary').first().click()
+  await page.locator('.compact-work-event').first().click()
   await page.getByRole('dialog', { name: 'Tool Activity' }).waitFor()
   await page.getByRole('button', { name: 'Close tool activity' }).click()
   await page.locator('.model-picker > summary').click(); await page.getByPlaceholder('Search models').fill('future-model'); await page.locator('.model-picker-panel select').first().focus(); await page.keyboard.press('Escape')
@@ -72,7 +72,8 @@ try {
   await page.keyboard.press('Control+k'); await page.getByRole('textbox', { name: 'Search commands' }).fill('Go to Hooks'); await page.keyboard.press('Enter'); await page.getByRole('heading', { name: 'Project hooks' }).waitFor()
   await page.getByRole('button', { name: 'Chat', exact: true }).click(); await composer.waitFor(); assert.equal(await composer.inputValue(), 'Keep this draft while I inspect the workspace.')
   report.checks.push('Suggestion creates an editable draft, real read tool, tool expansion, model picker boundaries, command palette and draft preservation')
-  for (const label of ['Sessions', 'Files', 'Review', 'Workflow', 'Task controls', 'Browser', 'Terminal', 'GitHub', 'Context', 'Abilities', 'Memory', 'Hooks', 'Projects', 'Usage', 'Diagnostics', 'Settings', 'Chat']) {
+  for(const density of ['compact','cozy']){await api('updateSettings',{density});
+  for (const label of ['Sessions', 'Files', 'Review', 'Workflow', 'Task controls', 'Browser','Computer','Documents','Fieldnotes', 'Terminal', 'GitHub', 'Context', 'Abilities', 'Memory', 'Hooks', 'Projects', 'Usage', 'Diagnostics', 'Settings', 'Chat']) {
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: label, exact: true }).click()
     if (label === 'Chat') await composer.waitFor()
     else await page.getByRole('heading', { name: { Context: 'Context inspector', Memory: 'App-wide memory', Hooks: 'Project hooks' }[label] || label, exact: true }).waitFor()
@@ -101,7 +102,7 @@ try {
     }
     await page.waitForFunction(label => document.querySelector('.nav-item[aria-current="page"]')?.getAttribute('aria-label') === label, label)
   }
-  report.checks.push('All 17 navigation destinations render; Skills and MCPs share Abilities')
+  }report.checks.push('All 20 navigation destinations render in both density presets; Skills and MCPs share Abilities')
   await page.getByRole('button', { name: 'Settings', exact: true }).click(); await page.getByRole('heading', { name: 'Settings', exact: true }).waitFor()
   const appearanceTab = page.getByRole('tab', { name: 'Appearance', exact: true })
   await appearanceTab.click()

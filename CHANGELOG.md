@@ -1,5 +1,58 @@
 # Changelog
 
+## 1.0.4 - 2026-10-01
+
+### Added
+
+- Live, evidence-linked stage timelines authored by the consented memory model.
+  Cached views refresh every three seconds while visible. Meaningful activity
+  can trigger analysis at a three-second minimum, sharing two inference slots
+  with Fieldnotes and Hindsight. Idle polling does not make model requests.
+- Compact spacing as the default, with the previous spacing retained as Cozy.
+- Four small work entries, a faded earlier peek, and paged Show all navigation.
+
+### Changed
+
+- Approved executing plans retain their revision when a newer draft is edited.
+- The timeline leads the Compact activity rail. Secondary context folds away.
+  A single top-right container control provides status and recovery actions.
+- New stage markers and connecting lines use the existing Expressive motion
+  system. Historical and inferred completion cannot trigger a celebration.
+
+### Fixed
+
+- Busy conversations invalidating every observer response, truncated plan
+  coverage, reset transient backoff, stale consent/provenance, and queued
+  inference continuing after cancellation.
+- Disclosure identity and focus changing with older history, premature closing,
+  missing warning labels for short or unknown durations, and segmented feed
+  pagination around steering messages.
+- Docker dependency recovery blocking cached timelines, work and Tool Activity.
+- Remote browser content covering app menus. Session titles now exclude internal
+  advisory blocks and preserve Arabic characters when shortened.
+- Legacy cache projections now rebuild from retained records after a verified
+  backup. Interrupted backup files are preserved for inspection and replaced.
+
+- Malformed timeline output blocking the remainder of a task, plan progress
+  being skipped at an unchanged event sequence, and cache repair preventing
+  otherwise valid timeline reads.
+- Slow work-view replies being starved by overlapping polling. Recorded failures
+  now keep their state after disconnect, and settled failure time no longer
+  inflates work duration. Version-six cached durations are rebuilt with a backup.
+- Empty approved plans hiding saved inferred stages. Timeline observer packets
+  now redact plan and prior-stage text before sending it to the memory model.
+
+### Known limitations
+
+- The installer is unsigned and upgrades are manual. Earlier releases remain
+  unchanged. Model-authored stages are interpretations, not verification.
+- Continuous activity can use more memory-model requests than the old 20-second
+  observer. Existing memory limits still apply; real-provider overhead needs a
+  representative consented workload.
+- Native Computer, live populated-memory recovery, fresh-machine installation,
+  and assistive-technology acceptance remain separate gates. See the
+  [acceptance report](desktop/ACCEPTANCE_1.0.4.md) for evidence and limitations.
+
 ## 1.0.3 — 2026-09-30
 
 ### Added

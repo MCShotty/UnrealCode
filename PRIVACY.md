@@ -23,7 +23,12 @@ volumes. A trusted project folder can be mounted into its local container.
 - **Optional app-wide memory:** Hindsight and its database run in local Docker
   containers. After you accept the scope and separately selected model destination,
   that provider can receive bounded task outcomes, corrections, recall/reflect
-  requests, and redacted chat/tool/activity excerpts for timeline summaries.
+  requests, and bounded, redacted request excerpts and normalized activity metadata
+  for timeline stages. Raw tool output, document contents, captures, clipboard,
+  screen-derived text and unsaved Fieldnotes are excluded from observer input.
+  In the local 1.0.4 candidate, meaningful changes may trigger an analysis every
+  three seconds; cached UI polling never makes a model request. Existing memory
+  request/token limits and destination consent remain in effect.
   Relevant retained knowledge can be recalled across trusted projects with source
   attribution. Unintegrated specialist findings remain task-scoped. Existing
   project memories migrate after consent; historical chats are not all ingested.

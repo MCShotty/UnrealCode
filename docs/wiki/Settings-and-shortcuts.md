@@ -8,7 +8,7 @@
 | Memory | Separate memory model, verification, consent, and app-wide enablement. |
 | Decisions | Jev, Laya, Off, project cloud consent, and optional entity extraction. |
 | Agent | Agent instructions and tool restrictions. |
-| Appearance | Theme, layout, notifications, and warning popups. |
+| Appearance | Theme, spacing, layout, notifications, and warning popups. |
 | Usage | Optional account-reporting configuration. |
 | Recovery | Backups, restore, cleanup, support, and application release checks. |
 
@@ -69,3 +69,5 @@ The menu bar's **UnrealCode** menu offers the same local commands as the palette
 | `/init` | Draft project instructions for review. |
 | `/goal optional objective` | Manage a bounded persistent objective. |
 | `/help` | Search commands and availability. |
+
+The local 1.0.4 candidate defaults to **Compact** spacing. Choose **Cozy** to retain the previous spacing. This does not change the theme, manual pane widths, editor text, terminal text, PDF zoom or browser zoom. Container status lives in one top-right control, including when the activity rail is hidden.

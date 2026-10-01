@@ -89,6 +89,8 @@ export class HistoryCache {
   }
   async flush():Promise<void>{while(this.pending.length||this.scheduled){await new Promise(resolve=>setImmediate(resolve));await this.writing}await this.writing}
   async timelineEvidence(project:string,session:string,before?:number):Promise<import('../shared/timeline').TimelineEvidence[]>{return this.read('timeline.evidence',{project,session,before})}
+  async timelineEvidenceAt(project:string,session:string,sequences:number[]):Promise<import('../shared/timeline').TimelineEvidence[]>{return this.read('timeline.evidence-at',{project,session,sequences})}
+  async timelineInput(project:string,session:string,from:number,through:number):Promise<Array<{seq:number;kind:string;text:string;path?:string;at?:string}>>{return this.read('timeline.input',{project,session,from,through})}
   async nativeContext(project:string,session:string,through=0):Promise<boolean|undefined>{return this.read('memory.native-context',{project,session,through})}
   async putTimeline(project:string,session:string,rows:import('../shared/timeline').TimelineSummary[]):Promise<void>{return this.write('timeline.put',{project,session,rows})}
   async timelineSummaries(project:string,session:string,before?:number):Promise<import('../shared/timeline').TimelineSummary[]>{return this.read('timeline.summaries',{project,session,before})}

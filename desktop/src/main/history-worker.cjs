@@ -1,9 +1,18 @@
 const { parentPort, workerData, threadId } = require('node:worker_threads')
 const { DatabaseSync } = require('node:sqlite')
+const {existsSync,renameSync,chmodSync}=require('node:fs')
 const db = new DatabaseSync(workerData.path, { readOnly: workerData.reader === true })
 db.exec('PRAGMA busy_timeout=2000; PRAGMA foreign_keys=ON;')
-if(db.prepare('PRAGMA user_version').get().user_version>5)throw Error('History cache version is newer than this application')
+if(db.prepare('PRAGMA user_version').get().user_version>7)throw Error('History cache version is newer than this application')
 if (!workerData.reader) {
+  const version=db.prepare('PRAGMA user_version').get().user_version
+  if(version>0&&version<7){
+    const backup=workerData.path+(version<6?'.before-1.0.4.sqlite':'.before-1.0.4-v'+version+'.sqlite')
+    const verified=()=>{let copy;try{copy=new DatabaseSync(backup,{readOnly:true});return copy.prepare('PRAGMA integrity_check').get().integrity_check==='ok'&&copy.prepare('PRAGMA user_version').get().user_version===version}catch{return false}finally{copy?.close()}}
+    if(existsSync(backup)&&!verified())renameSync(backup,backup+'.interrupted-'+Date.now())
+    if(!existsSync(backup)){db.prepare('VACUUM INTO ?').run(backup);chmodSync(backup,0o600)}
+    if(!verified())throw Error('History migration backup verification failed; the original cache is preserved')
+  }
   if (db.prepare('PRAGMA journal_mode=WAL').get().journal_mode !== 'wal') throw Error('History cache requires a local disk with SQLite WAL support')
   db.exec(`PRAGMA synchronous=NORMAL;
     CREATE TABLE IF NOT EXISTS timeline_summaries(project TEXT,session TEXT,id TEXT,seq INTEGER,payload TEXT,PRIMARY KEY(project,session,id));
@@ -26,11 +35,11 @@ if(!workerData.reader)fieldnotes.initialize(db)
 if(!workerData.reader)activityModule.initialize(db)
 const activity=activityModule.service(db)
 if(!workerData.reader)db.exec("CREATE INDEX IF NOT EXISTS activity_name ON activity_calls(project,session,json_extract(data,'$.name'))")
-if(!workerData.reader&&db.prepare('PRAGMA user_version').get().user_version<4){
+if(!workerData.reader&&db.prepare('PRAGMA user_version').get().user_version<7){
  db.exec('BEGIN IMMEDIATE')
- try{for(const row of db.prepare('SELECT project,session FROM sessions').all())activity.project(row.project,row.session);db.exec('PRAGMA user_version=4; COMMIT')}catch(error){db.exec('ROLLBACK');throw error}
+ try{for(const row of db.prepare('SELECT project,session FROM sessions').all())activity.project(row.project,row.session,1);db.exec('PRAGMA user_version=7; COMMIT')}catch(error){db.exec('ROLLBACK');throw error}
 }
-if(!workerData.reader)db.exec('PRAGMA user_version=5');
+if(!workerData.reader)db.exec('PRAGMA user_version=7');
 const get = (value,key) => value && typeof value === 'object' ? value[key] ?? value[key[0].toLowerCase()+key.slice(1)] : undefined
 function searchable(event) {
   if(event.event === 'operation.update') { const s=get(event.payload,'State');return JSON.stringify({command:get(get(s,'Input'),'Command'),output:get(s,'Result'),stdout:get(s,'InlineOut'),stderr:get(s,'InlineErr'),error:get(s,'TerminalError')}) }
@@ -113,7 +122,20 @@ function run(method,p){
   })
   if(method==='timeline.put')return transaction(()=>{db.prepare('DELETE FROM timeline_summaries WHERE project=? AND session=?').run(p.project,p.session);const put=db.prepare('INSERT INTO timeline_summaries VALUES(?,?,?,?,?)');for(const row of p.rows)put.run(p.project,p.session,row.id,row.toSeq,JSON.stringify(row))})
   if(method==='timeline.summaries')return db.prepare('SELECT payload FROM timeline_summaries WHERE project=? AND session=? AND seq<? ORDER BY seq DESC LIMIT 50').all(p.project,p.session,p.before||Number.MAX_SAFE_INTEGER).map(row=>JSON.parse(row.payload)).reverse()
-  if(method==='timeline.evidence')return db.prepare("SELECT seq,at,payload FROM events WHERE project=? AND session=? AND seq<? AND kind IN ('session.item','model.request.started','operation.started','operation.update','verification.result','permission.requested','session.needs_input','question.updated','session.idle') ORDER BY seq DESC LIMIT 600").all(p.project,p.session,p.before||Number.MAX_SAFE_INTEGER).map(row=>{const safe=timelineProjection.project(JSON.parse(row.payload));return safe?{seq:row.seq,at:row.at,...safe}:null}).filter(Boolean).slice(0,60).reverse()
+  if(method==='timeline.evidence')return db.prepare("SELECT seq,at,payload FROM events WHERE project=? AND session=? AND seq<? AND kind IN ('session.item','model.request.started','model.request.completed','operation.started','operation.update','verification.result','permission.requested','permission.resolved','session.needs_input','question.updated','session.idle','session.status') ORDER BY seq DESC LIMIT 600").all(p.project,p.session,p.before||Number.MAX_SAFE_INTEGER).map(row=>{const safe=timelineProjection.project(JSON.parse(row.payload));return safe?{seq:row.seq,at:row.at,...safe}:null}).filter(Boolean).slice(0,60).reverse()
+  if(method==='timeline.evidence-at'){
+    if(!Array.isArray(p.sequences)||p.sequences.length>144||p.sequences.some(seq=>!Number.isSafeInteger(seq)||seq<1))throw Error('Invalid timeline evidence identities')
+    if(!p.sequences.length)return []
+    return db.prepare(`SELECT seq,at,payload FROM events WHERE project=? AND session=? AND seq IN (${p.sequences.map(()=>'?').join(',')}) ORDER BY seq`).all(p.project,p.session,...p.sequences).flatMap(row=>{const safe=timelineProjection.project(JSON.parse(row.payload));return safe?[{seq:row.seq,at:row.at,...safe}]:[]})
+  }
+  if(method==='timeline.input'){
+    if(!Number.isSafeInteger(p.from)||!Number.isSafeInteger(p.through)||p.from<1||p.through<p.from)throw Error('Invalid observer event range')
+    const rows=db.prepare("SELECT seq,at,payload FROM events WHERE project=? AND session=? AND seq>=? AND seq<=? AND kind='session.item' ORDER BY seq DESC LIMIT 80").all(p.project,p.session,p.from,p.through).reverse()
+    const anchor=db.prepare("SELECT seq,at,payload FROM events WHERE project=? AND session=? AND seq>=? AND seq<=? AND kind='session.item' AND COALESCE(json_extract(payload,'$.payload.Kind'),json_extract(payload,'$.payload.kind'))='input' AND COALESCE(json_extract(payload,'$.payload.Data.Kind'),json_extract(payload,'$.payload.data.kind'))='external' ORDER BY seq LIMIT 1").get(p.project,p.session,p.from,p.through)
+    const context=rows.flatMap(row=>timelineProjection.context(JSON.parse(row.payload)).map(item=>({...item,seq:row.seq,at:row.at})))
+    const first=anchor?timelineProjection.context(JSON.parse(anchor.payload)).map(item=>({...item,seq:anchor.seq,at:anchor.at})):[]
+    return [...first,...context.filter(row=>row.seq!==anchor?.seq).slice(-63)]
+  }
   if(method==='page'){
     const limit=Math.min(1000,Math.max(1,p.limit||500)),before=p.before||Number.MAX_SAFE_INTEGER
     const rows=p.around?db.prepare('SELECT payload,seq FROM events WHERE project=? AND session=? AND seq>=? ORDER BY seq LIMIT ?').all(p.project,p.session,Math.max(1,p.around-100),limit):db.prepare('SELECT payload,seq FROM events WHERE project=? AND session=? AND seq<? ORDER BY seq DESC LIMIT ?').all(p.project,p.session,before,limit).reverse()

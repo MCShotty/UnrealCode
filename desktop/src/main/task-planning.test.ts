@@ -63,6 +63,6 @@ it('keeps approved milestone identity and progress for unchanged agent plans',as
  const next=await store.saveAgentPlan(id,input)
  expect(next.revision).toBe(first.revision);expect(next.approvedRevision).toBe(first.revision);expect(next.milestones[0]).toMatchObject({id:first.milestones[0].id,state:'completed'})
  await store.saveAgentPlan(id,{...input,body:'Changed scope'})
- await expect(store.progress(id,first.revision,first.milestones[1].id,'running',[])).rejects.toThrow('revision changed')
+ await store.progress(id,first.revision,first.milestones[1].id,'running',[]);expect((await store.read(id)).plan?.revision).toBe(first.revision+1);expect((await store.read(id)).executionRevision).toBe(first.revision)
  await expect(store.progress(id,first.revision+1,first.milestones[1].id,'completed',[])).rejects.toThrow('evidence')
 })

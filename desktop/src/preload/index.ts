@@ -17,6 +17,7 @@ const api: DesktopAPI = {
   command:request=>invoke('command:execute',request),
   onCommand:callback=>{const listener=(_event:Electron.IpcRendererEvent,name:Parameters<typeof callback>[0])=>callback(name);ipcRenderer.on('app:command',listener);return()=>ipcRenderer.removeListener('app:command',listener)},
   timeline:(id,before)=>invoke('timeline:view',id,before),
+  onTimelineChanged:callback=>{const listener=(_event:Electron.IpcRendererEvent,change:import('../shared/timeline').TimelineChanged)=>callback(change);ipcRenderer.on('timeline:changed',listener);return()=>ipcRenderer.removeListener('timeline:changed',listener)},
   modelCatalog:(provider,baseUrl,refresh)=>invoke('models:catalog',provider,baseUrl,refresh),
   modelCapabilities:id=>invoke('model:capabilities',id),
   planning:id=>invoke('planning:get',id),planSave:(id,plan)=>invoke('planning:save',id,plan),planImplement:(id,revision,mode)=>invoke('planning:implement',id,revision,mode),
