@@ -80,6 +80,7 @@ type ResumeState struct {
 	Snapshot         Snapshot
 	Operations       []operation.Operation // Unfinished operations and terminal states missing from tool-call history.
 	ExternalInputIDs []inbox.ID
+	AdvisoryInputIDs []inbox.ID // Delivered reference records, never resumable work.
 }
 
 // Store does not serialize methods for the same session ID.

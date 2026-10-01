@@ -54,6 +54,14 @@ Keys stay in Electron main and use Windows encryption when available. Provider c
 
 Jev, Laya, and Off are optional decision-engine choices. GLiNER is separate local entity extraction. Jev requires its host key and project cloud consent. Decision results never grant permissions, and unavailable engines are not silently replaced.
 
+The local [1.1.0 asynchronous execution candidate](docs/ASYNC_EXECUTION.md) moves
+decision advice and memory recall behind message acceptance. Steering and Stop
+continue while they run. Applicable references arrive at a safe model boundary;
+they cannot answer questions, approve actions or reopen completed work. This
+candidate is not part of the published 1.0.4 installer.
+See the [1.1.0 release notes](desktop/RELEASE_NOTES_1.1.0.md) for changes and
+recovery limitations.
+
 ## Storage and privacy
 
 Project files remain in the chosen folder or a task worktree. Backend sessions live in Docker volumes. Electron stores settings, Fieldnote originals, recovery metadata, and a rebuildable SQLite history cache with one writer and two readers.

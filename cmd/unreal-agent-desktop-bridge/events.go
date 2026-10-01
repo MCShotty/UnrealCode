@@ -77,6 +77,15 @@ func (l *eventLog) preview(id session.ID, kind string, payload any) {
 	l.queueMu.Unlock()
 }
 
+// Protocol leases may not be dropped with optional text previews. They remain
+// transient but are delivered in order, including their settlement receipt.
+func (l *eventLog) signal(id session.ID, kind string, payload any) {
+	l.queueMu.Lock()
+	l.queue = append(l.queue, queuedEvent{id: id, kind: kind, payload: payload, at: time.Now().UTC(), transient: true})
+	l.queueCond.Signal()
+	l.queueMu.Unlock()
+}
+
 func (l *eventLog) writeQueue() {
 	for {
 		l.queueMu.Lock()
@@ -274,6 +283,12 @@ func (l *eventLog) appendAt(id session.ID, kind string, payload any, sourceSeque
 		return closeErr
 	}
 	state.next++
+	if kind == "decision.advisory" {
+		dir := filepath.Join(l.dir, "advisories-v1")
+		if err := os.MkdirAll(dir, 0700); err == nil {
+			_ = atomicPrivateFile(filepath.Join(dir, string(id)+".json"), encodedPayload)
+		}
+	}
 	if kind != "session.idle" && kind != "session.status" && kind != "verification.result" {
 		nextLife.consume(kind, projected, at)
 	}

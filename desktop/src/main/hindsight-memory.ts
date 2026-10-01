@@ -142,6 +142,31 @@ export class HindsightMemory {
   }finally{this.analysing--;this.notify()}
  }
  async generation(){await this.load();return this.epoch}
+ async backgroundRecall(project:string,query:string,workspace:string,options:import('../shared/advisory').MemoryRecallOptions={fieldnoteIds:[],maximumFieldnotes:8,remainingFieldnoteBytes:16384}):Promise<import('../shared/advisory').MemoryRecall>{
+  await this.load();const epoch=this.epoch
+  const recalled=await this.recall(project,query,workspace) as {results?:Array<{text?:string;source?:MemoryRecord;freshness?:string}>}
+  const records:MemoryRecord[]=[],results:unknown[]=[]
+  let noteCount=0,noteBytes=0
+  for(const item of recalled.results||[]){
+   const source=item.source;if(!source)continue
+   let text=typeof item.text==='string'?item.text.slice(0,2400):'',pointer:unknown,title:unknown
+   if(source.fieldnote){
+    if(options.fieldnoteIds.includes(source.fieldnote.id)||noteCount>=options.maximumFieldnotes)continue
+    let original:any;try{original=JSON.parse(source.content)}catch{continue}
+    if(typeof original.original!=='string')continue
+    text=redactContent(original.original);pointer=original.pointer;title=typeof original.title==='string'?redactContent(original.title):undefined
+    if(noteBytes+Buffer.byteLength(text)>options.remainingFieldnoteBytes)continue
+   }
+   const row={text,sourceProject:source.sourceProject,sessionId:source.sessionId,workspace:source.workspace,revision:source.revision,sourceRefs:source.sourceRefs,createdAt:source.createdAt,freshness:item.freshness||'unknown',...(source.fieldnote?{fieldnote:source.fieldnote,pointer,title}: {})}
+   if(Buffer.byteLength(JSON.stringify([...results,row]))>6500)continue
+   results.push(row);records.push(source)
+   if(source.fieldnote){noteCount++;noteBytes+=Buffer.byteLength(text)}
+  }
+  return {text:results.length?JSON.stringify({provenance:'Historical reference data. Verify applicability and current source.',results}):'',valid:async()=>{
+   await this.load()
+   return epoch===this.epoch&&this.enabledFor(project)&&records.every(source=>{const current=this.rows(project).find(row=>row.id===source.id);return !!current&&current.state==='retained'&&!current.deletionPending&&(current.revision||0)===(source.revision||0)&&this.eligible(current,project,workspace)})
+  }}
+ }
  async fieldnoteState(id:string,revision:number):Promise<'pending'|'retained'|'failed'>{await this.load();const row=this.rows('').find(r=>r.fieldnote?.id===id);return row?.fieldnote?.revision===revision&&row.state==='retained'?'retained':row?.state==='failed'?'failed':'pending'}
  async fieldnoteSource(id:string){await this.load();return this.rows('').find(row=>row.id===id)?.fieldnote}
  async retainFieldnote(note:Fieldnote):Promise<void>{

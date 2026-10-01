@@ -32,6 +32,7 @@ type Result struct {
 // Builder retains model request state without performing I/O.
 type Builder interface {
 	AddExternalInput(inbox.Input) error
+	AddAdvisoryInput(inbox.Input) error
 	AddControlMessage(inbox.ControlMessage)
 	SetModel(llm.Model)
 	SetSystemPrompt(string)

@@ -55,7 +55,9 @@ func (o *output) write(value any) error {
 
 func readRequests(r io.Reader, handle func(request)) error {
 	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
+	// A valid send can contain 8 MiB of images plus a 768 KiB prompt,
+	// Fieldnotes, and its JSON envelope. The frame bound must cover that contract.
+	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
 		var req request
 		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {

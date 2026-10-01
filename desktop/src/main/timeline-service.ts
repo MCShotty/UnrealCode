@@ -20,7 +20,11 @@ const planContent=(plan:TimelineView['plan'])=>JSON.stringify(plan?{revision:pla
 export function meaningfulTimelineEvent(event:AgentEvent){
  if(event.event==='session.status')return ['error','stopped'].includes(String((event.payload as any)?.status))
  if(event.event==='operation.update')return ['completed','failed','canceled','cancelled','interrupted'].includes(String((event.payload as any)?.Status|| (event.payload as any)?.status))
- if(event.event==='session.item')return ['input','model_response','tool_call_status'].includes(String((event.payload as any)?.Kind||(event.payload as any)?.kind))
+ if(event.event==='session.item'){
+  const p=event.payload as any,kind=p?.Kind||p?.kind
+  if(kind==='input')return (p?.Data?.Kind||p?.data?.kind)==='external'
+  return ['model_response','tool_call_status'].includes(String(kind))
+ }
  return ['session.idle','verification.result','session.needs_input','operation.started','question.updated','permission.requested','permission.resolved','session.status'].includes(event.event)
 }
 export class TimelineService{

@@ -1,4 +1,5 @@
 import type { AgentEvent } from '../shared/api'
+import {advisoryStatus,type AdvisoryStatus} from '../shared/advisory'
 
 function record(value: unknown): Record<string, unknown> { return value && typeof value === 'object' ? value as Record<string, unknown> : {} }
 function field(value: unknown, ...names: string[]): unknown { const target = record(value); for (const name of names) if (name in target) return target[name]; return undefined }
@@ -28,6 +29,11 @@ export function parseEvents(events: AgentEvent[]): ParsedEntry[] {
   const callOperations = new Map<string, string[]>()
   const operationStates = new Map<string,string>()
   const inheritedCalls = new Set<string>()
+  const adviceStates=new Map<string,AdvisoryStatus>(),adviceResults=new Set<string>(),adviceEntries=new Set<string>(),adviceSequences=new Map<string,number[]>()
+  for(const event of events){
+    if(event.event==='decision.advisory'){const state=advisoryStatus(event.payload);if(state&&state.binding.sessionId===event.sessionId){adviceStates.set(state.id,state);const sequences=adviceSequences.get(state.id)||[];sequences.push(event.seq);adviceSequences.set(state.id,sequences)}}
+    if(event.event==='decision.result'){const id=field(event.payload,'id');if(typeof id==='string')adviceResults.add(id)}
+  }
   const terminal = (state:string) => ['completed','failed','canceled'].includes(state)
   const callKey = (call:string,turn:unknown) => `call:${string(turn)}:${call}`
   // Telemetry can precede the persisted tool-call status in the event stream.
@@ -53,6 +59,14 @@ export function parseEvents(events: AgentEvent[]): ParsedEntry[] {
   }
   for (const event of events) {
     sequence = event.seq
+    if(event.event==='decision.advisory'){
+      const state=advisoryStatus(event.payload)
+      if(!state||state.binding.sessionId!==event.sessionId||adviceResults.has(state.id)||adviceEntries.has(state.id))continue
+      adviceEntries.add(state.id);const latest=adviceStates.get(state.id)!
+      const labels={queued:'Queued advice',analysing:'Analysing advice',ready:'Ready for a model boundary',delivered:'Used as reference',skipped:'Advice not used',failed:'Advice unavailable',cancelled:'Advice cancelled',interrupted:'Advice interrupted'}
+      result.push({id:`decision:${state.id}`,seq:event.seq,eventSequences:adviceSequences.get(state.id),kind:'decision',title:'Background decision advice',text:latest.message||'Coding continues independently. This advice cannot approve actions.',status:labels[latest.state],timestamp:formatTime(event.recordedAt),raw:latest})
+      continue
+    }
     if(event.event==='model.response.incomplete'){
       const text=string(field(event.payload,'text')).slice(0,16384)
       if(text)result.push({id:`${event.seq}:incomplete`,seq:event.seq,kind:'assistant',title:'UnrealCode',text,timestamp:formatTime(event.recordedAt),status:'incomplete'})
@@ -66,7 +80,8 @@ export function parseEvents(events: AgentEvent[]): ParsedEntry[] {
       const payload = record(event.payload)
       const answers = record(payload.answers)
       const choices = Object.entries(answers).map(([name, answer]) => `${name}: ${decisionAnswer(answer)}`).join(' · ')
-      result.push({ id: `${event.seq}:decision`, kind: 'decision', title: `${string(payload.engine).toUpperCase()} decision batch`, text: choices, timestamp: '', status: `${Number(payload.durationMs || 0)} ms`, raw: payload })
+      const state=adviceStates.get(string(payload.id))
+      result.push({ id: payload.id?`decision:${string(payload.id)}`:`${event.seq}:decision`,seq:adviceSequences.get(string(payload.id))?.[0]||event.seq,eventSequences:[...(adviceSequences.get(string(payload.id))||[]),event.seq],kind: 'decision', title: `${string(payload.engine).toUpperCase()} ${state?'background advice':'decision batch'}`, text: choices, timestamp: '', status: state?({queued:'Queued',analysing:'Analysing',ready:'Ready',delivered:'Used as reference',skipped:'Not used',failed:'Unavailable',cancelled:'Cancelled',interrupted:'Interrupted'}[state.state]):`${Number(payload.durationMs || 0)} ms`, raw: state?{...payload,advisory:state}:payload })
       continue
     }
     if (event.event === 'decision.error') {
@@ -94,6 +109,11 @@ export function parseEvents(events: AgentEvent[]): ParsedEntry[] {
     const timestamp = formatTime(field(item, 'RecordedAt', 'recordedAt'))
     if(kind==='turn'&&field(data,'Type','type')==='compaction'){compactionTurns.add(string(field(data,'ID','id')));continue}
     if (kind === 'input') {
+      if(string(field(data,'Kind','kind'))==='advisory'){
+        const value=record(field(data,'Payload','payload'))
+        if(value.category==='memory')result.push({id:`memory-advice:${string(field(data,'ID','id'))}`,seq:event.seq,eventSequences:[event.seq],kind:'decision',title:'Memory references used',text:'Historical knowledge and relevant Fieldnotes, with source attribution. Current requests take precedence.',status:'Reference',timestamp,raw:value})
+        continue
+      }
       if (string(field(data, 'Kind', 'kind')) !== 'external') continue
       providerFailureSeen=false
       const payload = field(data, 'Payload', 'payload')

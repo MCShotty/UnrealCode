@@ -46,17 +46,20 @@ type decisionResult struct {
 }
 
 type decisionRuntime struct {
-	mu        sync.RWMutex
-	installMu sync.Mutex
-	config    decisionConfig
-	endpoint  string
-	client    *http.Client
-	laya      pythonWorker
-	gliner    pythonWorker
+	mu         sync.RWMutex
+	installMu  sync.Mutex
+	config     decisionConfig
+	generation uint64
+	endpoint   string
+	client     *http.Client
+	laya       pythonWorker
+	gliner     pythonWorker
 }
 
 func newDecisionRuntime() *decisionRuntime {
-	return &decisionRuntime{endpoint: "https://api.typesafe.ai/v1/systemone", client: &http.Client{Timeout: 60 * time.Second}}
+	return &decisionRuntime{generation: 1, endpoint: "https://api.typesafe.ai/v1/systemone", client: &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return errDecisionRedirect
+	}}}
 }
 
 func (runtime *decisionRuntime) configure(config decisionConfig) error {
@@ -67,6 +70,9 @@ func (runtime *decisionRuntime) configure(config decisionConfig) error {
 		config.Model = "jev-latest"
 	}
 	runtime.mu.Lock()
+	if runtime.config != config {
+		runtime.generation++
+	}
 	runtime.config = config
 	runtime.mu.Unlock()
 	return nil
@@ -158,13 +164,17 @@ func normalizeDecisionBatch(batch decisionBatch) decisionBatch {
 }
 
 func (runtime *decisionRuntime) evaluate(ctx context.Context, batch decisionBatch) (decisionResult, error) {
+	runtime.mu.RLock()
+	config := runtime.config
+	runtime.mu.RUnlock()
+	return runtime.evaluateConfigured(ctx, batch, config)
+}
+
+func (runtime *decisionRuntime) evaluateConfigured(ctx context.Context, batch decisionBatch, config decisionConfig) (decisionResult, error) {
 	batch = normalizeDecisionBatch(batch)
 	if err := validateDecisionBatch(batch); err != nil {
 		return decisionResult{}, err
 	}
-	runtime.mu.RLock()
-	config := runtime.config
-	runtime.mu.RUnlock()
 	started := time.Now()
 	switch config.Engine {
 	case "jev":
@@ -221,7 +231,7 @@ func (runtime *decisionRuntime) callJev(ctx context.Context, batch decisionBatch
 		return decisionResult{}, errors.New("decision response exceeds 2 MB")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return decisionResult{}, fmt.Errorf("TypeSafe returned HTTP %d", response.StatusCode)
+		return decisionResult{}, decisionHTTPFailure(response, config.APIKey)
 	}
 	var decoded struct {
 		Model   string                     `json:"model"`
@@ -235,14 +245,11 @@ func (runtime *decisionRuntime) callJev(ctx context.Context, batch decisionBatch
 		return decisionResult{}, errors.New("decision response omitted questions")
 	}
 	for name, question := range batch.Questions {
-		var answer struct {
-			Type string `json:"type"`
-		}
-		if err := json.Unmarshal(decoded.Answers[name], &answer); err != nil || answer.Type != question.Type {
+		if err := validateDecisionAnswer(decoded.Answers[name], question); err != nil {
 			return decisionResult{}, fmt.Errorf("invalid answer for %q", name)
 		}
 	}
-	return decisionResult{Model: decoded.Model, Answers: decoded.Answers, Usage: decoded.Usage}, nil
+	return decisionResult{Model: decoded.Model, Answers: decoded.Answers, Usage: safeDecisionUsage(decoded.Usage)}, nil
 }
 
 func (runtime *decisionRuntime) extract(ctx context.Context, text string, labels []string) ([]map[string]any, error) {
@@ -303,15 +310,21 @@ func (runtime *decisionRuntime) install(ctx context.Context, engine string) erro
 }
 
 type pythonWorker struct {
-	mu     sync.Mutex
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
+	gateOnce sync.Once
+	gate     chan struct{}
+	cmd      *exec.Cmd
+	stdin    io.WriteCloser
+	stdout   *bufio.Reader
 }
 
 func (worker *pythonWorker) call(ctx context.Context, python, method string, payload any, result any) error {
-	worker.mu.Lock()
-	defer worker.mu.Unlock()
+	worker.gateOnce.Do(func() { worker.gate = make(chan struct{}, 1) })
+	select {
+	case worker.gate <- struct{}{}:
+		defer func() { <-worker.gate }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -336,20 +349,36 @@ func (worker *pythonWorker) call(ctx context.Context, python, method string, pay
 	if err != nil {
 		return err
 	}
-	if _, err := worker.stdin.Write(append(request, '\n')); err != nil {
-		worker.stop()
-		return err
-	}
 	type outcome struct {
 		data []byte
 		err  error
 	}
 	done := make(chan outcome, 1)
 	reader := worker.stdout
-	go func() { data, err := reader.ReadBytes('\n'); done <- outcome{data, err} }()
+	writer := worker.stdin
+	go func() {
+		if _, err := writer.Write(append(request, '\n')); err != nil {
+			done <- outcome{err: err}
+			return
+		}
+		var data []byte
+		for {
+			chunk, err := reader.ReadSlice('\n')
+			data = append(data, chunk...)
+			if len(data) > 2*1024*1024 {
+				done <- outcome{err: errors.New("Local decision response exceeds 2 MB")}
+				return
+			}
+			if err != bufio.ErrBufferFull {
+				done <- outcome{data, err}
+				return
+			}
+		}
+	}()
 	select {
 	case <-ctx.Done():
 		worker.stop()
+		<-done // Keep the gate until the actual I/O goroutine has settled.
 		return ctx.Err()
 	case received := <-done:
 		if received.err != nil {

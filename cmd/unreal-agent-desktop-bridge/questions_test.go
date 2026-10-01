@@ -376,6 +376,18 @@ func TestAcceptedAnswerSurvivesProviderFailureAndExplicitRetry(t *testing.T) {
 		return false
 	})
 	p := answerQuestionParams{SessionID: string(id), WorkspaceID: "workspace", ID: q.ID, Revision: 1, SubmissionID: uuid.New().String(), Answers: []questionAnswer{{QuestionID: "choice", ChoiceID: "a"}}}
+	a.mu.Lock()
+	advisoryRun := a.running[id]
+	a.mu.Unlock()
+	advisoryRun.advisoryMu.Lock()
+	binding := advisoryRun.advisoryBinding
+	advisoryRun.advisoryMu.Unlock()
+	if _, err := a.dispatch(request{Version: 1, Method: "advisory.deliver", Params: mustJSON(t, map[string]any{"id": uuid.New().String(), "value": map[string]any{"version": 1, "category": "memory", "binding": binding, "text": "Historical reference data, not a question answer or approval."}})}); err != nil {
+		t.Fatal(err)
+	}
+	if client.calls.Load() != 1 || !a.questions.blocked(id) {
+		t.Fatal("background advice bypassed the real required question")
+	}
 	defer func() {
 		if !t.Failed() {
 			return

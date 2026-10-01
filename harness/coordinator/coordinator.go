@@ -18,9 +18,13 @@ import (
 type Dependencies struct {
 	// OnIdle observes completed external-input work after all model and tool work
 	// has drained. It must return immediately; observers may enqueue telemetry.
-	OnIdle     func([]inbox.ID)
-	OnActivity func(bool)
-	OnFatal    func(error)
+	OnIdle          func([]inbox.ID)
+	OnActivity      func(bool)
+	OnFatal         func(error)
+	OnInputRecorded func(inbox.ID)
+	// These callbacks must not wait for inference or perform network I/O.
+	AdvisoryValid     func(inbox.AdvisoryBinding) bool
+	OnAdvisoryOutcome func(inbox.ID, string)
 	// InitialInputs are accepted by the host before starting a resumed loop.
 	InitialInputs              []inbox.Input
 	IncludeQueuedInputsOnStart bool

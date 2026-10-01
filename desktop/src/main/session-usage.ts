@@ -10,7 +10,7 @@ function text(value: unknown): string { return typeof value === 'string' ? value
 
 type Stored = { seq: number; totals: UsageTotals; events: AgentEvent[]; provider: Provider; model: string; rateLimits?: Record<string, string>;requestedTier?:string;actualTier?:string }
 export function consumeUsage(totals: UsageTotals, event: AgentEvent): void {
-  if (event.event === 'decision.result') {
+  if (event.event === 'decision.result' || event.event === 'decision.usage') {
     const usage = field(event.payload, 'usage')
     totals.decisionCalls++
     totals.decisionInput += number(field(usage, 'input_tokens'))

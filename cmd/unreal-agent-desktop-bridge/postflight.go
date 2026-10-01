@@ -2,15 +2,18 @@ package main
 
 import (
 	"context"
+	"github.com/unreallabsai/unreal-agent/harness/inbox"
 	"os/exec"
 	"sort"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/unreallabsai/unreal-agent/harness/session"
 )
 
 type postflightCandidate struct {
+	binding   inbox.AdvisoryBinding
 	messageID string
 	prompt    string
 	before    string
@@ -71,17 +74,17 @@ func changedEvidence(before, after string) string {
 	return result
 }
 
-func (a *app) rememberPostflight(id session.ID, messageID, prompt string) {
+func (a *app) rememberPostflight(ctx context.Context, id session.ID, messageID, prompt string, binding inbox.AdvisoryBinding, run *runningSession) {
 	if !shouldPreflight(prompt) || !a.decision.available() {
 		return
 	}
-	before, ok := gitEvidence(a.ctx, a.workspace)
+	before, ok := gitEvidence(ctx, a.workspace)
 	if !ok {
 		return
 	}
 	a.postMu.Lock()
-	if previous := a.postflight[id]; previous.messageID != messageID {
-		a.postflight[id] = postflightCandidate{messageID: messageID, prompt: prompt, before: before}
+	if ctx.Err() == nil && a.advisoryValid(run, binding, false) {
+		a.postflight[id] = postflightCandidate{binding: binding, messageID: messageID, prompt: prompt, before: before}
 	}
 	a.postMu.Unlock()
 }
@@ -102,13 +105,26 @@ func (a *app) finishPostflight(id session.ID) {
 	if !found {
 		return
 	}
-	a.runs.Add(1)
-	a.decisionPending.Add(1)
-	go func() { defer a.runs.Done(); defer a.decisionPending.Add(-1); a.verifyPostflight(id, candidate) }()
+	a.mu.Lock()
+	run := a.running[id]
+	a.mu.Unlock()
+	if run == nil || run.stopping.Load() {
+		return
+	}
+	run.advisoryMu.Lock()
+	binding := run.advisoryBinding
+	run.advisoryMu.Unlock()
+	if candidate.binding.RunID != "" && candidate.binding != binding {
+		return
+	}
+	a.decision.mu.RLock()
+	config := a.decision.config
+	a.decision.mu.RUnlock()
+	a.advisories.queueJob(&advisoryJob{id: inbox.ID(uuid.New().String()), binding: binding, run: run, config: config, postflight: &candidate})
 }
 
-func (a *app) verifyPostflight(id session.ID, candidate postflightCandidate) {
-	after, ok := gitEvidence(a.ctx, a.workspace)
+func (a *app) verifyPostflight(ctx context.Context, id session.ID, candidate postflightCandidate, config decisionConfig, valid func() bool) {
+	after, ok := gitEvidence(ctx, a.workspace)
 	if !ok || candidate.before == after {
 		return
 	}
@@ -128,9 +144,17 @@ func (a *app) verifyPostflight(id session.ID, candidate postflightCandidate) {
 		"requirement_alignment": {Type: "noul", Instructions: "Does change_delta provide concrete evidence that code or files changed toward request? Answer uncertain when only a filename is visible."},
 		"contradiction_signal":  {Type: "noul", Instructions: "Does change_delta visibly contradict a specific requirement in request? Judge only shown evidence; do not assume hidden files are correct."},
 	}}
-	result, err := a.decision.evaluate(a.ctx, batch)
+	if !valid() || ctx.Err() != nil {
+		return
+	}
+	result, err := a.decision.evaluateConfigured(ctx, batch, config)
 	if err != nil {
-		_ = a.events.append(id, "decision.error", map[string]string{"message": err.Error()}, 0)
+		if valid() {
+			_ = a.events.append(id, "decision.error", map[string]string{"message": "Post-change decision unavailable; coding continues."}, 0)
+		}
+		return
+	}
+	if !valid() || ctx.Err() != nil {
 		return
 	}
 	_ = a.events.append(id, "decision.result", traceDecision(result, batch, candidate.messageID, "Post-change semantic verification"), 0)
