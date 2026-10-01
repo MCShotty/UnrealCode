@@ -53,7 +53,29 @@ pinned Docker toolchain; avoid traversing generated packaged backend copies.
 Document fixtures, external prerequisites and performance evidence separately
 in `desktop/ACCEPTANCE_1.0.4.md`. Tests never authorize native input.
 
-## Published 1.0.3 and release boundary
+## Published 1.0.4 and release boundary
+
+[1.0.4](https://github.com/MCShotty/UnrealCode/releases/tag/v1.0.4) was published on 2026-10-01 after
+[PR #7](https://github.com/MCShotty/UnrealCode/pull/7) merged. The owner's release
+authorization has been fulfilled. Do not reuse it for another version, retagging
+or replacing published assets.
+
+- Source: `7e39f002f91dc511772455b3f0425b507f14e3c6`.
+- Annotated `v1.0.4` tag object: `fb96c7b0e75296d32629dba1175f1434afd700f4`.
+- Installer: 225,372,393 bytes, `NotSigned`.
+- Published SHA-256: `986DD892FA56FC57320781077A516D11FA3A621B8EA17727B11B614E69A4D521`.
+- Exact-main preflight: [36799859211](https://github.com/MCShotty/UnrealCode/actions/runs/36799859211).
+- Tagged build/publication: [36800569746](https://github.com/MCShotty/UnrealCode/actions/runs/36800569746).
+
+Downloaded manifest/digest and repository/workflow/tag/commit attestation checks
+passed. Latest was 1.0.4 at verification. Earlier tags and assets were preserved.
+Unsigned installation remains manual; the native, live-memory, fresh-machine
+and assistive-technology limits in the acceptance report remain open. See
+[release verification](desktop/RELEASE_VERIFICATION_1.0.4.md) and
+[local acceptance](desktop/ACCEPTANCE_1.0.4.md). Local candidate checksums are
+historical evidence, not the published installer identity.
+
+## Historical 1.0.3 release evidence
 
 [1.0.3](https://github.com/MCShotty/UnrealCode/releases/tag/v1.0.3) was published
 on 2026-09-30 after [PR #6](https://github.com/MCShotty/UnrealCode/pull/6) merged.

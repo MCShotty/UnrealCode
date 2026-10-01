@@ -1,6 +1,8 @@
 # Verify an UnrealCode Windows release
 
 Verify **1.0.4**. The installer is **not Authenticode signed**.
+Published checksum, commit, tag and workflow evidence are in
+[the release record](RELEASE_VERIFICATION_1.0.4.md).
 SHA-256 verifies downloaded bytes against the release manifest; GitHub Artifact
 Attestations verify the hosted build's repository, workflow, tag and commit.
 Neither establishes a trusted Windows publisher or removes SmartScreen warnings.
