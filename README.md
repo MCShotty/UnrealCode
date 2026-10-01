@@ -11,7 +11,7 @@
 
 Bring your own model, open a project, and use chat, editing, parallel tools, review, and recovery in one app. You can steer the agent while it works, give independent tasks to subagents, and inspect what changed before integrating it. Unreal Engine is not required.
 
-**[Download 1.0.3](https://github.com/MCShotty/UnrealCode/releases/tag/v1.0.3)** · **[Full wiki](https://github.com/MCShotty/UnrealCode/wiki)** · **[Changelog](CHANGELOG.md)**
+**[Download latest](https://github.com/MCShotty/UnrealCode/releases/latest)** · **[Full wiki](https://github.com/MCShotty/UnrealCode/wiki)** · **[Changelog](CHANGELOG.md)**
 
 The installer is **unsigned**. Verify its [checksum and GitHub build attestation](desktop/VERIFY_RELEASE.md), then install manually. These checks do not remove Windows publisher warnings. Release notifications open GitHub; they never download or execute an installer.
 
@@ -39,6 +39,8 @@ Read [Getting started](https://github.com/MCShotty/UnrealCode/wiki/Getting-start
 | Browser and documents | Live project tabs, origin-based agent grants, PDF reading/parsing, selected-page English/Arabic OCR, and Markdown guidance. | [Browser](https://github.com/MCShotty/UnrealCode/wiki/Browser), [Documents](https://github.com/MCShotty/UnrealCode/wiki/Documents-and-OCR) |
 | Computer | Experimental, default-off selected-window controls, reviewed task/model-bound grants, takeover, handback, and emergency stop. | [Computer](https://github.com/MCShotty/UnrealCode/wiki/Computer) |
 | Visibility | Tool Activity, stage timelines, measured usage, diagnostics, support, backups, and cleanup previews. | [Activity](https://github.com/MCShotty/UnrealCode/wiki/Tool-Activity-and-timeline), [Recovery](https://github.com/MCShotty/UnrealCode/wiki/Storage-and-recovery) |
+
+**New in 1.0.4:** connected, model-authored timelines, a four-entry work feed, and Compact spacing with Cozy available in Appearance. [Acceptance coverage](desktop/ACCEPTANCE_1.0.4.md) and the [bug-hunt record](desktop/BUG_HUNT_1.0.4.md) document tests and remaining gates.
 
 Appearance offers **Cinder Dark**, **Ice Dark**, **Flashbang**, and **Follow Windows**. Material 3 Expressive motion respects reduced motion. See [Settings and shortcuts](https://github.com/MCShotty/UnrealCode/wiki/Settings-and-shortcuts) for every slash command and keyboard control.
 
@@ -85,6 +87,6 @@ UnrealCode uses the [Unreal Agent Go harness](https://github.com/unreallabsai/un
 
 Docker Desktop, Git/gh, Codex CLI, Ollama, optional memory images, OCR language data, isolated-browser runtime, and model weights are separate installs or downloads.
 
-Windows with Docker is the supported coding platform. Native host execution of the coding backend, macOS/Linux desktop releases, a marketplace, and full language-server/debugger support are outside this version. Computer remains experimental: actual native input/capture, physical takeover, lock/desktop/DPI behavior, live populated-memory recovery, fresh-machine 1.0.3 installation, and full assistive-technology acceptance remain open. Recovery import currently needs the original profile and project paths.
+Windows with Docker is the supported coding platform. Native host execution of the coding backend, macOS/Linux desktop releases, a marketplace, and full language-server/debugger support are outside this version. Computer remains experimental: actual native input/capture, physical takeover, lock/desktop/DPI behavior, live populated-memory recovery, fresh-machine installation, and full assistive-technology acceptance remain open. Recovery import currently needs the original profile and project paths.
 
-See [1.0.3 release notes](desktop/RELEASE_NOTES_1.0.3.md) and the [implementation evidence](docs/FIELDNOTES_COMPUTER_IMPLEMENTATION.md). Unsigned installation stays manual.
+See [1.0.4 release notes](desktop/RELEASE_NOTES_1.0.4.md) and the [implementation evidence](docs/FIELDNOTES_COMPUTER_IMPLEMENTATION.md). Unsigned installation stays manual.

@@ -17,6 +17,42 @@ exploration and GPT-6 Sol with xhigh reasoning and daybreak mode for coding.
 Disclose unavailable models or controls instead of claiming they were enabled.
 Write plainly, with brief, natural humor where it fits. Report what actually ran.
 
+## 1.0.4 implementation and release authorization
+
+The owner authorized the live timeline, Compact/Cozy appearance, compact work
+feed and whole-app bug hunt. On 2026-10-01 the owner also authorized committing,
+merging and publishing this work as 1.0.4. Use the reviewed PR, exact merged-main
+preflight and new annotated `v1.0.4` tag workflow below. This authorization does
+not cover future releases, retagging or replacing earlier published assets.
+The published 1.0.3 evidence below remains historical release evidence.
+
+Timeline views poll cached data every three seconds only while visible. Model
+analysis is event-driven with a three-second minimum, one per conversation and
+two shared dispatch slots. Preserve approved execution revisions, prior stage
+identities, evidence ownership, native provenance, redaction and memory consent.
+New ordinary events may overlay captured narrative; they must not starve it.
+Inference never approves actions or rewrites approved plan content.
+
+SQLite cache version 7 retains bounded work-segment projection queries and
+rebuilds settled failure timing from canonical events. Version-six caches receive
+a separate `.before-1.0.4-v6.sqlite` backup before the derived rebuild. The writer
+makes and verifies a consistent pre-upgrade backup before rebuilding derived
+projections. Preserve canonical records, titles and user preferences. Versioned
+timeline and planning metadata have verified backups and atomic replacement.
+
+Density is independent of theme and manual layout widths. Missing preferences
+mean Compact. Cozy retains the former spacing. Keep protected conversation
+content visible, page expanded feeds, preserve focus and expose one top-right
+container status across views. Do not scale editors or remote content.
+
+Run `npm run typecheck` and the complete desktop suite, with one worker
+on this host during acceptance to avoid resource contention. From desktop, use `qa-104.mjs`,
+`qa-material.mjs --motion`, the coding/work/activity/team/document workflows,
+and packaged variants. Run canonical Go package race/vet checks through the
+pinned Docker toolchain; avoid traversing generated packaged backend copies.
+Document fixtures, external prerequisites and performance evidence separately
+in `desktop/ACCEPTANCE_1.0.4.md`. Tests never authorize native input.
+
 ## Published 1.0.3 and release boundary
 
 [1.0.3](https://github.com/MCShotty/UnrealCode/releases/tag/v1.0.3) was published

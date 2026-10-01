@@ -3,6 +3,7 @@ import {ArrowLeft,ArrowRight,Globe2,Hand,Plus,RotateCw,Search,ShieldCheck,Square
 import type {BrowserGrant,SharedBrowserCommand,SharedBrowserState} from '../shared/browser'
 import {BrowserPage as LegacyBrowserPage} from './BrowserPage'
 import {ProgressIndicator} from './ProgressIndicator'
+import {nativeViewObscured} from './native-view-occlusion'
 
 const emptyGrant:BrowserGrant={enabled:false,origins:[],interactOrigins:[],ports:[]}
 const pageUrl=(value:SharedBrowserState)=>value.tabs.find(tab=>tab.id===value.activeId)?.url||''
@@ -19,10 +20,12 @@ export function SharedBrowserPage({project,sessionId}:{project:string;sessionId:
  const [findOpen,setFindOpen]=useState(false),[newTabPending,setNewTabPending]=useState(false)
  const [accessOpen,setAccessOpen]=useState(false),[legacy,setLegacy]=useState(false)
  const [error,setError]=useState(''),[busy,setBusy]=useState(false)
+ const [obscured,setObscured]=useState(false)
  const viewport=useRef<HTMLDivElement>(null),addressInput=useRef<HTMLInputElement>(null)
  const findInput=useRef<HTMLInputElement>(null),accessDialog=useRef<HTMLDialogElement>(null),accessButton=useRef<HTMLButtonElement>(null)
  const generation=useRef(0),addressFocused=useRef(false),pendingNew=useRef(false),accessVisible=useRef(false),busyRef=useRef(false),findTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined)
  const active=state?.tabs.find(tab=>tab.id===state.activeId)
+ useEffect(()=>{let frame=0;const update=()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(()=>setObscured(nativeViewObscured()))};const observer=new MutationObserver(update);observer.observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['open','hidden','aria-hidden']});document.addEventListener('toggle',update,true);update();return()=>{cancelAnimationFrame(frame);observer.disconnect();document.removeEventListener('toggle',update,true)}},[])
 
  useEffect(()=>{
   const version=++generation.current
@@ -52,15 +55,16 @@ export function SharedBrowserPage({project,sessionId}:{project:string;sessionId:
 
  useEffect(()=>{
   const element=viewport.current
-  if(!element||!active||newTabPending||accessOpen){void window.unreal.sharedBrowserHide();return}
+  if(!element||!active||newTabPending||accessOpen||obscured){void window.unreal.sharedBrowserHide();return}
+  let live=true
   const update=()=>{
    const box=element.getBoundingClientRect()
-   if(box.width>100&&box.height>80)void window.unreal.sharedBrowserShow(active.id,{x:box.x,y:box.y,width:box.width,height:box.height}).catch(reason=>setError(String(reason)))
+   if(box.width>100&&box.height>80)void window.unreal.sharedBrowserShow(active.id,{x:box.x,y:box.y,width:box.width,height:box.height}).catch(reason=>{if(live)setError(String(reason))})
   }
   const observer=new ResizeObserver(update)
   observer.observe(element);window.addEventListener('resize',update);update()
-  return()=>{observer.disconnect();window.removeEventListener('resize',update)}
- },[active?.id,newTabPending,accessOpen])
+  return()=>{live=false;observer.disconnect();window.removeEventListener('resize',update)}
+ },[active?.id,newTabPending,accessOpen,obscured])
 
  const command=async(value:SharedBrowserCommand)=>{
   if(busyRef.current)return

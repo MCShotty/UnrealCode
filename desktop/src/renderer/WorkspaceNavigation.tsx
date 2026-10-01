@@ -46,6 +46,6 @@ export function WorkspaceNavigation({ view, onNavigate, onNew, onCommands, ready
         <Icon size={19}/><span className="nav-label"><span className="full-nav-label">{label}</span><span className="compact-nav-label">{({ control: 'Controls', connections: 'Connect', diagnostics: 'Diagnose' } as Partial<Record<View, string>>)[id] || label}</span></span>
       </button>})}
     </section>)}</nav>
-    <div className="rail-bottom"><div className="agent-ready" title={ready ? 'Container connected' : 'Browse cached history; connect Docker to run tasks'}><span className={`status-dot ${ready ? 'on' : ''}`}/><div><strong>{ready ? 'Ready to work' : 'Offline workspace'}</strong><small>{ready ? 'Container connected' : 'Cached history available'}</small></div></div><small title={project}>{project}</small><small>v{version}</small></div>
+    <div className="rail-bottom"><small title={project}>{project}</small><small>v{version}</small></div>
   </aside>
 }

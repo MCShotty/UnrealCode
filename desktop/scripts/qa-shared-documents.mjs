@@ -42,6 +42,11 @@ try{
  let viewCount=0
  for(let attempt=0;attempt<30;attempt++){viewCount=await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].contentView.children.length);if(viewCount>=1)break;await page.waitForTimeout(100)}
  if(viewCount<1)throw Error(`WebContentsView was not mounted; state=${JSON.stringify(await page.evaluate(()=>window.unreal.sharedBrowserState()))}; errors=${await page.locator('.error-inline').allInnerTexts()}; viewport=${JSON.stringify(await page.locator('.shared-browser-viewport').boundingBox())}`)
+ await page.locator('.container-status-control > summary').click()
+ for(let i=0;i<30;i++){if(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].contentView.children.length===0))break;await page.waitForTimeout(50)}
+ if(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].contentView.children.length)!==0)throw Error('Remote browser covered the container status menu')
+ await page.keyboard.press('Escape');await page.waitForTimeout(150)
+ if(await instance.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].contentView.children.length)<1)throw Error('Remote browser was not restored after closing the app menu')
  await page.evaluate(origin=>window.unreal.sharedBrowserConfigure({enabled:true,origins:[origin],interactOrigins:[origin],cloudOrigins:[],ports:[]}),address)
  const handed=await page.evaluate(id=>window.unreal.sharedBrowserCommand({type:'handback',tabId:id}),tab)
  if(handed.tabs.find(item=>item.id===tab)?.control!=='agent')throw Error('Browser handback failed')

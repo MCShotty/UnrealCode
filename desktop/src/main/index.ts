@@ -1,3 +1,4 @@
+import {dependencyReadChannels} from './dependency-access'
 import {assertReviewedComputerDestination} from './computer-policy'
 import { classifyFailure, ActionableError, withEventFailure } from './failures'
 import { commands,validateCommand,type CommandResult } from '../shared/commands'
@@ -32,7 +33,7 @@ async function computerOwner(id:string){const owner=runtime(),target=await owner
 function documents(){return documentReader||=(new DocumentReader(app.getPath('userData')))}
 const sharedBrowsers=new Map<string,SharedProjectBrowser>()
 function sharedBrowser(root:string):SharedProjectBrowser{let browser=sharedBrowsers.get(root);if(!browser){browser=new SharedProjectBrowser(root,app.getPath('userData'));browser.onChanged=()=>window?.webContents.send('shared-browser:changed',root);sharedBrowsers.set(root,browser)}return browser}
-function timeline(){return timelineService||=(new TimelineService(memory,()=>window?.webContents.send('workflow:changed',selected?.project||'')))}
+function timeline(){return timelineService||=(new TimelineService(memory,change=>{if(change)window?.webContents.send('timeline:changed',change)}))}
 const hookControllers=new Map<string,AbortController>()
 const browserControllers=new Map<string,AbortController>()
 import {closeProjectFiles} from './project-fs'
@@ -168,7 +169,6 @@ let supportSelection=''
 let activeIPC=0
 let workspaceSelection=0
 const recoveryChannels=new Set(['recovery:action','history:rebuild','settings:get','app:version','project:path','docker:status','settings:codex-status','recovery:status','recovery:retry','recovery:export','recovery:preview','recovery:restore','recovery:retained','recovery:retained-export','recovery:retained-attach','storage:list','storage:remove','support:preview','support:export','updates:status','updates:check','updates:preferences','updates:dismiss','updates:open-release','updates:download','updates:cancel','updates:install'])
-const dependencyReadChannels=new Set(['project:pick','project:open','session:list','session:select','session:latest','session:events','session:event-window','history:page','history:search','workspace:active','settings:update','settings:has-key','settings:save-key','models:health','models:discover','files:changes'])
 function handle(channel:string,callback:(event:Electron.IpcMainInvokeEvent,...args:any[])=>unknown):void {
  ipcMain.handle(channel,async(event,...args)=>{
   let tracked=false
@@ -385,7 +385,7 @@ async function handleHostEvent(owner: WorkspaceRuntime, event: AgentEvent): Prom
     if(event.event==='host.control'){
       if(config.disallowedTools.includes(operation.tool))throw Error('Control tool disabled')
       const args=operation.arguments;let value:unknown
-      if(operation.tool==='PlanProgress')value=await target.planning.progress(event.sessionId,args.revision as number,args.milestoneId as string,args.state as 'pending'|'running'|'completed',args.evidence as string[])
+      if(operation.tool==='PlanProgress'){value=await target.planning.progress(event.sessionId,args.revision as number,args.milestoneId as string,args.state as 'pending'|'running'|'completed',args.evidence as string[]);timeline().changed(owner,event.sessionId)}
       else if(operation.tool==='PlanUpdate'){if(!Array.isArray(args.milestones))throw Error('Plan milestones must be a list');value=await target.planning.saveAgentPlan(event.sessionId,{objective:args.objective as string,body:args.body as string,acceptance:args.acceptance as string[],milestones:args.milestones as string[]})}
       else if(operation.tool==='Computer'){
         if(config.specialist)throw Error('Native computer input belongs to the parent task; workers cannot compete for it.')
@@ -524,7 +524,7 @@ async function openWorkspace(requested: string): Promise<ReturnType<DockerBridge
   let current = workspaces.get(canonical)
   if (!current) {
     current = new WorkspaceRuntime(canonical, app.getPath('userData'), {
-      event: (event) => { if(event.event==='computer.image.request'){if(current)void handleHostEvent(current,event).catch(()=>{});return}if(event.event==='model.request.completed'){const p=event.payload as any;if(p.failure&&typeof p.model==='string')recordModelRejection(p.provider,p.model,p.failure)} const display=withEventFailure(event);window?.webContents.send('agent:event', display);if(display.failure){recordFailure(event.event,{code:display.failure.code,reference:display.failure.reference});window?.webContents.send('app:failure',display.failure);} if (current) {if(!recoveryState.busy&&['session.item','session.idle','verification.result','session.needs_input','operation.started','operation.update','question.updated'].includes(event.event))timeline().changed(current,event.sessionId);void handleHostEvent(current,event).catch(()=>{});if(event.event==='session.idle'&&memoryService)void retainMemory(current,event).catch(()=>{})} },
+      event: (event) => { if(event.event==='computer.image.request'){if(current)void handleHostEvent(current,event).catch(()=>{});return}if(event.event==='model.request.completed'){const p=event.payload as any;if(p.failure&&typeof p.model==='string')recordModelRejection(p.provider,p.model,p.failure)} const display=withEventFailure(event);window?.webContents.send('agent:event', display);if(display.failure){recordFailure(event.event,{code:display.failure.code,reference:display.failure.reference});window?.webContents.send('app:failure',display.failure);} if (current) {if(!recoveryState.busy&&['session.item','session.idle','verification.result','session.needs_input','operation.started','operation.update','question.updated','permission.requested','permission.resolved','session.status'].includes(event.event))timeline().changed(current,event.sessionId,event);void handleHostEvent(current,event).catch(()=>{});if(event.event==='session.idle'&&memoryService)void retainMemory(current,event).catch(()=>{})} },
       guidance:async(session,workspace,message,prompt,selection,recalled,target)=>{
         let semantic:string[]=[];try{semantic=JSON.parse(recalled||'{}').fieldnoteIds||[]}catch{/* Factual memory fallback has no note references. */}
         const config=await target.request<BridgeSessionConfig>('session.config',{sessionId:session})
@@ -797,17 +797,17 @@ function registerIPC(): void {
   handle('memory:status',(_event,limit?:number)=>memory().status(selected?.project||'',limit))
   handle('memory:records',(_event,before?:string,limit?:number)=>memory().recordsPage('',before,limit))
   handle('memory:record',(_event,id:string)=>memory().readRecord('',id))
-  handle('memory:configure',(_event,profile:import('../shared/memory').MemoryProfile)=>memory().configure(profile))
+  handle('memory:configure',(_event,profile:import('../shared/memory').MemoryProfile)=>{timelineService?.invalidate();return memory().configure(profile)})
   handle('memory:switch-verified',async(_event,profile:import('../shared/memory').MemoryProfile,candidateKey?:string)=>{
     const previous=(await memory().status('',0)).settings.profile
     if(!previous||previous.provider!==profile?.provider||previous.model!==profile?.model||previous.baseUrl!==profile?.baseUrl){
       await remotePreview('Change app-wide memory model',`New destination: ${profile?.provider}/${profile?.model}\nUseful outcomes and bounded activity from trusted projects will be processed by this model. Existing memories stay in the app-wide bank; the previous working profile is restored if verification or startup fails.`)
     }
-    return memory().switchVerified(profile,candidateKey)
+    timelineService?.invalidate();return memory().switchVerified(profile,candidateKey)
   })
-  handle('memory:verify',()=>memory().verify())
-  handle('memory:enable',async(_event,enabled:boolean)=>{if(typeof enabled!=='boolean')throw Error('Choose whether to enable memory');if(enabled){const status=await memory().status('');if(!status.settings.globalConsent)await remotePreview('Enable app-wide memory',`Memory processing: ${status.settings.profile?.provider}/${status.settings.profile?.model}\nUseful outcomes and bounded live activity from trusted projects will be processed by this model. Relevant memories can be recalled across chats and projects with source labels. Existing records will be migrated; chat logs remain authoritative.`)}return memory().enable('',enabled)})
-  handle('memory:retry',()=>memory().retry(''))
+  handle('memory:verify',()=>{timelineService?.invalidate();return memory().verify()})
+  handle('memory:enable',async(_event,enabled:boolean)=>{if(typeof enabled!=='boolean')throw Error('Choose whether to enable memory');if(enabled){const status=await memory().status('');if(!status.settings.globalConsent)await remotePreview('Enable app-wide memory',`Memory processing: ${status.settings.profile?.provider}/${status.settings.profile?.model}\nUseful outcomes and bounded live activity from trusted projects will be processed by this model. Relevant memories can be recalled across chats and projects with source labels. Existing records will be migrated; chat logs remain authoritative.`)}timelineService?.invalidate();return memory().enable('',enabled)})
+  handle('memory:retry',()=>{timelineService?.invalidate();return memory().retry('')})
   handle('memory:recall',(_event,query:string)=>memory().recall(selected?.project||'',query,selected?.active.project||''))
   handle('memory:reflect',(_event,query:string)=>memory().reflect(selected?.project||'',query,selected?.active.project||''))
   handle('memory:forget',async(_event,id:string)=>{const source=await memory().fieldnoteSource(id);if(source){const note=await fieldnotes().get(source.id);await fieldnotes().save({...note,expectedRevision:note.revision,indexing:false});return memory().withdrawFieldnote(source.id)}return memory().forget('',id)})

@@ -1,6 +1,11 @@
 /* Reference palette → Material system roles → product/component aliases.
    Brand marks retain their own colors; interface accents adapt to the theme. */
 :root {
+  --uc-shell-inset:10px; --uc-header-min:78px; --uc-header-pad:12px;
+  --uc-nav-row:38px; --uc-nav-pad:9px; --uc-nav-group-gap:16px;
+  --uc-session-pad:14px; --uc-message-gap:28px; --uc-card-padding:16px;
+  --uc-section-padding:24px; --uc-section-gap:20px; --uc-page-gap:28px;
+  --uc-composer-min:76px; --uc-composer-inline:20px; --uc-composer-bottom:18px;
   --md-ref-blue: #0027cc;
   --md-ref-red: #d10d0d;
   --md-ref-gray: #79858d;
@@ -162,4 +167,18 @@
   --md-comp-terminal-magenta: #d6b3d6;
   --md-sys-elevation-2: 0 8px 28px #0004;
   color-scheme: dark;
+}
+
+/* Density is independent of palette and user-resized supporting panes. */
+:root[data-density="compact"] {
+  --md-comp-nav-width:200px;
+  --uc-shell-inset:6px; --uc-header-min:56px; --uc-header-pad:6px;
+  --uc-nav-row:34px; --uc-nav-pad:7px; --uc-nav-group-gap:10px;
+  --uc-session-pad:8px; --uc-message-gap:16px; --uc-card-padding:12px;
+  --uc-section-padding:16px; --uc-section-gap:12px; --uc-page-gap:16px;
+  --uc-composer-min:48px; --uc-composer-inline:16px; --uc-composer-bottom:12px;
+}
+@media (pointer:coarse) {
+  :root { --uc-nav-row:44px; --md-comp-icon-target:44px; --md-comp-button-height:44px; }
+  :root[data-density="compact"] { --uc-nav-row:44px; }
 }

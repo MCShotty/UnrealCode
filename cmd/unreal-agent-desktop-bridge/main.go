@@ -805,10 +805,7 @@ func (a *app) title(id session.ID) string {
 			}
 			prompt = value.Prompt
 		}
-		prompt = strings.Join(strings.Fields(strings.SplitN(prompt, "<unrealcode_context>", 2)[0]), " ")
-		if len(prompt) > 48 {
-			prompt = prompt[:48] + "…"
-		}
+		prompt = sessionTitlePrompt(prompt)
 		if prompt != "" {
 			if fromFork {
 				return "Fork · " + prompt
@@ -817,6 +814,19 @@ func (a *app) title(id session.ID) string {
 		}
 	}
 	return "New session"
+}
+
+// App-owned advisory blocks are context, not the user's conversation title.
+func sessionTitlePrompt(prompt string) string {
+	for _, marker := range []string{"<unrealcode_context>", "<unrealcode_memory>", "<unrealcode_fieldnotes>"} {
+		prompt = strings.SplitN(prompt, marker, 2)[0]
+	}
+	prompt = strings.Join(strings.Fields(prompt), " ")
+	letters := []rune(prompt)
+	if len(letters) > 48 {
+		return string(letters[:48]) + "…"
+	}
+	return prompt
 }
 
 func (a *app) rename(id session.ID, title string) error {

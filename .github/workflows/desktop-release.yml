@@ -68,6 +68,9 @@ jobs:
       - run: node scripts/qa-fieldnotes.mjs --packaged
       - run: node scripts/qa-computer.mjs --packaged
       - run: node scripts/qa-bughunt.mjs --packaged
+      - run: node scripts/qa-104.mjs --packaged
+      - run: node scripts/qa-ui-races.mjs --packaged
+      - run: node scripts/qa-bughunt104.mjs --packaged
       - name: Write and verify SHA-256 manifest
         run: |
           node scripts/sha256-release.mjs --write

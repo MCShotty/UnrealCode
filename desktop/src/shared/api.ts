@@ -1,6 +1,7 @@
 export type Provider = 'openai' | 'openai-codex' | 'anthropic' | 'openrouter' | 'fireworks' | 'ollama' | 'openai-compatible'
 export type DecisionEngine = 'off' | 'jev' | 'laya'
 export type ExecutionMode = 'plan' | 'ask' | 'agent'
+export type AppearanceDensity = 'compact'|'cozy'
 export type GitAvailability = { available:true } | { available:false; code:'GIT_MISSING'|'GIT_REPOSITORY_REQUIRED'|'GIT_ROOT_REQUIRED'|'GIT_COMMIT_REQUIRED'|'GIT_INACCESSIBLE'; message:string }
 export type ApprovalRequest = { id: string; sessionId: string; workspaceId: string; operationId: string; digest: string; tool: string; arguments: unknown; expiresAt: string }
 export type CheckpointFile = { path: string; change: 'added' | 'deleted' | 'modified' | 'uncaptured'; reason?: string }
@@ -15,6 +16,7 @@ export type Settings = {
   systemPrompt: string
   projectInstructions: Record<string, string>
   theme: 'dark' | 'ice-dark' | 'light' | 'system'
+  density?: AppearanceDensity
   layout: { sessionWidth: number; activityWidth: number; sessions: boolean; activity: boolean; focus: boolean }
   notifications: boolean
   warningNotifications: boolean
@@ -33,7 +35,7 @@ export type Settings = {
   glinerEnabled: boolean
 }
 export const settingsFields = [
-  'recentProjects','trustedProjects','provider','model','thinkingLevel','systemPrompt','projectInstructions','theme',
+  'recentProjects','trustedProjects','provider','model','thinkingLevel','systemPrompt','projectInstructions','theme','density',
   'layout','notifications','warningNotifications','automaticUpdateChecks','updateChannel','executionMode','taskIsolation','autoCompaction','disallowedTools','baseUrl',
   'decisionEngine','decisionSetupSeen','decisionModel','decisionCloudProjects','decisionCloudDeclinedProjects','glinerEnabled'
 ] as const satisfies readonly (keyof Settings)[]
@@ -126,6 +128,7 @@ export interface DesktopAPI {
   command(request:{name:import('./commands').CommandName;args:string;sessionId?:string}):Promise<import('./commands').CommandResult>
   onCommand(callback:(name:import('./commands').CommandName)=>void):()=>void
   timeline(sessionId:string,before?:number):Promise<import('./timeline').TimelineView>
+  onTimelineChanged(callback:(change:import('./timeline').TimelineChanged)=>void):()=>void
   modelCatalog(provider:Provider,baseUrl?:string,refresh?:boolean):Promise<import('./model-catalog').ModelCatalog>
   modelCapabilities(sessionId?:string):Promise<import('./model-capabilities').ModelCapabilities>
   planning(sessionId:string):Promise<import('./planning').PlanningState>

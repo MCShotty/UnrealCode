@@ -17,6 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          fetch-depth: 0 # The upgrade fixture reads the preserved v1.0.3 tag.
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -47,6 +48,9 @@ jobs:
       - run: node scripts/qa-fieldnotes.mjs --packaged
       - run: node scripts/qa-computer.mjs --packaged
       - run: node scripts/qa-bughunt.mjs --packaged
+      - run: node scripts/qa-104.mjs --packaged
+      - run: node scripts/qa-ui-races.mjs --packaged
+      - run: node scripts/qa-bughunt104.mjs --packaged
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: windows-candidate

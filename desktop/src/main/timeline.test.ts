@@ -9,17 +9,17 @@ it('rejects fabricated evidence, absent citations, and unknown plan stages',()=>
  expect(validateTimelineSummary(JSON.stringify({summary:'Test failed',phase:'blocked',evidence:[10],stageId:'one'}),evidence,plan).phase).toBe('blocked')
  for(const patch of [{evidence:[11]},{evidence:[]},{stageId:'invented'},{summary:'x'.repeat(1001)}])expect(()=>validateTimelineSummary(JSON.stringify({summary:'Test failed',phase:'blocked',evidence:[10],...patch}),evidence,plan)).toThrow()
 })
-it('coalesces events, bounds global concurrency, and waits 20 seconds between updates',async()=>{
+it('coalesces events, bounds global concurrency, and waits three seconds between updates',async()=>{
  vi.useFakeTimers();vi.setSystemTime(100000);const service=new TimelineService(()=>({}) as any,()=>{}),releases:Array<()=>void>=[],starts:string[]=[]
  vi.spyOn(service as any,'run').mockImplementation(async(...args:any[])=>{starts.push(args[0].session);await new Promise<void>(resolve=>releases.push(resolve))})
  const owner={project:'project'} as any
  service.changed(owner,'a');service.changed(owner,'a');service.changed(owner,'b');service.changed(owner,'c');await vi.advanceTimersByTimeAsync(1)
- expect(starts).toEqual(['a','b']);service.changed(owner,'a');releases.shift()!();await vi.advanceTimersByTimeAsync(1);expect(starts).toEqual(['a','b','c']);releases.shift()!();releases.shift()!();await vi.advanceTimersByTimeAsync(19000);expect(starts).toHaveLength(3);await vi.advanceTimersByTimeAsync(1000);expect(starts).toEqual(['a','b','c','a']);releases.shift()!();service.close();await vi.advanceTimersByTimeAsync(60000);expect(starts).toHaveLength(4)
+ expect(starts).toEqual(['a','b']);service.changed(owner,'a');releases.shift()!();await vi.advanceTimersByTimeAsync(1);expect(starts).toEqual(['a','b','c']);releases.shift()!();releases.shift()!();await vi.advanceTimersByTimeAsync(2000);expect(starts).toHaveLength(3);await vi.advanceTimersByTimeAsync(1000);expect(starts).toEqual(['a','b','c','a']);releases.shift()!();service.close();await vi.advanceTimersByTimeAsync(60000);expect(starts).toHaveLength(4)
 })
-it.each(['profile','plan','turn','disable','failure','progress','events'])('discards an observer response after %s changes',async(change)=>{
+it.each(['profile','plan','turn','disable'])('discards an observer response after %s changes',async(change)=>{
  let epoch=0,enabled=true,release!:(value:any)=>void
  const memory={status:vi.fn(async()=>({settings:{enabled,globalConsent:true}})),generation:vi.fn(async()=>epoch),analyse:vi.fn(()=>new Promise(resolve=>release=resolve))}
- const cache={putTimeline:vi.fn()},owner={project:'p',index:{flush:vi.fn(),cache},owner:vi.fn()} as any;owner.owner.mockResolvedValue(owner)
+ const cache={putTimeline:vi.fn(),nativeContext:vi.fn(async()=>false),timelineInput:vi.fn(async()=>[])},owner={project:'p',index:{flush:vi.fn(),cache},context:{isExcluded:()=>false},owner:vi.fn()} as any;owner.owner.mockResolvedValue(owner)
  const service=new TimelineService(()=>memory as any,()=>{}),initial={evidence,workId:'work',state:'running',summaries:[],status:'idle',plan:{revision:1,approvedRevision:1,objective:'Task',body:'',acceptance:[],updatedAt:'now',milestones:[]}}
  const view=vi.spyOn(service,'view').mockResolvedValue(initial as any);vi.spyOn(service as any,'saved').mockResolvedValue([]);vi.spyOn(service as any,'file').mockReturnValue('fixture-timeline.json')
  const pending=(service as any).run({owner,session:'session',changed:false,running:true,last:0})

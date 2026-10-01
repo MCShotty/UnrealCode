@@ -25,6 +25,8 @@ const app=await electron.launch({executablePath:resolve(process.env.UNREALCODE_Q
 const report={root,packaged,checks:[],failures:[]},errors=[]
 const page=await app.firstWindow();page.on('pageerror',error=>errors.push(error.message))
 try{
+  await app.evaluate(({BrowserWindow})=>{const w=BrowserWindow.getAllWindows()[0];w.setMinimumSize(0,0);w.setContentSize(1500,940);w.webContents.setZoomFactor(1)})
+  await page.waitForFunction(()=>innerWidth>=1400)
   await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:0,checkboxChecked:false})})
   await page.getByRole('heading',{name:'Open a workspace'}).waitFor()
   await page.evaluate(project=>window.unreal.openProject(project,true),project);await page.reload()
@@ -50,13 +52,24 @@ try{
   if(await page.getByText('STALE SELECTION MARKER',{exact:true}).count())report.failures.push('Earlier A selection overwrote the later A selection')
   else report.checks.push('A-B-A navigation discards earlier selection reply')
 
+  await app.evaluate(({ipcMain})=>{
+    globalThis.uiRace.originalWork=ipcMain._invokeHandlers.get('work:view');globalThis.uiRace.workReads=0
+    ipcMain.removeHandler('work:view');ipcMain.handle('work:view',async(...args)=>{globalThis.uiRace.workReads++;const result=await globalThis.uiRace.originalWork(...args);await new Promise(resolve=>setTimeout(resolve,2500));return result})
+  })
+  await page.getByRole('button',{name:/Session B/}).click();await page.getByText('Current history B',{exact:true}).waitFor()
+  await page.waitForTimeout(6600)
+  if(await page.locator('[data-work-ready="true"]').count())report.checks.push('Slow work-view replies settle without being superseded by polling')
+  else report.failures.push('Two-second polling starved every 2.5-second work-view reply')
+  await app.evaluate(({ipcMain})=>{ipcMain.removeHandler('work:view');ipcMain.handle('work:view',globalThis.uiRace.originalWork)})
+  await page.getByRole('button',{name:/Session A/}).click();await page.getByText('Current history A',{exact:true}).waitFor()
+
   // Simulate an accepted, delayed send. Auxiliary reads are isolated fixtures so
   // this test cannot execute a backend operation, even if Docker is available.
   await app.evaluate(({ipcMain,BrowserWindow})=>{
     const fixture=(channel,value)=>{ipcMain.removeHandler(channel);ipcMain.handle(channel,()=>({unrealResult:true,ok:true,value}))}
     fixture('session:config',{mode:'ask',provider:'openai',model:'fixture'})
     fixture('permission:list',[]);fixture('host:approvals',[]);fixture('context:view',{files:[],selection:{pinned:[],excluded:[],attached:[]},instructions:''})
-    fixture('team:view',null);fixture('files:changes',[])
+    fixture('team:view',null);fixture('files:changes',[]);fixture('docker:status',{ready:true,message:'Isolated IPC fixture'})
     ipcMain.removeHandler('session:send');ipcMain.handle('session:send',async()=>{globalThis.uiRace.sendReady=true;await new Promise(resolve=>{globalThis.uiRace.releaseSend=resolve});return {unrealResult:true,ok:true}})
     BrowserWindow.getAllWindows()[0].webContents.send('docker:status-changed',{ready:true,message:'Isolated IPC fixture'})
   })
@@ -68,6 +81,28 @@ try{
   await app.evaluate(()=>globalThis.uiRace.releaseSend());await page.getByRole('button',{name:'Send',exact:true}).waitFor()
   if(await composer.inputValue()!=='Next draft written while send was pending')report.failures.push('Successful send erased a newer composer draft')
   else report.checks.push('Send acknowledgment preserves newer draft')
+  // A delayed repository read must not replace the next project's changes.
+  await app.evaluate(({ipcMain,BrowserWindow})=>{
+    let calls=0;globalThis.uiRace.gitReady=false
+    ipcMain.removeHandler('files:changes');ipcMain.handle('files:changes',async()=>{
+      if(++calls===1){globalThis.uiRace.gitReady=true;await new Promise(resolve=>{globalThis.uiRace.releaseGit=resolve});return {unrealResult:true,ok:true,value:[' M STALE_PROJECT_A.txt']}}
+      return {unrealResult:true,ok:true,value:[' M CURRENT_PROJECT_B.txt']}
+    })
+    BrowserWindow.getAllWindows()[0].webContents.send('docker:status-changed',{ready:false,message:'Fixture reconnect'})
+  })
+  await page.waitForTimeout(100)
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.send('docker:status-changed',{ready:true,message:'Fixture connected'}))
+  await page.waitForFunction(()=>document.querySelector('.container-status-control')?.textContent.includes('running'))
+  for(let i=0;i<100&&!await app.evaluate(()=>globalThis.uiRace.gitReady);i++)await page.waitForTimeout(25)
+  assert(await app.evaluate(()=>globalThis.uiRace.gitReady),'First Git read was not captured')
+  await app.evaluate(({BrowserWindow},project)=>BrowserWindow.getAllWindows()[0].webContents.send('app:navigate',{project:project+'-other'}),project)
+  await page.locator('.workspace-picker button').filter({hasText:'project-other'}).waitFor()
+  await page.waitForTimeout(100)
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.send('docker:status-changed',{ready:true,message:'Fixture connected'}))
+  await page.locator('.context-card > summary').filter({hasText:'Workspace changes'}).click();await page.getByText('CURRENT_PROJECT_B.txt',{exact:true}).waitFor()
+  await app.evaluate(()=>globalThis.uiRace.releaseGit());await page.waitForTimeout(250)
+  if(await page.getByText('STALE_PROJECT_A.txt',{exact:true}).count())report.failures.push('Earlier project Git result replaced the current project changes')
+  else report.checks.push('Project switching discards an earlier repository read')
   report.errors=errors;await page.screenshot({path:join(root,'ui-races.png')})
   writeFileSync(join(root,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report))
   assert.deepEqual(report.failures,[]);assert.deepEqual(errors,[])
