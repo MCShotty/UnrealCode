@@ -63,6 +63,9 @@ async function shot(name){
 
 try{
  page=await app.firstWindow();page.setDefaultTimeout(15000);page.on('pageerror',error=>report.errors.push(error.message))
+ // Hosted display size must not choose the initial rail/overlay test path.
+ await app.evaluate(({BrowserWindow})=>{const w=BrowserWindow.getAllWindows()[0];w.setMinimumSize(0,0);w.setContentSize(1500,940);w.webContents.setZoomFactor(1)})
+ await page.waitForFunction(()=>innerWidth>=1400)
  await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:0,checkboxChecked:false})})
  await page.getByRole('heading',{name:'Open a workspace'}).waitFor()
  await page.getByRole('button',{name:'Provider settings',exact:true}).click();await page.getByRole('tab',{name:'Memory',exact:true}).click()
@@ -82,6 +85,14 @@ try{
  assert.equal(await page.locator('.container-status-control').count(),1)
  await page.getByText('Inspect project',{exact:true}).waitFor();assert.equal(await page.locator('.timeline-summary').count(),0)
  report.checks.push('Cached interpreted stages, Compact upgrade default, retained pane widths and single top-right status')
+ await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setContentSize(1100,900))
+ await page.waitForFunction(()=>document.querySelector('.main-area')?.clientWidth<=800)
+ await page.getByRole('button',{name:'Toggle activity rail',exact:true}).click()
+ const narrowActivity=page.getByRole('dialog',{name:'Activity',exact:true});await narrowActivity.getByText('Inspect project',{exact:true}).waitFor()
+ await page.keyboard.press('Escape');await narrowActivity.waitFor({state:'detached'})
+ await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setContentSize(1500,940))
+ await page.getByText('Inspect project',{exact:true}).waitFor()
+ report.checks.push('Explicit wide viewport and narrow activity overlay retain cached stages and Escape navigation')
  const upgradedUI=await page.evaluate(id=>window.unreal.conversationUI(id),id);assert(upgradedUI.expanded['older-work']);assert.equal(upgradedUI.drafts['upgrade-question'].answers[0].text,'Keep this draft. ملاحظة')
  assert.equal((await page.evaluate(id=>window.unreal.workView(id),id)).questions.find(q=>q.id==='upgrade-question')?.revision,1)
  assert.equal((await page.evaluate(()=>window.unreal.fieldnoteList({includeDisabled:true}))).notes.find(note=>note.id==='cccccccc-cccc-cccc-cccc-cccccccccccc')?.body,'Preserve this note. ملاحظة')

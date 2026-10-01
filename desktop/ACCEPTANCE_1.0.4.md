@@ -132,6 +132,13 @@ alone is not considered completion. No production browser behavior or existing
 assertion was removed. The local source inventory above predates this release
 fixture and CI/documentation update; hosted provenance binds the final commit.
 
+A later hosted run began with a display-constrained window and correctly hid
+the supporting activity rail. A local 1,100-pixel reproduction reached the same
+hidden-stage timeout. The appearance fixture now selects its initial wide
+viewport explicitly and separately checks that cached stages are reachable
+through the narrow Activity dialog and that Escape closes it. Its 24
+theme/density/zoom combinations remain enabled. No layout rule was overridden.
+
 ## Fixed findings
 
 | Finding and impact | Repair and regression |

@@ -70,4 +70,4 @@ The menu bar's **UnrealCode** menu offers the same local commands as the palette
 | `/goal optional objective` | Manage a bounded persistent objective. |
 | `/help` | Search commands and availability. |
 
-The local 1.0.4 candidate defaults to **Compact** spacing. Choose **Cozy** to retain the previous spacing. This does not change the theme, manual pane widths, editor text, terminal text, PDF zoom or browser zoom. Container status lives in one top-right control, including when the activity rail is hidden.
+Version 1.0.4 defaults to **Compact** spacing. Choose **Cozy** to retain the previous spacing. This does not change the theme, manual pane widths, editor text, terminal text, PDF zoom or browser zoom. Container status lives in one top-right control, including when the activity rail is hidden.
