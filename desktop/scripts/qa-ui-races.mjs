@@ -25,6 +25,8 @@ const app=await electron.launch({executablePath:resolve(process.env.UNREALCODE_Q
 const report={root,packaged,checks:[],failures:[]},errors=[]
 const page=await app.firstWindow();page.on('pageerror',error=>errors.push(error.message))
 try{
+  await app.evaluate(({BrowserWindow})=>{const w=BrowserWindow.getAllWindows()[0];w.setMinimumSize(0,0);w.setContentSize(1500,940);w.webContents.setZoomFactor(1)})
+  await page.waitForFunction(()=>innerWidth>=1400)
   await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:0,checkboxChecked:false})})
   await page.getByRole('heading',{name:'Open a workspace'}).waitFor()
   await page.evaluate(project=>window.unreal.openProject(project,true),project);await page.reload()

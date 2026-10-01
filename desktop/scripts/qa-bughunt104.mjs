@@ -24,6 +24,8 @@ const packaged=process.argv.includes('--packaged'),app=await electron.launch({ex
 const report={root,packaged,checks:[],failures:[],errors:[]};let page
 try{
  page=await app.firstWindow();page.setDefaultTimeout(12000);page.on('pageerror',error=>report.errors.push(error.message));await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:0,checkboxChecked:false})})
+ await app.evaluate(({BrowserWindow})=>{const w=BrowserWindow.getAllWindows()[0];w.setMinimumSize(0,0);w.setContentSize(1500,940);w.webContents.setZoomFactor(1)})
+ await page.waitForFunction(()=>innerWidth>=1400)
  await page.getByRole('heading',{name:'Open a workspace'}).waitFor();await page.evaluate(project=>window.unreal.openProject(project,true),project);await page.reload();await page.getByRole('button',{name:/Failed A/}).waitFor()
  if(await page.getByRole('button',{name:'Dismiss issue'}).count())await page.getByRole('button',{name:'Dismiss issue'}).click()
  await app.evaluate(({ipcMain,BrowserWindow})=>{

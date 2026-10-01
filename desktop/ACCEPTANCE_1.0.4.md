@@ -138,6 +138,9 @@ hidden-stage timeout. The appearance fixture now selects its initial wide
 viewport explicitly and separately checks that cached stages are reachable
 through the narrow Activity dialog and that Escape closes it. Its 24
 theme/density/zoom combinations remain enabled. No layout rule was overridden.
+The related Git-response and retry fixtures now choose the same starting
+viewport; their stale-reply, draft, slow-polling and receipt assertions remain
+enabled. Hosted failures are retained in the release preparation logs.
 
 ## Fixed findings
 
