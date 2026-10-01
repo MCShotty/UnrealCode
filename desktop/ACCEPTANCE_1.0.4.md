@@ -122,6 +122,16 @@ and complete offscreen repaint captures after zoom changes. Fixture-only IPC
 values expose connected composer surfaces without enabling backend execution.
 The appearance and motion checks passed after these corrections.
 
+### Hosted release preparation
+
+The first hosted Windows run failed an immediate browser-view assertion after
+closing an access dialog. A 100 ms native-show IPC delay reproduced that race
+locally. The fixture now waits up to three seconds for the actual native child
+view, then still asserts attachment and rendered page content. Renderer geometry
+alone is not considered completion. No production browser behavior or existing
+assertion was removed. The local source inventory above predates this release
+fixture and CI/documentation update; hosted provenance binds the final commit.
+
 ## Fixed findings
 
 | Finding and impact | Repair and regression |
