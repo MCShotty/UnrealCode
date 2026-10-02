@@ -20,18 +20,25 @@ volumes. A trusted project folder can be mounted into its local container.
   excluded from those descriptors; token-like visible text is conservatively
   omitted or redacted. Other visible page content can still be sent after you
   grant the origin. Laya and GLiNER run locally when enabled.
+  In the local 1.1.0 candidate, request advice runs after acceptance
+  with captured consent and ownership. Pending advice is discarded after a
+  relevant change. It does not approve actions or delay coding. Credential-bearing
+  preflight text is withheld, and redirects cannot forward the decision key.
 - **Optional app-wide memory:** Hindsight and its database run in local Docker
   containers. After you accept the scope and separately selected model destination,
   that provider can receive bounded task outcomes, corrections, recall/reflect
   requests, and bounded, redacted request excerpts and normalized activity metadata
   for timeline stages. Raw tool output, document contents, captures, clipboard,
   screen-derived text and unsaved Fieldnotes are excluded from observer input.
-  In the local 1.0.4 candidate, meaningful changes may trigger an analysis every
+  Since 1.0.4, meaningful changes may trigger an analysis every
   three seconds; cached UI polling never makes a model request. Existing memory
   request/token limits and destination consent remain in effect.
   Relevant retained knowledge can be recalled across trusted projects with source
   attribution. Unintegrated specialist findings remain task-scoped. Existing
   project memories migrate after consent; historical chats are not all ingested.
+  The local 1.1.0 candidate recalls references in the background, then rechecks
+  source revisions and consent before using them. Source attribution and any
+  additional retained Fieldnote guidance remain inspectable in the work feed.
 - **Connections and browser:** Enabled MCP servers receive the arguments and
   resources passed to their tools. The live project browser contacts visited
   origins, stores sign-ins in a separate Electron partition per project, and

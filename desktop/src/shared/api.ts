@@ -76,7 +76,7 @@ export type GitHubPullRequest = { number: number; title: string; state: string; 
 export type DecisionQuestion = { type: 'choice' | 'noul' | 'score'; instructions: string; criteria?: Record<string, string> | string[] }
 export type DecisionBatch = { state: unknown; questions: Record<string, DecisionQuestion>; sourceRefs?: string[] }
 export type DecisionResult = { engine: 'jev' | 'laya'; model: string; answers: Record<string, unknown>; usage?: { input_tokens?: number; output_tokens?: number }; durationMs: number }
-export type DecisionStatus = { engine: DecisionEngine; available: boolean; message: string; glinerAvailable: boolean }
+export type DecisionStatus = { engine: DecisionEngine; available: boolean; message: string; glinerAvailable: boolean; asyncAdvice?: 'enabled'|'unavailable' }
 
 export interface DesktopAPI {
   pickImages(max?:number):Promise<Array<{id:string;name:string;width:number;height:number}>>

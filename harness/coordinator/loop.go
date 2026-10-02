@@ -36,6 +36,7 @@ type coordinator struct {
 	cancelModel    context.CancelFunc
 	idleInputs     []inbox.ID
 	deferredInputs []inbox.Input
+	advisoryInputs []inbox.Input
 	fatal          error
 }
 
@@ -52,6 +53,7 @@ type loopState struct {
 	availableInputs   int
 	deliveredInputs   int
 	currentTurnInputs int
+	latestInputID     inbox.ID
 	callModel         bool
 	grace             <-chan time.Time
 	graceToolCalls    map[toolCallKey]struct{}
@@ -231,6 +233,7 @@ func (current *coordinator) Run(ctx context.Context) error {
 			return ctx.Err()
 		}
 		if current.isIdle() && len(current.idleInputs) > 0 {
+			current.discardAdvisories("skipped")
 			if current.dependencies.OnIdle != nil {
 				current.dependencies.OnIdle(append([]inbox.ID(nil), current.idleInputs...))
 			}
@@ -264,6 +267,28 @@ func (current *coordinator) processEvents(ctx context.Context) (bool, error) {
 func (current *coordinator) processInputs(ctx context.Context, inputs []inbox.Input) error {
 	ready := make([]inbox.Input, 0, len(inputs))
 	for _, input := range inputs {
+		if input.Kind == inbox.InputAdvisory {
+			// Admission does not interrupt the active model, change pending-input
+			// counts, or make an idle coordinator request another turn.
+			value, err := input.DecodeAdvisory()
+			if err != nil {
+				current.advisoryOutcome(input.ID, "failed")
+				continue
+			}
+			if current.stop.request.Mode == inbox.StopHard || current.isIdle() && len(current.idleInputs) == 0 && len(ready) == 0 {
+				current.advisoryOutcome(input.ID, "skipped")
+				continue
+			}
+			for index := len(current.advisoryInputs) - 1; index >= 0; index-- {
+				prior, _ := current.advisoryInputs[index].DecodeAdvisory()
+				if prior.Category == value.Category {
+					current.advisoryOutcome(current.advisoryInputs[index].ID, "skipped")
+					current.advisoryInputs = slices.Delete(current.advisoryInputs, index, index+1)
+				}
+			}
+			current.advisoryInputs = append(current.advisoryInputs, input)
+			continue
+		}
 		if input.Deferred && current.cancelModel != nil {
 			current.deferredInputs = append(current.deferredInputs, input)
 			continue
@@ -325,6 +350,7 @@ func (current *coordinator) clearToolGrace() {
 
 func (current *coordinator) handleStop() (bool, error) {
 	if !current.stop.cancellationRequested {
+		current.discardAdvisories("cancelled")
 		current.interruptModel()
 		if err := current.cancelOperations(); err != nil {
 			return false, err
@@ -417,6 +443,7 @@ func (current *coordinator) requestModelResponse(
 		return nil
 	}
 	current.interruptModel()
+	current.deliverAdvisories(ctx)
 	built, err := current.dependencies.ContextBuilder.Build()
 	if err != nil {
 		return fmt.Errorf("build model request: %w", err)
@@ -466,6 +493,9 @@ func (current *coordinator) handleInboxInput(ctx context.Context, input inbox.In
 	}
 	if err := current.storeItemInSessionStore(ctx, item); err != nil {
 		return err
+	}
+	if input.Kind == inbox.InputExternal && current.dependencies.OnInputRecorded != nil {
+		current.dependencies.OnInputRecorded(input.ID)
 	}
 	if input.Kind == inbox.InputControl {
 		request, err := input.DecodeControlMessage()
@@ -662,6 +692,12 @@ func (current *coordinator) addItemToLocalState(
 				)
 			}
 			current.state.availableInputs++
+			current.state.latestInputID = input.ID
+		}
+		if input.Kind == inbox.InputAdvisory {
+			if err := current.dependencies.ContextBuilder.AddAdvisoryInput(input); err != nil {
+				return sessionstore.Item{}, err
+			}
 		}
 		if input.Kind == inbox.InputControl {
 			request, err := input.DecodeControlMessage()

@@ -60,44 +60,58 @@ type credential struct {
 }
 
 type runningSession struct {
-	modelReady  chan struct{}
-	submitMu    sync.Mutex
-	accepted    map[inbox.ID]struct{}
-	inbox       *inbox.Inbox
-	manager     *observedManager
-	cancel      context.CancelFunc
-	done        chan struct{}
-	stopping    atomic.Bool
-	busy        atomic.Bool
-	workflow    *workflowHandler
-	permissions *permissionManager
+	ctx             context.Context
+	advisoryMu      sync.Mutex
+	advisoryBinding inbox.AdvisoryBinding
+	advisorySettled bool
+	receiptSequence uint64
+	modelReady      chan struct{}
+	submitMu        sync.Mutex
+	accepted        map[inbox.ID]struct{}
+	acceptedHashes  map[inbox.ID]string
+	inbox           *inbox.Inbox
+	manager         *observedManager
+	cancel          context.CancelFunc
+	done            chan struct{}
+	stopping        atomic.Bool
+	busy            atomic.Bool
+	pendingAccepted atomic.Int64
+	workflow        *workflowHandler
+	permissions     *permissionManager
 }
 
 type app struct {
-	hooksEnabled    atomic.Bool
-	verification    verificationRuns
-	decisionPending atomic.Int64
-	ctx             context.Context
-	store           *lockedStore
-	events          *eventLog
-	questions       *questionLedger
-	root            string
-	workspace       string
-	mu              sync.Mutex
-	createMu        sync.Mutex
-	configMu        sync.Mutex
-	running         map[session.ID]*runningSession
-	makeClient      func(sessionConfig, credential) (agentrunner.Client, string, error)
-	decision        *decisionRuntime
-	postMu          sync.Mutex
-	postflight      map[session.ID]postflightCandidate
-	runs            sync.WaitGroup
-	preferences     contextPreferences
-	fileLocks       fileLocks
-	mcp             *mcpCatalog
-	guidance        fieldnoteAuthority
-	host            hostExchange
-	maintenance     map[session.ID]bool
+	backupMu          sync.Mutex
+	advisoryBackups   map[session.ID]*advisoryBackup
+	slotMu            sync.Mutex
+	hostAdvisorySlots bool
+	advisoryProjectID string
+	slots             map[inbox.ID]advisorySlot
+	advisories        *advisoryScheduler
+	hooksEnabled      atomic.Bool
+	verification      verificationRuns
+	decisionPending   atomic.Int64
+	ctx               context.Context
+	store             *lockedStore
+	events            *eventLog
+	questions         *questionLedger
+	root              string
+	workspace         string
+	mu                sync.Mutex
+	createMu          sync.Mutex
+	configMu          sync.Mutex
+	running           map[session.ID]*runningSession
+	makeClient        func(sessionConfig, credential) (agentrunner.Client, string, error)
+	decision          *decisionRuntime
+	postMu            sync.Mutex
+	postflight        map[session.ID]postflightCandidate
+	runs              sync.WaitGroup
+	preferences       contextPreferences
+	fileLocks         fileLocks
+	mcp               *mcpCatalog
+	guidance          fieldnoteAuthority
+	host              hostExchange
+	maintenance       map[session.ID]bool
 }
 
 func newApp(ctx context.Context, stateDirectory string, out *output) (*app, error) {
@@ -112,8 +126,15 @@ func newApp(ctx context.Context, stateDirectory string, out *output) (*app, erro
 	a := &app{ctx: ctx, store: &lockedStore{Store: store}, events: events, root: stateDirectory, workspace: "/workspace", running: make(map[session.ID]*runningSession), makeClient: clientFor, decision: newDecisionRuntime(), postflight: make(map[session.ID]postflightCandidate)}
 	a.mcp = newMCPCatalog(filepath.Join(stateDirectory, "mcp-catalog.json"))
 	a.questions = &questionLedger{root: filepath.Join(stateDirectory, "desktop-questions"), events: events}
+	a.recoverAdvisories()
+	a.advisories = newAdvisoryScheduler(a)
 	a.maintenance = map[session.ID]bool{}
 	a.store.AddObserver(func(id session.ID, item sessionstore.Item) {
+		if item.Kind == sessionstore.ItemInput {
+			if input, ok := item.Data.(inbox.Input); ok {
+				a.completeInputReceipt(id, input)
+			}
+		}
 		if err := a.events.append(id, "session.item", projectItem(item), uint64(item.Sequence)); err != nil {
 			fmt.Fprintln(os.Stderr, "activity event:", err)
 		}
@@ -258,6 +279,19 @@ func (a *app) start(id session.ID, secret credential, seed ...inbox.Input) (*run
 			}
 		}
 	}
+	seen := make(map[inbox.ID]struct{}, len(restored.ExternalInputIDs)+len(seed))
+	for _, known := range restored.ExternalInputIDs {
+		seen[known] = struct{}{}
+	}
+	for _, known := range seed {
+		seen[known.ID] = struct{}{}
+	}
+	var receiptSequence uint64
+	pending, err := a.pendingInputReceipts(id, config.WorkspaceID, seen, &receiptSequence)
+	if err != nil {
+		return nil, err
+	}
+	seed = append(pending, seed...)
 	client, model, err := a.makeClient(config, secret)
 	if err != nil {
 		return nil, err
@@ -297,24 +331,61 @@ func (a *app) start(id session.ID, secret credential, seed ...inbox.Input) (*run
 	manager := &observedManager{inner: newHookManager(ctx, permissions, a, id, config.WorkspaceID, config.Mode),
 		updates: make(chan operation.Operation), done: make(chan struct{}), events: a.events, id: id, ctx: ctx, known: make(map[operation.ID]operation.Status)}
 	go manager.forward()
-	run := &runningSession{inbox: inputs, manager: manager, workflow: workflow, permissions: permissions, cancel: cancel, done: make(chan struct{})}
+	run := &runningSession{ctx: ctx, inbox: inputs, manager: manager, workflow: workflow, permissions: permissions, cancel: cancel, done: make(chan struct{})}
+	workspaceID := config.WorkspaceID
+	if workspaceID == "" {
+		workspaceID = a.workspace
+	}
+	a.slotMu.Lock()
+	projectID := a.advisoryProjectID
+	a.slotMu.Unlock()
+	if projectID == "" {
+		projectID = a.workspace
+	}
+	run.advisoryBinding = inbox.AdvisoryBinding{ProjectID: projectID, WorkspaceID: workspaceID, SessionID: string(id), RunID: uuid.New().String(), ContextRevision: 1}
+	run.receiptSequence = max(uint64(len(seenIDs)), receiptSequence)
 	run.accepted = make(map[inbox.ID]struct{}, len(restored.ExternalInputIDs))
+	run.acceptedHashes = make(map[inbox.ID]string)
+	for _, input := range seed {
+		run.acceptedHashes[input.ID] = inputHash(input)
+	}
 	run.modelReady = make(chan struct{}, 1)
 	for _, seen := range seenIDs {
 		run.accepted[seen] = struct{}{}
 	}
 	run.busy.Store(true)
+	run.pendingAccepted.Store(int64(len(seed)))
 	current := coordinator.New(coordinator.Dependencies{
+		OnInputRecorded: func(inbox.ID) {
+			for {
+				pending := run.pendingAccepted.Load()
+				if pending <= 0 || run.pendingAccepted.CompareAndSwap(pending, pending-1) {
+					return
+				}
+			}
+		},
+		AdvisoryValid:              func(binding inbox.AdvisoryBinding) bool { return a.advisoryValid(run, binding, false) },
+		OnAdvisoryOutcome:          func(id inbox.ID, state string) { a.advisories.outcome(id, state) },
 		InitialInputs:              seed,
 		IncludeQueuedInputsOnStart: true,
 		OnFatal:                    func(error) { run.stopping.Store(true) },
 		ModelBlocked:               func() bool { return a.questions.blocked(id) },
 		ModelReady:                 run.modelReady,
 		OnActivity: func(busy bool) {
+			busy = busy || run.pendingAccepted.Load() > 0
 			run.busy.Store(busy)
 			a.events.enqueue(id, "session.activity", map[string]bool{"busy": busy})
 		},
 		OnIdle: func(ids []inbox.ID) {
+			run.advisoryMu.Lock()
+			settled := slices.Contains(ids, run.advisoryBinding.SourceInputID)
+			if settled {
+				run.advisorySettled = true
+			}
+			run.advisoryMu.Unlock()
+			if settled {
+				a.advisories.invalidate(id, "skipped")
+			}
 			a.finishPostflight(id)
 			if a.hooksEnabled.Load() && config.Mode != "plan" && len(ids) > 0 {
 				a.runs.Add(1)
@@ -346,6 +417,7 @@ func (a *app) start(id session.ID, secret credential, seed ...inbox.Input) (*run
 			err = current.Run(ctx)
 		}
 		cancel()
+		a.advisories.invalidate(id, "interrupted")
 		files.stop()
 		<-manager.done
 		// Stop is complete only once primitive processes and file writers have
@@ -519,6 +591,20 @@ func (c *observedClient) Respond(ctx context.Context, request llm.Request, optio
 func (c *observedClient) Close() error { return c.inner.Close() }
 
 func (a *app) submit(id session.ID, input inbox.Input, secret credential) error {
+	// Transport retries after a settled run must not recreate a coordinator or
+	// resume anything. Canonical input identities are the durable receipt.
+	a.mu.Lock()
+	active := a.running[id] != nil
+	a.mu.Unlock()
+	if !active {
+		restored, err := a.store.Resume(a.ctx, id)
+		if err != nil {
+			return err
+		}
+		if slices.Contains(restored.ExternalInputIDs, input.ID) {
+			return nil
+		}
+	}
 	run, err := a.start(id, secret)
 	if err != nil {
 		return err
@@ -528,9 +614,6 @@ func (a *app) submit(id session.ID, input inbox.Input, secret credential) error 
 	if run.stopping.Load() {
 		return errors.New("Session is stopping; retry when it finishes")
 	}
-	if _, duplicate := run.accepted[input.ID]; duplicate {
-		return nil
-	}
 	var reply string
 	if json.Unmarshal(input.Payload, &reply) != nil {
 		var body struct {
@@ -539,9 +622,7 @@ func (a *app) submit(id session.ID, input inbox.Input, secret credential) error 
 		_ = json.Unmarshal(input.Payload, &body)
 		reply = body.Prompt
 	}
-	advice := a.preflight(id, reply)
-	a.rememberPostflight(id, string(input.ID), reply)
-	prepared, err := externalInputWithAdvice(reply, string(input.ID), advice)
+	prepared, err := externalInput(reply, string(input.ID))
 	var attachments struct {
 		NativeContext bool              `json:"nativeContext"`
 		Images        []string          `json:"images"`
@@ -550,16 +631,47 @@ func (a *app) submit(id session.ID, input inbox.Input, secret credential) error 
 	}
 	_ = json.Unmarshal(input.Payload, &attachments)
 	if len(attachments.Images) > 0 || attachments.RetryOf > 0 || attachments.Fieldnotes != nil || attachments.NativeContext {
-		prepared.Payload, err = json.Marshal(map[string]any{"prompt": reply, "advice": advice, "images": attachments.Images, "retryOf": attachments.RetryOf, "fieldnotes": attachments.Fieldnotes, "nativeContext": attachments.NativeContext})
+		prepared.Payload, err = json.Marshal(map[string]any{"prompt": reply, "images": attachments.Images, "retryOf": attachments.RetryOf, "fieldnotes": attachments.Fieldnotes, "nativeContext": attachments.NativeContext})
 	}
 	if err == nil {
-		err = run.inbox.Submit(a.ctx, prepared)
+		if _, duplicate := run.accepted[input.ID]; duplicate {
+			if prior := run.acceptedHashes[input.ID]; prior != "" && prior != inputHash(prepared) {
+				return errors.New("Message identity is already bound to different content")
+			}
+			return nil
+		}
+	}
+	if err == nil {
+		config, loadErr := a.loadConfig(id)
+		if loadErr != nil {
+			return loadErr
+		}
+		run.receiptSequence++
+		err = a.acceptInputReceipt(id, config.WorkspaceID, run.receiptSequence, prepared)
+	}
+	if err == nil {
+		run.advisoryMu.Lock()
+		run.advisoryBinding.RequestGeneration++
+		run.advisoryBinding.SourceInputID = prepared.ID
+		a.decision.mu.RLock()
+		run.advisoryBinding.DecisionGeneration = a.decision.generation
+		a.decision.mu.RUnlock()
+		run.advisorySettled = false
+		run.advisoryMu.Unlock()
+		run.pendingAccepted.Add(1)
+		run.busy.Store(true)
+		err = run.inbox.Submit(run.ctx, prepared)
+		if err != nil {
+			run.pendingAccepted.Add(-1)
+		}
 	}
 	if err != nil {
 		a.forgetPostflight(id, string(input.ID))
 		return err
 	}
 	run.accepted[input.ID] = struct{}{}
+	run.acceptedHashes[input.ID] = inputHash(prepared)
+	a.scheduleAdvisory(run, reply, attachments.NativeContext)
 	return nil
 }
 

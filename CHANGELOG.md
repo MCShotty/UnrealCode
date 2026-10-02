@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.1.0 - 2026-10-02
+
+### Added
+
+- Versioned advisory inputs and negotiated `async_advisory_v1` capability.
+- Verified canonical-prefix backups before the first advisory record.
+
+### Changed
+
+- Decision advice and memory recall run after message acceptance and arrive at
+  an existing model boundary. Steering, Stop and independent tools stay usable.
+- Bounded decision scheduling shares two app-wide leases across project backends.
+- Accepted messages have durable receipts; pending advice restores as interrupted.
+- Advice status and attributed memory references are visible in the work feed.
+
+### Fixed
+
+- Blocking Jev preflight and foreground Git evidence collection.
+- Cancellation while a local decision worker waits for a lock or writes stdin.
+- Valid image/prompt envelopes exceeding the bridge frame limit.
+- Late events from an old backend affecting its replacement, and split UTF-8
+  chunks corrupting Arabic text.
+- Advice/control events causing unnecessary timeline analysis.
+- Invalid decision probabilities, score legends and unsafe redirects.
+
+### Known limitations
+
+- The local installer is unsigned. Published 1.0.4 assets remain unchanged.
+- Older binaries cannot read the new advisory input kind; rollback requires
+  deliberate restoration of a verified earlier snapshot while preserving
+  newer records separately.
+- Native Computer, live memory/provider, fresh-machine and assistive-technology
+  acceptance remain separate gates. See [1.1.0 notes](desktop/RELEASE_NOTES_1.1.0.md).
+
 ## 1.0.4 - 2026-10-01
 
 ### Added

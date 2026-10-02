@@ -296,3 +296,14 @@ it('preserves global enablement intent and knowledge when changing model destina
  expect((await memory.status('')).settings).toMatchObject({enabled:true,globalConsent:false,verifiedProfile:undefined})
  expect((await memory.status('')).records).toHaveLength(1)
 })
+it('bounds background references and withdraws them when their source is forgotten',async()=>{
+ const memory=await globalSetup();await memory.record('one',{...record,workspace:'one',content:'Source knowledge '.repeat(1500)})
+ await vi.waitFor(async()=>expect((await memory.status('')).records[0].state).toBe('retained'))
+ const source=(await memory.status('')).records[0]
+ vi.mocked(memory.runtime.request).mockResolvedValue({results:[{document_id:source.id,text:'Arabic knowledge '.repeat(1000),metadata:{revision:String(source.revision||0)}}]})
+ const recall=await memory.backgroundRecall('two','Recall','two')
+ expect(Buffer.byteLength(recall.text)).toBeLessThan(7000)
+ expect(JSON.parse(recall.text).results[0]).toMatchObject({sourceProject:'one',sessionId:record.sessionId})
+ expect(await recall.valid()).toBe(true)
+ await memory.forget('',source.id);expect(await recall.valid()).toBe(false)
+})

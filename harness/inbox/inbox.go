@@ -18,6 +18,9 @@ const (
 	InputExternal InputKind = "external"
 	InputControl  InputKind = "control"
 	InputCrash    InputKind = "crash"
+	// Advisory is reference data delivered only at an already-triggered model
+	// boundary. It never requests a turn, answers a question, or grants authority.
+	InputAdvisory InputKind = "advisory"
 )
 
 type Input struct {
@@ -33,6 +36,10 @@ func (input Input) Validate() error {
 	}
 	switch input.Kind {
 	case InputExternal, InputCrash:
+	case InputAdvisory:
+		if _, err := input.DecodeAdvisory(); err != nil {
+			return err
+		}
 	case InputControl:
 		if _, err := input.DecodeControlMessage(); err != nil {
 			return err

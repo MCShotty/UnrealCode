@@ -352,6 +352,7 @@ func (a *app) dispatch(req request) (any, error) {
 		if err := a.preferences.configure(p.Excluded); err != nil {
 			return nil, err
 		}
+		a.invalidateAdvisoryContext("")
 		return map[string]bool{"configured": true}, nil
 	case "verification.run":
 		p, err := decodeParams[verificationParams](req.Params)
@@ -381,14 +382,95 @@ func (a *app) dispatch(req request) (any, error) {
 	case "decision.idle":
 		return a.decisionPending.Load() == 0, nil
 	case "health":
-		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion, "capabilities": []string{"permissions.v1", "files.v1", "sessions.v1", "mcp.v1", "context.v1", "teams.v1", "verification.v1", "history.latest.v1", "lifecycle.v1", "controls.v1", "inference.v1", "hooks.v1", "goal.usage.v1", "questions.v2", "provider.issue.v1", "plan.progress.v1", "decision.browser.v1", "response.preview.v1", "documents.v1", "browser.shared.v1", "fieldnotes.v1", "computer.v1"}}, nil
+		return map[string]any{"ready": true, "workspace": "/workspace", "version": protocolVersion, "capabilities": []string{"permissions.v1", "files.v1", "sessions.v1", "mcp.v1", "context.v1", "teams.v1", "verification.v1", "history.latest.v1", "lifecycle.v1", "controls.v1", "inference.v1", "hooks.v1", "goal.usage.v1", "questions.v2", "provider.issue.v1", "plan.progress.v1", "decision.browser.v1", "response.preview.v1", "documents.v1", "browser.shared.v1", "fieldnotes.v1", "computer.v1", "async_advisory_v1"}}, nil
+	case "advisory.invalidate":
+		p, err := decodeParams[sessionIDParams](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		if p.SessionID != "" {
+			if _, err = requiredID(p.SessionID); err != nil {
+				return nil, err
+			}
+		}
+		a.invalidateAdvisoryContext(session.ID(p.SessionID))
+		return map[string]bool{"invalidated": true}, nil
+	case "advisory.configure":
+		p, err := decodeParams[struct {
+			ProjectID string `json:"projectId"`
+			HostSlots bool   `json:"hostSlots"`
+		}](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		if len(p.ProjectID) < 1 || len(p.ProjectID) > 128 {
+			return nil, errors.New("Invalid advisory project identity")
+		}
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if len(a.running) > 0 {
+			return nil, errors.New("Configure advisory ownership before starting sessions")
+		}
+		a.slotMu.Lock()
+		a.advisoryProjectID = p.ProjectID
+		a.hostAdvisorySlots = p.HostSlots
+		a.slotMu.Unlock()
+		return map[string]bool{"configured": true}, nil
+	case "advisory.slot.respond":
+		p, err := decodeParams[advisorySlotMessage](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		return nil, a.answerAdvisorySlot(p)
+	case "advisory.deliver":
+		p, err := decodeParams[struct {
+			ID    string         `json:"id"`
+			Value inbox.Advisory `json:"value"`
+		}](req.Params)
+		if err != nil {
+			return nil, err
+		}
+		id, err := requiredID(p.Value.Binding.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		if _, err = uuid.Parse(p.ID); err != nil {
+			return nil, errors.New("Invalid advisory identity")
+		}
+		if p.Value.Category != "memory" {
+			return nil, errors.New("Host advisory category must be memory")
+		}
+		a.mu.Lock()
+		run := a.running[id]
+		a.mu.Unlock()
+		if run == nil || !a.advisoryValid(run, p.Value.Binding, false) {
+			return map[string]bool{"queued": false}, nil
+		}
+		if err := a.ensureAdvisoryBackup(run.ctx, id); err != nil {
+			return map[string]bool{"queued": false}, nil
+		}
+		payload, err := json.Marshal(p.Value)
+		if err != nil {
+			return nil, err
+		}
+		input := inbox.Input{ID: inbox.ID(p.ID), Kind: inbox.InputAdvisory, Payload: payload}
+		return map[string]bool{"queued": true}, run.inbox.Submit(run.ctx, input)
 	case "decision.configure":
 		config, err := decodeParams[decisionConfig](req.Params)
 		if err != nil {
 			return nil, err
 		}
+		a.decision.mu.RLock()
+		prior := a.decision.generation
+		a.decision.mu.RUnlock()
 		if err := a.decision.configure(config); err != nil {
 			return nil, err
+		}
+		a.decision.mu.RLock()
+		changed := prior != a.decision.generation
+		a.decision.mu.RUnlock()
+		if changed {
+			a.advisories.invalidateAll("cancelled")
 		}
 		return a.decision.status(), nil
 	case "decision.status":
@@ -598,8 +680,17 @@ func (a *app) dispatch(req request) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		a.guidance.mu.RLock()
+		previous := a.guidance.generation
+		a.guidance.mu.RUnlock()
 		if err = a.guidance.configure(p.Notes, p.Generation); err != nil {
 			return nil, err
+		}
+		a.guidance.mu.RLock()
+		changed := previous != a.guidance.generation
+		a.guidance.mu.RUnlock()
+		if changed {
+			a.invalidateAdvisoryContext("")
 		}
 		return map[string]bool{"configured": true}, nil
 	case "session.send":
@@ -640,7 +731,19 @@ func (a *app) dispatch(req request) (any, error) {
 		if err := a.submit(id, input, p.Credential); err != nil {
 			return nil, err
 		}
-		return map[string]string{"messageId": string(input.ID)}, nil
+		a.mu.Lock()
+		run := a.running[id]
+		a.mu.Unlock()
+		var binding *inbox.AdvisoryBinding
+		if run != nil {
+			run.advisoryMu.Lock()
+			if run.advisoryBinding.SourceInputID == input.ID {
+				copy := run.advisoryBinding
+				binding = &copy
+			}
+			run.advisoryMu.Unlock()
+		}
+		return map[string]any{"messageId": string(input.ID), "advisoryBinding": binding}, nil
 	case "session.stop":
 		p, err := decodeParams[sessionIDParams](req.Params)
 		if err != nil {
@@ -661,6 +764,7 @@ func (a *app) dispatch(req request) (any, error) {
 			return map[string]bool{"stopping": false}, nil
 		}
 		run.stopping.Store(true)
+		a.advisories.invalidate(id, "cancelled")
 		payload, err := json.Marshal(inbox.ControlMessage{Mode: inbox.StopHard, Reason: "Stopped by user"})
 		if err != nil {
 			return nil, err

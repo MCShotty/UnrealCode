@@ -280,7 +280,7 @@ func TestPostChangeCheckRecordsFocusedDecision(t *testing.T) {
 	}
 	app := &app{ctx: context.Background(), workspace: workspace, decision: runtime, events: log}
 	id := session.ID("postflight-test")
-	app.verifyPostflight(id, postflightCandidate{prompt: "Fix the answer file to say after.", before: before})
+	app.verifyPostflight(app.ctx, id, postflightCandidate{prompt: "Fix the answer file to say after.", before: before}, app.decision.config, func() bool { return true })
 	entries, err := log.readLocked(id)
 	if err != nil || len(entries) != 1 || entries[0].Event != "decision.result" {
 		t.Fatalf("postflight event: %#v %v", entries, err)

@@ -1,12 +1,24 @@
 import { it,expect } from 'vitest'
 import type { AgentEvent } from '../shared/api'
 import { parseEvents } from './chat-events'
+const randomUUID=()=>crypto.randomUUID()
 
 it('retains a bounded incomplete assistant preview as a labelled recorded message',()=>{
  const entries=parseEvents([{v:1,event:'model.response.incomplete',sessionId:'s',seq:1,recordedAt:new Date().toISOString(),payload:{id:'request',text:'Partial response',status:'incomplete'}}])
  expect(entries).toMatchObject([{kind:'assistant',status:'incomplete',text:'Partial response'}])
 })
 const event=(seq:number,name:string,payload:unknown):AgentEvent=>({v:1,seq,event:name,sessionId:'s',payload})
+it('keeps one stable advice entry and never presents it as user or tool work',()=>{
+ const id=randomUUID(),session=randomUUID(),binding={projectId:'p',workspaceId:'w',sessionId:session,runId:randomUUID(),sourceInputId:randomUUID(),requestGeneration:1,decisionGeneration:1,contextRevision:1}
+ const state=(seq:number,state:string):AgentEvent=>({v:1,seq,event:'decision.advisory',sessionId:session,payload:{version:1,id,binding,state}})
+ const queued=parseEvents([state(1,'queued'),state(2,'analysing')])
+ expect(queued).toHaveLength(1);expect(queued[0]).toMatchObject({kind:'decision',status:'Analysing advice'})
+ const result:AgentEvent={v:1,seq:3,event:'decision.result',sessionId:session,payload:{id,engine:'jev',answers:{security:{type:'noul',noul:0.4}},durationMs:20}}
+ const completed=parseEvents([state(1,'queued'),state(2,'analysing'),result,state(4,'delivered')])
+ expect(completed).toHaveLength(1);expect(completed[0].id).toBe(queued[0].id)
+ expect(completed[0]).toMatchObject({kind:'decision',status:'Used as reference',seq:1})
+ expect(parseEvents([{...state(1,'queued'),sessionId:randomUUID()}])).toHaveLength(0)
+})
 const call=(seq:number,turn='turn')=>event(seq,'session.item',{Kind:'model_response',Data:{TurnID:turn,Response:{Output:[{Type:'tool_call',Data:{CallID:'call',Name:'TeamDispatch',Arguments:'{}'}}]}}})
 const status=(seq:number,states:string[],turn='turn')=>event(seq,'session.item',{Kind:'tool_call_status',Data:{TurnID:turn,CallID:'call',Status:{WaitingFor:states.map((_,i)=>`${turn}-${i}`)},Operations:states.map((state,i)=>({ID:`${turn}-${i}`,Status:state}))}})
 it('uses persisted terminal snapshots without turning completed cards back into running',()=>{

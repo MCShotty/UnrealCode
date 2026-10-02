@@ -53,6 +53,38 @@ pinned Docker toolchain; avoid traversing generated packaged backend copies.
 Document fixtures, external prerequisites and performance evidence separately
 in `desktop/ACCEPTANCE_1.0.4.md`. Tests never authorize native input.
 
+## 1.1.0 asynchronous execution and release authorization
+
+The owner authorized implementation of the asynchronous harness plan on
+`codex/async-execution` and named the candidate 1.1.0 on 2026-10-02. This
+initially authorized a local candidate. On the same date, the owner authorized
+committing, merging into main and publishing 1.1.0. Use the reviewed PR,
+exact-merged-commit preflight and new annotated `v1.1.0` tag workflow. This
+authorization does not cover later releases or replacement of published assets.
+Keep 1.0.4 published evidence below intact. See `docs/ASYNC_EXECUTION.md` for
+contracts and acceptance.
+
+`async_advisory_v1` negotiates dedicated reference inputs, durable advice status
+and app-wide decision leases. One conversation has one active analysis and its
+latest pending snapshot; Electron permits two leases across project bridges.
+Cancellation retains capacity until actual settlement. Advice never creates a
+model turn, answers a human gate, grants authority or counts as a running tool.
+Validate complete ownership and generations at delivery. Preserve immutable
+committed history, accepted answer receipts and explicit retry semantics.
+
+Accepted-input receipts are synced before acknowledgement, consumed into
+canonical history, and recovered only through explicit continuation. New advice
+records have verified canonical-prefix backups and SHA-256 manifests. Restore
+deliberately while retaining newer history separately. Cache rebuilds and startup
+never start advice inference. Keep the SQLite writer/readers unchanged.
+
+Memory recall is background work with retained-record revision/consent checks.
+It preserves source attribution and Fieldnote budgets. Exclude native-derived
+requests; discard withdrawn or superseded references. Advice/control inputs and
+text deltas do not trigger timeline analysis. Ordinary coding remains independent
+of optional services. This work has functional ordering and regression checks;
+efficiency benchmarks and savings claims are outside the authorized scope.
+
 ## Published 1.0.4 and release boundary
 
 [1.0.4](https://github.com/MCShotty/UnrealCode/releases/tag/v1.0.4) was published on 2026-10-01 after

@@ -113,6 +113,10 @@ app.on('second-instance',()=>{if(window&&!backgroundCheck){if(window.isMinimized
 
 let bridge = new DockerBridge()
 const workspaces = new Map<string, WorkspaceRuntime>()
+async function invalidateMemoryAdvice():Promise<void>{
+  timelineService?.invalidate()
+  await Promise.all([...workspaces.values()].map(owner=>owner.visitBridges(bridge=>bridge.invalidateAdvisories())))
+}
 let selected: WorkspaceRuntime | null = null
 const accountUsage = new AccountUsageService()
 const evaluations = new Evaluations(join(app.getPath('userData'), 'evaluations'))
@@ -386,7 +390,7 @@ async function handleHostEvent(owner: WorkspaceRuntime, event: AgentEvent): Prom
       if(config.disallowedTools.includes(operation.tool))throw Error('Control tool disabled')
       const args=operation.arguments;let value:unknown
       if(operation.tool==='PlanProgress'){value=await target.planning.progress(event.sessionId,args.revision as number,args.milestoneId as string,args.state as 'pending'|'running'|'completed',args.evidence as string[]);timeline().changed(owner,event.sessionId)}
-      else if(operation.tool==='PlanUpdate'){if(!Array.isArray(args.milestones))throw Error('Plan milestones must be a list');value=await target.planning.saveAgentPlan(event.sessionId,{objective:args.objective as string,body:args.body as string,acceptance:args.acceptance as string[],milestones:args.milestones as string[]})}
+      else if(operation.tool==='PlanUpdate'){if(!Array.isArray(args.milestones))throw Error('Plan milestones must be a list');value=await target.planning.saveAgentPlan(event.sessionId,{objective:args.objective as string,body:args.body as string,acceptance:args.acceptance as string[],milestones:args.milestones as string[]});await target.bridge.invalidateAdvisories(event.sessionId)}
       else if(operation.tool==='Computer'){
         if(config.specialist)throw Error('Native computer input belongs to the parent task; workers cannot compete for it.')
         const call=args as unknown as ComputerCall,identity=computerIdentity(owner,target,event.sessionId,config)
@@ -532,7 +536,7 @@ async function openWorkspace(requested: string): Promise<ReturnType<DockerBridge
         await target.request('fieldnotes.configure',guidanceSnapshot());return receipt
       },
       guidanceAccepted:id=>fieldnotes().accepted(id),
-      recall:async(prompt,workspace)=>{if(!memoryService)return '';try{const result=await memoryService.recall(canonical,prompt.slice(0,8000),workspace) as any;const fieldnoteIds=(result.results||[]).filter((item:any)=>item.source?.fieldnote).map((item:any)=>item.source.fieldnote.id);return JSON.stringify({...result,fieldnoteIds,results:(result.results||[]).filter((item:any)=>!item.source?.fieldnote)})}catch{return 'Project memory is unavailable. Verify against current files and recorded sessions.'}},
+      recall:async(prompt,workspace,options)=>memoryService?memoryService.backgroundRecall(canonical,prompt.slice(0,8000),workspace,options):{text:'',valid:async()=>false},
       changed: () => window?.webContents.send('workflow:changed', canonical),
       hasTerminal: () => selected?.project === canonical && terminals.size > 0,
       configure: async (target) => { await fieldnotes().load();await target.request('fieldnotes.configure',guidanceSnapshot()); await configureDecision(target, canonical); await target.request('mcp.configure',{ tools:connections.catalog({ project:canonical,container:target.containerName }) }) },
@@ -797,21 +801,21 @@ function registerIPC(): void {
   handle('memory:status',(_event,limit?:number)=>memory().status(selected?.project||'',limit))
   handle('memory:records',(_event,before?:string,limit?:number)=>memory().recordsPage('',before,limit))
   handle('memory:record',(_event,id:string)=>memory().readRecord('',id))
-  handle('memory:configure',(_event,profile:import('../shared/memory').MemoryProfile)=>{timelineService?.invalidate();return memory().configure(profile)})
+  handle('memory:configure',async(_event,profile:import('../shared/memory').MemoryProfile)=>{await invalidateMemoryAdvice();return memory().configure(profile)})
   handle('memory:switch-verified',async(_event,profile:import('../shared/memory').MemoryProfile,candidateKey?:string)=>{
     const previous=(await memory().status('',0)).settings.profile
     if(!previous||previous.provider!==profile?.provider||previous.model!==profile?.model||previous.baseUrl!==profile?.baseUrl){
       await remotePreview('Change app-wide memory model',`New destination: ${profile?.provider}/${profile?.model}\nUseful outcomes and bounded activity from trusted projects will be processed by this model. Existing memories stay in the app-wide bank; the previous working profile is restored if verification or startup fails.`)
     }
-    timelineService?.invalidate();return memory().switchVerified(profile,candidateKey)
+    await invalidateMemoryAdvice();return memory().switchVerified(profile,candidateKey)
   })
-  handle('memory:verify',()=>{timelineService?.invalidate();return memory().verify()})
-  handle('memory:enable',async(_event,enabled:boolean)=>{if(typeof enabled!=='boolean')throw Error('Choose whether to enable memory');if(enabled){const status=await memory().status('');if(!status.settings.globalConsent)await remotePreview('Enable app-wide memory',`Memory processing: ${status.settings.profile?.provider}/${status.settings.profile?.model}\nUseful outcomes and bounded live activity from trusted projects will be processed by this model. Relevant memories can be recalled across chats and projects with source labels. Existing records will be migrated; chat logs remain authoritative.`)}timelineService?.invalidate();return memory().enable('',enabled)})
-  handle('memory:retry',()=>{timelineService?.invalidate();return memory().retry('')})
+  handle('memory:verify',async()=>{await invalidateMemoryAdvice();return memory().verify()})
+  handle('memory:enable',async(_event,enabled:boolean)=>{if(typeof enabled!=='boolean')throw Error('Choose whether to enable memory');if(enabled){const status=await memory().status('');if(!status.settings.globalConsent)await remotePreview('Enable app-wide memory',`Memory processing: ${status.settings.profile?.provider}/${status.settings.profile?.model}\nUseful outcomes and bounded live activity from trusted projects will be processed by this model. Relevant memories can be recalled across chats and projects with source labels. Existing records will be migrated; chat logs remain authoritative.`)}await invalidateMemoryAdvice();return memory().enable('',enabled)})
+  handle('memory:retry',async()=>{await invalidateMemoryAdvice();return memory().retry('')})
   handle('memory:recall',(_event,query:string)=>memory().recall(selected?.project||'',query,selected?.active.project||''))
   handle('memory:reflect',(_event,query:string)=>memory().reflect(selected?.project||'',query,selected?.active.project||''))
-  handle('memory:forget',async(_event,id:string)=>{const source=await memory().fieldnoteSource(id);if(source){const note=await fieldnotes().get(source.id);await fieldnotes().save({...note,expectedRevision:note.revision,indexing:false});return memory().withdrawFieldnote(source.id)}return memory().forget('',id)})
-  handle('memory:correct',async(_event,id:string,content:string)=>{if(await memory().fieldnoteSource(id))throw Error('Edit the original note in Fieldnotes so its authored text and provenance stay together.');return memory().correct('',id,content)})
+  handle('memory:forget',async(_event,id:string)=>{await invalidateMemoryAdvice();const source=await memory().fieldnoteSource(id);if(source){const note=await fieldnotes().get(source.id);await fieldnotes().save({...note,expectedRevision:note.revision,indexing:false});return memory().withdrawFieldnote(source.id)}return memory().forget('',id)})
+  handle('memory:correct',async(_event,id:string,content:string)=>{if(await memory().fieldnoteSource(id))throw Error('Edit the original note in Fieldnotes so its authored text and provenance stay together.');await invalidateMemoryAdvice();return memory().correct('',id,content)})
   handle('memory:rebuild',()=>memory().rebuild(''))
   handle('memory:export',async()=>{const result=await dialog.showSaveDialog(window!,{title:'Export private app-wide memory',defaultPath:`UnrealCode-memory-${timestampName()}.json`,filters:[{name:'JSON',extensions:['json']}]});if(result.canceled||!result.filePath)return null;await fs.writeFile(result.filePath,await memory().export(''),{mode:0o600});return result.filePath})
   const planningOwner=async(id:string)=>{const owner=await runtime().owner(id);await owner.bridge.request('session.config',{sessionId:id});return owner}
@@ -838,7 +842,7 @@ function registerIPC(): void {
   handle('jobs:start',async(_event,id:string,command:string,timeoutMs:number)=>{const owner=await planningOwner(id);const config=await owner.bridge.request<BridgeSessionConfig>('session.config',{sessionId:id});if(config.mode==='plan'||config.specialist||config.disallowedTools.includes('Bash'))throw Error('Background commands are not permitted for this session');await remotePreview('Start background command',command);return owner.jobs.start(id,command,timeoutMs)})
   handle('jobs:stop',async(_event,id:string,jobId:string)=>(await planningOwner(id)).jobs.stop(id,jobId))
   handle('planning:get',async(_event,id:string)=>(await planningOwner(id)).planning.read(id))
-  handle('planning:save',async(_event,id:string,plan:Parameters<import('./task-planning').TaskPlanning['savePlan']>[1])=>(await planningOwner(id)).planning.savePlan(id,plan))
+  handle('planning:save',async(_event,id:string,plan:Parameters<import('./task-planning').TaskPlanning['savePlan']>[1])=>{const owner=await planningOwner(id);const value=await owner.planning.savePlan(id,plan);await owner.bridge.invalidateAdvisories(id);return value})
   handle('planning:implement',async(_event,id:string,revision:number,mode:string)=>{
     if(mode!=='ask'&&mode!=='agent')throw Error('Choose Ask or Agent execution')
     const owner=await planningOwner(id);if(owner.checkpoints.busy||runtime().teams.hasPending(id))throw Error('Settle active work and specialists before implementing the plan')

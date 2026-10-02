@@ -6,10 +6,13 @@ import { lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from '
 import { join, relative, resolve } from 'node:path'
 import { getCACertificates } from 'node:tls'
 import { promisify } from 'node:util'
+import { StringDecoder } from 'node:string_decoder'
 import type { AgentEvent, DockerStatus } from '../shared/api'
 import { backendEnvironment } from './child-environment'
 import { terminalDockerExecutable } from './terminal-command'
 import { resolveVolume } from './state-volumes'
+import { advisoryPool } from './advisory-pool'
+import { asyncAdvisoryCapability, validAdvisorySlot, type AdvisorySlotMessage } from '../shared/advisory'
 
 const execFileAsync = promisify(execFile)
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timeout: NodeJS.Timeout }
@@ -26,6 +29,9 @@ export function backendSourceTag(source: string, version: string): string {
 }
 
 export class DockerBridge {
+  private advisoryCapability = false
+  private advisoryProjectId = ''
+  private advisoryLeases = new Map<string,{controller:AbortController;binding:AdvisorySlotMessage['binding'];release?:()=>void}>()
   private process: ReturnType<typeof spawn> | null = null
   private pending = new Map<string, Pending>()
   private buffer = ''
@@ -40,6 +46,8 @@ export class DockerBridge {
 
   get containerName(): string { return this.container }
   get projectPath(): string { return this.project }
+  get asyncAdvisoryAvailable():boolean {return this.advisoryCapability}
+  async invalidateAdvisories(sessionId=''):Promise<void>{if(this.advisoryCapability)await this.request('advisory.invalidate',{sessionId})}
   async previewAddresses():Promise<Record<string,string>>{if(!this.container)return {};const output=await this.docker(['port',this.container]),result:Record<string,string>={};for(const line of output.split('\n')){const match=/^(\d+)\/tcp -> (127\.0\.0\.1:\d+)$/.exec(line.trim());if(match)result[match[1]]=`http://${match[2]}`}return result}
   status(): DockerStatus { return { ready: this.phase === 'running' && !!this.process && !this.process.killed, phase:this.phase,failure:this.failure,message: this.message, container: this.container || undefined } }
 
@@ -115,16 +123,20 @@ export class DockerBridge {
     const child = spawn(terminalDockerExecutable(environment), args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: environment })
     this.process = child
     this.buffer = ''
-    child.stdout.on('data', (data: Buffer) => this.consume(data.toString('utf8')))
+    const decoder=new StringDecoder('utf8')
+    child.stdout.on('data', (data: Buffer) => { if(this.process === child)this.consume(decoder.write(data)) })
     let stderr = ''
     child.stderr.on('data', (data: Buffer) => { stderr = (stderr + data.toString('utf8')).slice(-3000) })
-    child.on('error', (error) => this.fail(error))
-    child.on('exit', (code) => this.fail(new Error(stderr.trim() || `Docker backend exited (${code})`)))
+    child.on('error', (error) => { if(this.process === child)this.fail(error) })
+    child.on('exit', (code) => { if(this.process === child)this.fail(new Error(stderr.trim() || `Docker backend exited (${code})`)) })
     try {
       const health = await this.request<{ version: number; capabilities?: string[] }>('health', {}, 30000)
       if (health.version !== 1 || !['permissions.v1', 'files.v1', 'sessions.v1', 'mcp.v1', 'context.v1', 'teams.v1', 'verification.v1', 'history.latest.v1', 'lifecycle.v1', 'controls.v1', 'inference.v1', 'hooks.v1', 'goal.usage.v1', 'questions.v2', 'provider.issue.v1', 'plan.progress.v1', 'decision.browser.v1', 'response.preview.v1', 'documents.v1', 'browser.shared.v1', 'fieldnotes.v1', 'computer.v1'].every(value => health.capabilities?.includes(value))) {
         throw new Error('The Docker backend is incompatible with this desktop version. Rebuild the backend image and reopen the project.')
       }
+      this.advisoryCapability = health.capabilities?.includes(asyncAdvisoryCapability) === true
+      this.advisoryProjectId = createHash('sha256').update(projectPath.toLocaleLowerCase()).digest('hex')
+      if(this.advisoryCapability) await this.request('advisory.configure',{projectId:this.advisoryProjectId,hostSlots:true})
       if (evaluationGit) await this.docker(['exec', this.container, 'sh', '-c', 'if test ! -f /state/evaluation-git/HEAD; then env -u GIT_DIR -u GIT_WORK_TREE git init --bare /state/evaluation-git && git add --all && git -c user.name=UnrealCode -c user.email=evaluation@localhost commit --allow-empty -m "Task input snapshot"; fi'], 60000)
       this.phase='running';this.failure=undefined;this.message = 'Container running'
       this.onStatus(this.status())
@@ -171,6 +183,7 @@ export class DockerBridge {
       let value: Record<string, unknown>
       try { value = JSON.parse(line) as Record<string, unknown> } catch { continue }
       if (typeof value.event === 'string') {
+        if(value.event === 'advisory.slot.requested' || value.event === 'advisory.slot.release') { void this.advisorySlot(value as AgentEvent); continue }
         this.onEvent(value as AgentEvent)
       } else if (typeof value.id === 'string') {
         const pending = this.pending.get(value.id)
@@ -186,6 +199,9 @@ export class DockerBridge {
   request<T>(method: string, params: unknown, timeoutMs = 60000): Promise<T> {
     const child = this.process
     if (!child || child.killed || !child.stdin?.writable) return Promise.reject(new Error('Docker backend is not connected'))
+    // An older backend still runs its synchronous preflight. Do not silently
+    // reintroduce that bottleneck. Keep coding available with an honest limitation.
+    if(method==='decision.configure' && !this.advisoryCapability) params={...(params as Record<string,unknown>),engine:'off',apiKey:''}
     const id = randomUUID()
     return new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => { this.pending.delete(id); reject(new Error(`${method} timed out`)) }, timeoutMs)
@@ -193,12 +209,16 @@ export class DockerBridge {
       child.stdin!.write(JSON.stringify({ v: 1, id, method, params }) + '\n', (error) => {
         if (error) { clearTimeout(timeout); this.pending.delete(id); reject(error) }
       })
+    }).then(result=>{
+      if(method==='decision.status')return {...result as Record<string,unknown>,asyncAdvice:this.advisoryCapability?'enabled':'unavailable',...(!this.advisoryCapability?{available:false,message:'Background decision advice needs a rebuilt backend. Coding remains available; decisions are disabled in this older backend.'}:{})} as T
+      return result
     })
   }
 
   private fail(error: Error): void {
     if (!this.process) return
     this.process = null
+    this.releaseAdvisoryLeases()
     this.phase='unavailable';this.failure=classifyFailure(error,'docker');this.message = this.failure.message
     for (const pending of this.pending.values()) { clearTimeout(pending.timeout); pending.reject(error) }
     this.pending.clear()
@@ -208,6 +228,11 @@ export class DockerBridge {
   async stop(): Promise<void> {
     const child = this.process
     if (!child) { this.project = ''; return }
+    const leases=this.advisoryLeases
+    this.advisoryLeases=new Map()
+    this.advisoryCapability=false
+    if(child.exitCode!==null)this.releaseAdvisoryLeases(leases)
+    else child.once('exit',()=>this.releaseAdvisoryLeases(leases))
     this.process = null
     child.stdin?.end()
     const name = this.container
@@ -219,5 +244,32 @@ export class DockerBridge {
     this.pending.clear()
     this.phase='unavailable';this.message = 'Docker backend stopped'
     this.onStatus(this.status())
+  }
+  private async advisorySlot(event: AgentEvent): Promise<void> {
+    if(!this.advisoryCapability || !validAdvisorySlot(event.payload,this.advisoryProjectId,event.sessionId))return
+    const message=event.payload, key=JSON.stringify([this.advisoryProjectId,message.binding.runId,message.id])
+    if(event.event==='advisory.slot.release') {
+      const existing=this.advisoryLeases.get(key)
+      if(existing){existing.controller.abort();existing.release?.();this.advisoryLeases.delete(key)}
+      return
+    }
+    if(this.advisoryLeases.has(key))return
+    const lease:{controller:AbortController;binding:AdvisorySlotMessage['binding'];release?:()=>void}={controller:new AbortController(),binding:message.binding}
+    this.advisoryLeases.set(key,lease)
+    try {
+      const release=await advisoryPool.acquire(key,lease.controller.signal)
+      if(this.advisoryLeases.get(key)!==lease || lease.controller.signal.aborted){release();return}
+      lease.release=release
+      await this.request('advisory.slot.respond',{...message,granted:true},5000)
+    } catch {
+      // A queued request may be cancelled. A granted lease waits for actual
+      // backend settlement, including when its acknowledgement transport fails.
+      if(!lease.release){this.advisoryLeases.delete(key);if(this.process)await this.request('advisory.slot.respond',{...message,granted:false},5000).catch(()=>{})}
+    }
+  }
+  private releaseAdvisoryLeases(leases=this.advisoryLeases):void {
+    for(const lease of leases.values()){lease.controller.abort();lease.release?.()}
+    leases.clear()
+    if(leases===this.advisoryLeases)this.advisoryCapability=false
   }
 }
