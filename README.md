@@ -40,7 +40,9 @@ Read [Getting started](https://github.com/MCShotty/UnrealCode/wiki/Getting-start
 | Computer | Experimental, default-off selected-window controls, reviewed task/model-bound grants, takeover, handback, and emergency stop. | [Computer](https://github.com/MCShotty/UnrealCode/wiki/Computer) |
 | Visibility | Tool Activity, stage timelines, measured usage, diagnostics, support, backups, and cleanup previews. | [Activity](https://github.com/MCShotty/UnrealCode/wiki/Tool-Activity-and-timeline), [Recovery](https://github.com/MCShotty/UnrealCode/wiki/Storage-and-recovery) |
 
-**New in 1.0.4:** connected, model-authored timelines, a four-entry work feed, and Compact spacing with Cozy available in Appearance. [Acceptance coverage](desktop/ACCEPTANCE_1.0.4.md) and the [bug-hunt record](desktop/BUG_HUNT_1.0.4.md) document tests and remaining gates.
+**New in 1.1.0:** background decision advice and memory recall, durable message receipts, and cancellation and transport repairs. See [release notes](desktop/RELEASE_NOTES_1.1.0.md) and [verified release identity](desktop/RELEASE_VERIFICATION_1.1.0.md).
+
+Connected, model-authored timelines, a four-entry work feed, and Compact spacing with Cozy remain available. [Layout acceptance](desktop/ACCEPTANCE_1.0.4.md) and the [bug-hunt record](desktop/BUG_HUNT_1.0.4.md) document their tests and remaining gates.
 
 Appearance offers **Cinder Dark**, **Ice Dark**, **Flashbang**, and **Follow Windows**. Material 3 Expressive motion respects reduced motion. See [Settings and shortcuts](https://github.com/MCShotty/UnrealCode/wiki/Settings-and-shortcuts) for every slash command and keyboard control.
 
@@ -54,11 +56,10 @@ Keys stay in Electron main and use Windows encryption when available. Provider c
 
 Jev, Laya, and Off are optional decision-engine choices. GLiNER is separate local entity extraction. Jev requires its host key and project cloud consent. Decision results never grant permissions, and unavailable engines are not silently replaced.
 
-The local [1.1.0 asynchronous execution candidate](docs/ASYNC_EXECUTION.md) moves
+The [1.1.0 asynchronous execution implementation](docs/ASYNC_EXECUTION.md) moves
 decision advice and memory recall behind message acceptance. Steering and Stop
 continue while they run. Applicable references arrive at a safe model boundary;
-they cannot answer questions, approve actions or reopen completed work. This
-candidate is not part of the published 1.0.4 installer.
+they cannot answer questions, approve actions or reopen completed work.
 See the [1.1.0 release notes](desktop/RELEASE_NOTES_1.1.0.md) for changes and
 recovery limitations.
 
@@ -97,4 +98,4 @@ Docker Desktop, Git/gh, Codex CLI, Ollama, optional memory images, OCR language 
 
 Windows with Docker is the supported coding platform. Native host execution of the coding backend, macOS/Linux desktop releases, a marketplace, and full language-server/debugger support are outside this version. Computer remains experimental: actual native input/capture, physical takeover, lock/desktop/DPI behavior, live populated-memory recovery, fresh-machine installation, and full assistive-technology acceptance remain open. Recovery import currently needs the original profile and project paths.
 
-See [1.0.4 release notes](desktop/RELEASE_NOTES_1.0.4.md) and the [implementation evidence](docs/FIELDNOTES_COMPUTER_IMPLEMENTATION.md). Unsigned installation stays manual.
+See [1.1.0 release notes](desktop/RELEASE_NOTES_1.1.0.md) and the [verified release record](desktop/RELEASE_VERIFICATION_1.1.0.md). Unsigned installation stays manual.

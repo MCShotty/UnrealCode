@@ -58,9 +58,10 @@ in `desktop/ACCEPTANCE_1.0.4.md`. Tests never authorize native input.
 The owner authorized implementation of the asynchronous harness plan on
 `codex/async-execution` and named the candidate 1.1.0 on 2026-10-02. This
 initially authorized a local candidate. On the same date, the owner authorized
-committing, merging into main and publishing 1.1.0. Use the reviewed PR,
-exact-merged-commit preflight and new annotated `v1.1.0` tag workflow. This
-authorization does not cover later releases or replacement of published assets.
+committing, merging into main and publishing 1.1.0. PR #8, the exact merged
+commit preflight and the annotated `v1.1.0` workflow completed that release.
+The authorization is fulfilled and does not cover later releases or replacement
+of published assets.
 Keep 1.0.4 published evidence below intact. See `docs/ASYNC_EXECUTION.md` for
 contracts and acceptance.
 
@@ -84,6 +85,25 @@ requests; discard withdrawn or superseded references. Advice/control inputs and
 text deltas do not trigger timeline analysis. Ordinary coding remains independent
 of optional services. This work has functional ordering and regression checks;
 efficiency benchmarks and savings claims are outside the authorized scope.
+
+## Published 1.1.0 and release boundary
+
+[1.1.0](https://github.com/MCShotty/UnrealCode/releases/tag/v1.1.0) was published
+on 2026-10-02 after [PR #8](https://github.com/MCShotty/UnrealCode/pull/8) merged.
+
+- Source: `246fdbf4e0910ab6cd46ad0c307f5dfe3e648a68`.
+- Annotated tag object: `6eeb3961de2b7dbd64dce907de7a005c9a1c6b5c`.
+- Installer: 225,397,100 bytes, `NotSigned`.
+- Published SHA-256: `647C79B11E1FD093BA8AEC827BE8EF2625704BFE14044936DD41D568B0AF6CF1`.
+- Exact-main preflight: [36944302150](https://github.com/MCShotty/UnrealCode/actions/runs/36944302150).
+- Tagged publication: [36945053894](https://github.com/MCShotty/UnrealCode/actions/runs/36945053894).
+
+Downloaded checksum, asset digest and repository/workflow/tag/commit attestation
+verification passed. Latest was 1.1.0 at verification. Earlier tag and asset
+identities are unchanged. See [release verification](desktop/RELEASE_VERIFICATION_1.1.0.md)
+for hosted skips and external gates. Upgrades remain manual; older binaries need
+deliberate recovery before opening new advisory records. Do not reuse this
+authorization for another release or retag published history.
 
 ## Published 1.0.4 and release boundary
 
@@ -293,7 +313,7 @@ Never put provider keys in memory containers or ingest all historical chats.
 
 Fieldnote, Hindsight, and timeline inference share two global slots. Do not hold
 a slot around Hindsight HTTP that may call the broker. Timeline analysis runs
-at most once per 20 seconds per conversation. It is advisory, never rewrites
+at a three-second minimum interval per conversation. It is advisory, never rewrites
 approved plans, and keeps a factual fallback on failure. Validate evidence and
 discard results from stale profile, plan, workspace, or selection generations.
 

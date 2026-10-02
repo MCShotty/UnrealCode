@@ -27,7 +27,8 @@
 
 ### Known limitations
 
-- The local installer is unsigned. Published 1.0.4 assets remain unchanged.
+- The Windows installer is unsigned and upgrades are manual. Earlier release
+  assets remain unchanged. See [release verification](desktop/RELEASE_VERIFICATION_1.1.0.md).
 - Older binaries cannot read the new advisory input kind; rollback requires
   deliberate restoration of a verified earlier snapshot while preserving
   newer records separately.

@@ -1,10 +1,10 @@
-# UnrealCode 1.1.0 asynchronous execution candidate
+# UnrealCode 1.1.0 asynchronous execution
 
-This work is local on `codex/async-execution`, based on the published 1.0.4
-source and its documentation update. The owner named this candidate 1.1.0.
-On 2026-10-02 the owner authorized merging and publishing it. Local acceptance
-below precedes hosted verification; earlier published tags and installers are
-preserved.
+This work started on `codex/async-execution`, based on the published 1.0.4
+source and its documentation update. The owner named it 1.1.0 and authorized
+merging and publication on 2026-10-02. It is merged and published as `v1.1.0`.
+Local acceptance below precedes the [hosted release verification](../desktop/RELEASE_VERIFICATION_1.1.0.md).
+Earlier published tags and installers are preserved.
 
 ## Behavior
 

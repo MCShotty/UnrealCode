@@ -20,7 +20,7 @@ volumes. A trusted project folder can be mounted into its local container.
   excluded from those descriptors; token-like visible text is conservatively
   omitted or redacted. Other visible page content can still be sent after you
   grant the origin. Laya and GLiNER run locally when enabled.
-  In the local 1.1.0 candidate, request advice runs after acceptance
+  Since 1.1.0, request advice runs after acceptance
   with captured consent and ownership. Pending advice is discarded after a
   relevant change. It does not approve actions or delay coding. Credential-bearing
   preflight text is withheld, and redirects cannot forward the decision key.
@@ -36,7 +36,7 @@ volumes. A trusted project folder can be mounted into its local container.
   Relevant retained knowledge can be recalled across trusted projects with source
   attribution. Unintegrated specialist findings remain task-scoped. Existing
   project memories migrate after consent; historical chats are not all ingested.
-  The local 1.1.0 candidate recalls references in the background, then rechecks
+  Since 1.1.0, recall runs in the background, then rechecks
   source revisions and consent before using them. Source attribution and any
   additional retained Fieldnote guidance remain inspectable in the work feed.
 - **Connections and browser:** Enabled MCP servers receive the arguments and
